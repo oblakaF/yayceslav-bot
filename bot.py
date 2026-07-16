@@ -4162,7 +4162,18 @@ async def answer_voice_or_audio(
             "Это уже подкаст, а не голосовуха."
         )
         return
+    # Учитываем голосовое сообщение или аудиофайл
+    await register_user_and_chat(
+        update
+    )
 
+    await increment_stat(
+        "total_requests"
+    )
+
+    await increment_stat(
+        "voice_requests"
+    )
     if voice:
         mime_type = (
             voice.mime_type
@@ -4284,7 +4295,11 @@ async def answer_voice_or_audio(
             answer,
             force_voice=True,
         )
-
+        
+        await increment_stat(
+            "bot_answers"
+        )
+        
     except Exception as error:
         logging.exception(
             "Ошибка обработки голосового: %s",
