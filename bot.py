@@ -1039,73 +1039,134 @@ def search_web_sync(
     max_results: int = 5,
 ) -> list[dict[str, str]]:
     """
-    Выполняет синхронный поиск через DDGS.
+    Выполняет поиск через DDGS.
 
-    Эта функция запускается в отдельном потоке,
-    чтобы не останавливать Telegram-бота.
+    Для новостей сначала используется news().
+    При ошибке или пустой выдаче автоматически
+    включается обычный текстовый поиск.
     """
 
-    with DDGS() as search_client:
-        if is_news_query(query):
-            raw_results = search_client.news(
-                query=query,
-                region="wt-wt",
-                safesearch="moderate",
-                max_results=max_results,
-            )
-        else:
-            raw_results = search_client.text(
-                query=query,
-                region="wt-wt",
-                safesearch="moderate",
-                max_results=max_results,
-            )
+    raw_results: list[dict[str, Any]] = []
+    news_request = is_news_query(query)
 
-        results: list[dict[str, str]] = []
+    # Первая попытка: специальный поиск новостей
+    if news_request:
+        try:
+            with DDGS(
+                timeout=12,
+            ) as search_client:
+                raw_results = (
+                    search_client.news(
+                        query=query,
+                        region="wt-wt",
+                        safesearch="moderate",
+                        timelimit="m",
+                        max_results=max_results,
+                        backend="auto",
+                    )
+                    or []
+                )
 
-        for item in raw_results:
-            title = str(
-                item.get("title")
-                or "Без названия"
-            ).strip()
-
-            url = str(
-                item.get("href")
-                or item.get("url")
-                or ""
-            ).strip()
-
-            snippet = str(
-                item.get("body")
-                or item.get("description")
-                or ""
-            ).strip()
-
-            source = str(
-                item.get("source")
-                or ""
-            ).strip()
-
-            date = str(
-                item.get("date")
-                or ""
-            ).strip()
-
-            if not url:
-                continue
-
-            results.append(
-                {
-                    "title": title,
-                    "url": url,
-                    "snippet": snippet,
-                    "source": source,
-                    "date": date,
-                }
+        except Exception as error:
+            logging.warning(
+                "DDGS.news не сработал: %s. "
+                "Переключаемся на text().",
+                error,
             )
 
-        return results
+    # Резервный поиск:
+    # используется для обычных запросов,
+    # а также после сбоя или пустой выдачи news()
+    if not raw_results:
+        text_query = query
 
+        if news_request:
+            text_query = (
+                f"{query} последние новости"
+            )
+
+        try:
+            with DDGS(
+                timeout=12,
+            ) as search_client:
+                raw_results = (
+                    search_client.text(
+                        query=text_query,
+                        region="wt-wt",
+                        safesearch="moderate",
+                        timelimit=(
+                            "m"
+                            if news_request
+                            else None
+                        ),
+                        max_results=max_results,
+                        backend="auto",
+                    )
+                    or []
+                )
+
+        except Exception as error:
+            logging.warning(
+                "Резервный DDGS.text "
+                "не сработал: %s",
+                error,
+            )
+
+            return []
+
+    results: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+
+    for item in raw_results:
+        title = str(
+            item.get("title")
+            or "Без названия"
+        ).strip()
+
+        url = str(
+            item.get("href")
+            or item.get("url")
+            or ""
+        ).strip()
+
+        snippet = str(
+            item.get("body")
+            or item.get("description")
+            or ""
+        ).strip()
+
+        source = str(
+            item.get("source")
+            or ""
+        ).strip()
+
+        date = str(
+            item.get("date")
+            or ""
+        ).strip()
+
+        if (
+            not url
+            or url in seen_urls
+        ):
+            continue
+
+        seen_urls.add(url)
+
+        results.append(
+            {
+                "title": title,
+                "url": url,
+                "snippet": snippet,
+                "source": source,
+                "date": date,
+            }
+        )
+
+        if len(results) >= max_results:
+            break
+
+    return results
 
 async def search_web(
     query: str,
