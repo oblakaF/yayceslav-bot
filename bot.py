@@ -4500,7 +4500,7 @@ def main() -> None:
             help_command,
         )
     )
-        application.add_handler(
+    application.add_handler(
         CommandHandler(
             "stats",
             stats_command,
