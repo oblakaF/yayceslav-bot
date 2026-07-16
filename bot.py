@@ -3080,15 +3080,20 @@ async def answer_document(
     ):
         return
 
-    force_voice = text_requests_voice(
-        prompt
-    )
+  caption_text = update.message.caption or ""
 
-    if force_voice:
-        prompt = (
-            remove_voice_request(prompt)
-            or "Коротко проанализируй файл."
-        )
+force_voice = (
+    text_requests_voice(caption_text)
+    or voice_mode_enabled(context)
+)
+
+use_voice_style = force_voice
+
+if force_voice:
+    prompt = (
+        remove_voice_request(prompt)
+        or "Коротко проанализируй файл."
+    )
 
     use_voice_style = (
         force_voice
