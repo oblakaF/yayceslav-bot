@@ -3450,6 +3450,7 @@ async def answer_voice_or_audio(
                 prompt,
             ],
             max_output_tokens=180,
+            voice_style=True,
         )
 
         await send_answer(
