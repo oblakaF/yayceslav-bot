@@ -250,7 +250,7 @@ async def register_user_and_chat(
         else "unknown"
     )
 
-       await asyncio.to_thread(
+    await asyncio.to_thread(
         register_user_and_chat_sync,
         user_id,
         chat_id,
