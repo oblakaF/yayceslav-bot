@@ -2979,6 +2979,11 @@ async def answer_photo(
             or "Коротко опиши изображение."
         )
 
+    use_voice_style = (
+        force_voice
+        or voice_mode_enabled(context)
+    )
+
     file_path = TEMP_DIR / (
         f"photo_"
         f"{update.effective_chat.id}_"
@@ -3008,6 +3013,7 @@ async def answer_photo(
                 prompt,
             ],
             max_output_tokens=250,
+            voice_style=use_voice_style,
         )
 
         await send_answer(
