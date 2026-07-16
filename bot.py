@@ -1111,13 +1111,22 @@ async def search_web(
     query: str,
     max_results: int = 5,
 ) -> list[dict[str, str]]:
-    """Асинхронно запускает поиск, не блокируя бота."""
+    """
+    Асинхронно выполняет поиск.
 
-    return await asyncio.to_thread(
-        search_web_sync,
-        query,
-        max_results,
-    )
+    Одновременно работают не более двух поисков.
+    Остальные запросы ждут своей очереди.
+    """
+
+    async with SEARCH_SEMAPHORE:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                search_web_sync,
+                query,
+                max_results,
+            ),
+            timeout=40,
+        )
 
 
 def format_search_results(
@@ -1194,6 +1203,12 @@ async def perform_web_search(
     if (
         not update.message
         or not update.effective_chat
+    ):
+        return
+
+    if not await enforce_rate_limit(
+        update,
+        "search",
     ):
         return
 
