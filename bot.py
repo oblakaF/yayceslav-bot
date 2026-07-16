@@ -3821,7 +3821,18 @@ async def answer_document(
             "Этот кирпич я не потащу."
         )
         return
+    # Учитываем документ
+    await register_user_and_chat(
+        update
+    )
 
+    await increment_stat(
+        "total_requests"
+    )
+
+    await increment_stat(
+        "document_requests"
+    )
     original_filename = (
         document.file_name
         or f"document_{update.message.message_id}"
@@ -4072,7 +4083,11 @@ async def answer_document(
             answer,
             force_voice=force_voice,
         )
-
+        
+        await increment_stat(
+            "bot_answers"
+        )
+        
     except Exception as error:
         logging.exception(
             "Ошибка анализа документа: %s",
