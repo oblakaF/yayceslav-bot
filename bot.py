@@ -1087,15 +1087,34 @@ async def ask_gemini(
 
 SEARCH_TRIGGER_RE = re.compile(
     r"^\s*(?:"
-    r"найди(?:\s+в\s+интер(?:нете|енете))?"
-    r"|поищи(?:\s+в\s+интер(?:нете|енете))?"
+    r"найди\s+(?:в\s+)?(?:интер(?:нете|енете)|инете|сети)"
+    r"|поищи\s+(?:в\s+)?(?:интер(?:нете|енете)|инете|сети)"
+    r"|ищи\s+(?:в\s+)?(?:интер(?:нете|енете)|инете|сети)"
+    r"|посмотри\s+(?:в\s+)?(?:интер(?:нете|енете)|инете|сети)"
+    r"|проверь\s+(?:в\s+)?(?:интер(?:нете|енете)|инете|сети)"
+    r"|что\s+пишут\s+(?:в\s+)?(?:интер(?:нете|енете)|инете|сети)"
+    r"|найди\s+информацию"
+    r"|найди\s+статью"
+    r"|найди\s+источник"
+    r"|проверь\s+факт"
+    r"|посмотри\s+новости"
+    r"|последние\s+новости"
+    r"|свежие\s+новости"
+    r"|последние\s+данные"
+    r"|актуальная\s+информация"
+    r"|свежая\s+информация"
+    r"|что\s+сейчас\s+известно"
+    r"|что\s+нового"
     r"|загугли"
-    r"|проверь\s+в\s+интер(?:нете|енете)"
+    r"|погугли"
+    r"|гугли"
+    r"|найди"
+    r"|поищи"
+    r"|проверь"
     r")"
     r"[\s,.:;!?—-]*",
     flags=re.IGNORECASE,
 )
-
 
 def extract_search_query(
     text: str,
@@ -1798,28 +1817,28 @@ HARD_MODE_DEFAULT = True
 # На специальное слово бот отвечает не чаще раза в 75 секунд.
 HARD_TRIGGER_COOLDOWN = 75.0
 
-# Случайная реплика — не чаще раза в 4 минуты.
-HARD_RANDOM_REPLY_COOLDOWN = 240.0
+# Случайная текстовая реплика — не чаще раза в 90 секунд
+HARD_RANDOM_REPLY_COOLDOWN = 90.0
 
-# Реакция — не чаще раза в 25 секунд.
-HARD_REACTION_COOLDOWN = 25.0
+# Реакция — не чаще раза в 15 секунд
+HARD_REACTION_COOLDOWN = 15.0
 
-# Вероятность реакции на обычное сообщение: 16%.
-HARD_REACTION_CHANCE = 0.16
+# Вероятность реакции на обычное сообщение — 38%
+HARD_REACTION_CHANCE = 0.38
 
-# Вероятность случайно вмешаться текстом: 4%.
-HARD_RANDOM_REPLY_CHANCE = 0.04
+# Вероятность случайно вмешаться текстом — 16%
+HARD_RANDOM_REPLY_CHANCE = 0.16
 
 
 HARD_REACTION_EMOJIS = [
-    "👍",
-    "❤",
-    "🔥",
-    "🤣",
     "🤡",
+    "💩",
     "🗿",
-    "💯",
-    "🤯",
+    "🔥",
+    "👍",
+    "👎",
+    "😂",
+    "😭",
 ]
 
 
@@ -3645,37 +3664,18 @@ async def answer_voice_or_audio(
     if media is None:
         return
 
-    # В группе голосовое принимается,
-    # если это ответ боту или в подписи указан @username.
+    # В группе голосовое обрабатывается
+    # только как ответ на сообщение Яйцеслава
     if update.effective_chat.type in (
         ChatType.GROUP,
         ChatType.SUPERGROUP,
     ):
-        caption = (
-            update.message.caption
-            or ""
-        )
-
-        bot_username = await get_bot_username(
-            context
-        )
-
-        mention = (
-            f"@{bot_username}"
-            if bot_username
-            else ""
-        )
-
-        has_mention = bool(
-            mention
-            and mention.lower() in caption.lower()
-        )
-
-        if (
-            not has_mention
-            and not is_reply_to_bot(update, context)
+        if not is_reply_to_bot(
+            update,
+            context,
         ):
             return
+            
     if not await enforce_rate_limit(
         update,
         "media",
