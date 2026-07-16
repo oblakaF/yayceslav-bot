@@ -916,24 +916,9 @@ async def ask_gemini(
 
     for attempt in range(1, 4):
         try:
-            request_label = style_text[
-                :40
-            ].replace(
-                "\n",
-                " ",
-            )
-
-            logging.info(
-                "GEMINI ОЖИДАЕТ: %s",
-                request_label,
-            )
-
+            # Одновременно выполняются не более трёх
+            # запросов к Gemini. Остальные ждут очередь.
             async with GEMINI_SEMAPHORE:
-                logging.info(
-                    "GEMINI НАЧАЛ: %s",
-                    request_label,
-                )
-
                 response = await asyncio.wait_for(
                     gemini_client.aio.models.generate_content(
                         model=MODEL_NAME,
@@ -946,10 +931,7 @@ async def ask_gemini(
                     ),
                     timeout=90,
                 )
-                logging.info(
-                    "GEMINI ЗАКОНЧИЛ: %s",
-                    request_label,
-                )
+
             answer = (
                 response.text
                 or ""
