@@ -3090,6 +3090,11 @@ async def answer_document(
             or "Коротко проанализируй файл."
         )
 
+    use_voice_style = (
+        force_voice
+        or voice_mode_enabled(context)
+    )
+
     if (
         document.file_size
         and document.file_size > MAX_FILE_SIZE
@@ -3150,6 +3155,7 @@ async def answer_document(
                     ),
                 ],
                 max_output_tokens=500,
+                voice_style=use_voice_style,
             )
 
         # Изображение, отправленное как документ
@@ -3205,6 +3211,7 @@ async def answer_document(
                     f"{extracted_text}"
                 ),
                 max_output_tokens=500,
+                voice_style=use_voice_style,
             )
 
         # Excel
@@ -3228,6 +3235,7 @@ async def answer_document(
                     f"{extracted_text}"
                 ),
                 max_output_tokens=500,
+                voice_style=use_voice_style,
             )
 
         # CSV
@@ -3246,6 +3254,7 @@ async def answer_document(
                     f"{extracted_text}"
                 ),
                 max_output_tokens=500,
+                voice_style=use_voice_style,
             )
 
         # Текстовые файлы
@@ -3273,6 +3282,7 @@ async def answer_document(
                     f"{extracted_text}"
                 ),
                 max_output_tokens=500,
+                voice_style=use_voice_style,
             )
 
         else:
