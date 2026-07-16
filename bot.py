@@ -910,7 +910,95 @@ VOICE_STYLE_INSTRUCTION = """
 - максимум один стилистический элемент на весь голосовой ответ;
 - сначала полезный ответ, затем при необходимости одна короткая шутка.
 """
+# ============================================================
+# ФУНКЦИИ КРАТКОВРЕМЕННОЙ ПАМЯТИ
+# ============================================================
 
+def clean_memory(
+    messages: deque,
+    memory_seconds: int,
+) -> None:
+    """Удаляет сообщения, которые уже слишком старые."""
+
+    current_time = time.monotonic()
+
+    while messages:
+        message_time = messages[0][0]
+
+        if current_time - message_time <= memory_seconds:
+            break
+
+        messages.popleft()
+
+
+def remember_message(
+    memory_store: dict[int, deque],
+    memory_id: int,
+    role: str,
+    text: str,
+    memory_seconds: int,
+    max_messages: int,
+    author_name: str = "",
+) -> None:
+    """Добавляет одно сообщение в память."""
+
+    if not text:
+        return
+
+    messages = memory_store[memory_id]
+
+    clean_memory(
+        messages,
+        memory_seconds,
+    )
+
+    clean_text = text.strip()[:800]
+
+    messages.append(
+        (
+            time.monotonic(),
+            role,
+            author_name,
+            clean_text,
+        )
+    )
+
+    while len(messages) > max_messages:
+        messages.popleft()
+
+
+def build_memory_context(
+    memory_store: dict[int, deque],
+    memory_id: int,
+    memory_seconds: int,
+) -> str:
+    """Собирает ещё не устаревшие сообщения в один контекст."""
+
+    messages = memory_store[memory_id]
+
+    clean_memory(
+        messages,
+        memory_seconds,
+    )
+
+    if not messages:
+        return ""
+
+    context_lines = []
+
+    for _, role, author_name, text in messages:
+        if role == "assistant":
+            speaker = "Яйцеслав"
+        elif author_name:
+            speaker = author_name
+        else:
+            speaker = "Пользователь"
+
+        context_lines.append(
+            f"{speaker}: {text}"
+        )
+
+    return "\n".join(context_lines)
 # ============================================================
 # GEMINI
 # ============================================================
