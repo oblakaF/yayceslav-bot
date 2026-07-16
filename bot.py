@@ -40,8 +40,18 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-MODEL_NAME = "gemini-3.1-flash-lite"
+BOT_OWNER_ID_RAW = os.getenv(
+    "BOT_OWNER_ID",
+    "",
+).strip()
 
+BOT_OWNER_ID = (
+    int(BOT_OWNER_ID_RAW)
+    if BOT_OWNER_ID_RAW.isdigit()
+    else 0
+)
+
+MODEL_NAME = "gemini-3.1-flash-lite"
 # ============================================================
 # ЗАЩИТА ОТ СПАМА И ЛИМИТЫ
 # ============================================================
