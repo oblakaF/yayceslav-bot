@@ -2253,7 +2253,7 @@ async def hard_mode_listener(
     ):
         return
 
-        # Не сохраняем сообщения других ботов
+    # Не сохраняем сообщения других ботов
     if update.effective_user.is_bot:
         return
 
@@ -2266,13 +2266,32 @@ async def hard_mode_listener(
     if text.startswith("/"):
         return
 
+    bot_username = await get_bot_username(
+        context
+    )
+
+    has_direct_mention = bool(
+        bot_username
+        and f"@{bot_username}".lower() in text.lower()
+    )
+
+    has_reply = is_reply_to_bot(
+        update,
+        context,
+    )
+
+    # Прямое обращение к Яйцеславу будет сохранено
+    # основным обработчиком вместе с ответом бота
+    if has_direct_mention or has_reply:
+        return
+
     author_name = (
         update.effective_user.full_name
         or update.effective_user.username
         or "Участник"
     )
 
-    # Запоминаем сообщение группы на пять минут
+    # Запоминаем обычное сообщение группы на пять минут
     remember_message(
         GROUP_MEMORY,
         update.effective_chat.id,
@@ -2287,23 +2306,6 @@ async def hard_mode_listener(
     # а реакции и случайные реплики — только в хард-моде
     if not hard_mode_is_enabled(
         context
-    ):
-        return
-    # Не вмешиваемся второй раз, если пользователя
-    # уже обрабатывает основной ответ через @тег или reply.
-    bot_username = await get_bot_username(
-        context
-    )
-
-    if (
-        bot_username
-        and f"@{bot_username}".lower() in text.lower()
-    ):
-        return
-
-    if is_reply_to_bot(
-        update,
-        context,
     ):
         return
 
