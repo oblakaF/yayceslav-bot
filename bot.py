@@ -2849,7 +2849,7 @@ async def answer_text_message(
     try:
         answer = await ask_gemini(
             contents=user_text,
-            max_output_tokens=160,
+            max_output_tokens=360,
             voice_style=use_voice_style,
         )
 
