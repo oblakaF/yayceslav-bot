@@ -3935,7 +3935,62 @@ async def answer_voice_or_audio(
             max_output_tokens=320,
             voice_style=True,
         )
+        # Запоминаем обсуждение голосового сообщения
+        if update.effective_user:
+            memory_text = (
+                "[Пользователь отправил голосовое сообщение]"
+            )
 
+            if (
+                update.effective_chat.type
+                == ChatType.PRIVATE
+            ):
+                remember_message(
+                    PRIVATE_MEMORY,
+                    update.effective_user.id,
+                    "user",
+                    memory_text,
+                    PRIVATE_MEMORY_SECONDS,
+                    PRIVATE_MEMORY_MAX_MESSAGES,
+                )
+
+                remember_message(
+                    PRIVATE_MEMORY,
+                    update.effective_user.id,
+                    "assistant",
+                    answer,
+                    PRIVATE_MEMORY_SECONDS,
+                    PRIVATE_MEMORY_MAX_MESSAGES,
+                )
+
+            elif update.effective_chat.type in (
+                ChatType.GROUP,
+                ChatType.SUPERGROUP,
+            ):
+                author_name = (
+                    update.effective_user.full_name
+                    or update.effective_user.username
+                    or "Участник"
+                )
+
+                remember_message(
+                    GROUP_MEMORY,
+                    update.effective_chat.id,
+                    "user",
+                    memory_text,
+                    GROUP_MEMORY_SECONDS,
+                    GROUP_MEMORY_MAX_MESSAGES,
+                    author_name,
+                )
+
+                remember_message(
+                    GROUP_MEMORY,
+                    update.effective_chat.id,
+                    "assistant",
+                    answer,
+                    GROUP_MEMORY_SECONDS,
+                    GROUP_MEMORY_MAX_MESSAGES,
+                )
         await send_answer(
             update,
             context,
