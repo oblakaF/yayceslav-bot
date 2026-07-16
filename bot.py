@@ -3615,7 +3615,18 @@ async def answer_photo(
         "media",
     ):
         return
+    # Учитываем фотографию
+    await register_user_and_chat(
+        update
+    )
 
+    await increment_stat(
+        "total_requests"
+    )
+
+    await increment_stat(
+        "photo_requests"
+    )
     force_voice = text_requests_voice(
         prompt
     )
@@ -3725,7 +3736,11 @@ async def answer_photo(
             answer,
             force_voice=force_voice,
         )
-
+        
+        await increment_stat(
+            "bot_answers"
+        )
+        
     except Exception as error:
         logging.exception(
             "Ошибка анализа фотографии: %s",
