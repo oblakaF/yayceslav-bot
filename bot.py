@@ -2253,13 +2253,8 @@ async def hard_mode_listener(
     ):
         return
 
-    # Не реагируем на сообщения ботов.
+        # Не сохраняем сообщения других ботов
     if update.effective_user.is_bot:
-        return
-
-    if not hard_mode_is_enabled(
-        context
-    ):
         return
 
     text = update.message.text.strip()
@@ -2267,10 +2262,33 @@ async def hard_mode_listener(
     if not text:
         return
 
-    # Команды обрабатываются отдельными обработчиками.
+    # Команды в память не записываем
     if text.startswith("/"):
         return
 
+    author_name = (
+        update.effective_user.full_name
+        or update.effective_user.username
+        or "Участник"
+    )
+
+    # Запоминаем сообщение группы на пять минут
+    remember_message(
+        GROUP_MEMORY,
+        update.effective_chat.id,
+        "user",
+        text,
+        GROUP_MEMORY_SECONDS,
+        GROUP_MEMORY_MAX_MESSAGES,
+        author_name,
+    )
+
+    # Память работает всегда,
+    # а реакции и случайные реплики — только в хард-моде
+    if not hard_mode_is_enabled(
+        context
+    ):
+        return
     # Не вмешиваемся второй раз, если пользователя
     # уже обрабатывает основной ответ через @тег или reply.
     bot_username = await get_bot_username(
