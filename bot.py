@@ -3080,14 +3080,14 @@ async def answer_document(
     ):
         return
 
-  caption_text = update.message.caption or ""
+    caption_text = update.message.caption or ""
 
-force_voice = (
-    text_requests_voice(caption_text)
-    or voice_mode_enabled(context)
-)
+    force_voice = (
+        text_requests_voice(caption_text)
+        or voice_mode_enabled(context)
+    )
 
-use_voice_style = force_voice
+    use_voice_style = force_voice
 
 if force_voice:
     prompt = (
