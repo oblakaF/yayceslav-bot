@@ -2870,6 +2870,63 @@ async def help_command(
         "/hard_off — выключить активность в группе\n"
         "/hard_status — проверить активность"
     )
+async def stats_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Показывает статистику только владельцу бота."""
+
+    del context
+
+    if (
+        not update.message
+        or not update.effective_user
+        or not update.effective_chat
+    ):
+        return
+
+    # В группах статистику не показываем
+    if (
+        update.effective_chat.type
+        != ChatType.PRIVATE
+    ):
+        return
+
+    # Посторонним ничего не отвечаем
+    if (
+        BOT_OWNER_ID == 0
+        or update.effective_user.id
+        != BOT_OWNER_ID
+    ):
+        return
+
+    stats = await get_stats_snapshot()
+
+    await update.message.reply_text(
+        "📊 Статистика Яйцеслава\n\n"
+        f"👤 Уникальных пользователей: "
+        f"{stats.get('unique_users', 0)}\n"
+        f"💬 Личных чатов: "
+        f"{stats.get('private_chats', 0)}\n"
+        f"👥 Групп: "
+        f"{stats.get('groups', 0)}\n\n"
+        f"📨 Всего запросов: "
+        f"{stats.get('total_requests', 0)}\n"
+        f"✍️ Текстовых: "
+        f"{stats.get('text_requests', 0)}\n"
+        f"🔎 Интернет-поисков: "
+        f"{stats.get('search_requests', 0)}\n"
+        f"🖼 Фотографий: "
+        f"{stats.get('photo_requests', 0)}\n"
+        f"📄 Документов: "
+        f"{stats.get('document_requests', 0)}\n"
+        f"🎙 Голосовых и аудио: "
+        f"{stats.get('voice_requests', 0)}\n\n"
+        f"🥚 Ответов Яйцеслава: "
+        f"{stats.get('bot_answers', 0)}\n"
+        f"🚫 Срабатываний антифлуда: "
+        f"{stats.get('rate_limit_hits', 0)}"
+    )    
 async def forget_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
