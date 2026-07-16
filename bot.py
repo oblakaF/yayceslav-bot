@@ -2532,20 +2532,86 @@ async def help_command(
         return
 
     await update.message.reply_text(
-        "Умею:\n"
-        "• отвечать на вопросы;\n"
-        "• смотреть фото и мемы;\n"
-        "• читать PDF и DOCX;\n"
-        "• разбирать XLSX, CSV и TXT;\n"
-        "• понимать голосовые;\n"
-        "• отвечать голосом.\n\n"
+        "Что умеет Яйцеслав:\n"
+        "• отвечает на вопросы;\n"
+        "• ищет свежую информацию в интернете;\n"
+        "• смотрит фотографии и мемы;\n"
+        "• читает PDF, DOCX, XLSX, CSV и TXT;\n"
+        "• понимает голосовые сообщения;\n"
+        "• может отвечать голосом;\n"
+        "• помнит личный разговор 15 минут;\n"
+        "• помнит переписку группы 5 минут.\n\n"
+        "Как обратиться в группе:\n"
+        "• через @имя_бота;\n"
+        "• ответом на сообщение Яйцеслава;\n"
+        "• словами: Яйцеслав, бобр, эй бобр, "
+        "курва, бот, помощник.\n\n"
+        "Голосовое в группе:\n"
+        "• отправляй его ответом на сообщение Яйцеслава.\n\n"
         "Команды:\n"
+        "/search запрос — поиск в интернете\n"
+        "/forget — очистить кратковременную память\n"
         "/voice_on — всегда отвечать голосом\n"
-        "/voice_off — отвечать текстом\n\n"
-        "В группе: @имя_бота твой вопрос"
+        "/voice_off — отвечать текстом\n"
+        "/roast — подколоть участника\n"
+        "/wisdom — мудрость Яйцеслава\n"
+        "/mood — настроение Яйцеслава\n"
+        "/hard_on — включить активность в группе\n"
+        "/hard_off — выключить активность в группе\n"
+        "/hard_status — проверить активность"
     )
+async def forget_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Очищает кратковременную память."""
 
+    if (
+        not update.message
+        or not update.effective_chat
+    ):
+        return
 
+    # В личке пользователь очищает собственную память
+    if (
+        update.effective_chat.type
+        == ChatType.PRIVATE
+    ):
+        if update.effective_user:
+            PRIVATE_MEMORY.pop(
+                update.effective_user.id,
+                None,
+            )
+
+        await update.message.reply_text(
+            "Личную память очистил. "
+            "Начинаем с чистого яйца."
+        )
+        return
+
+    # В группе очищать общую память может только администратор
+    if update.effective_chat.type in (
+        ChatType.GROUP,
+        ChatType.SUPERGROUP,
+    ):
+        if not await user_is_group_admin(
+            update,
+            context,
+        ):
+            await update.message.reply_text(
+                "Память группы очищают только админы, нищий."
+            )
+            return
+
+        GROUP_MEMORY.pop(
+            update.effective_chat.id,
+            None,
+        )
+
+        await update.message.reply_text(
+            "Память группы очищена. "
+            "Ваш цифровой позор временно забыт."
+        )
 async def voice_on(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -3834,7 +3900,12 @@ def main() -> None:
             help_command,
         )
     )
-
+    application.add_handler(
+        CommandHandler(
+            "forget",
+            forget_command,
+        )
+    )
     application.add_handler(
         CommandHandler(
             "voice_on",
