@@ -2588,6 +2588,49 @@ def is_reply_to_bot(
         and sender.id == context.bot.id
     )
 
+# ============================================================
+# ТЕКСТОВЫЕ ОБРАЩЕНИЯ К ЯЙЦЕСЛАВУ В ГРУППЕ
+# ============================================================
+
+GROUP_ADDRESS_RE = re.compile(
+    r"^\s*(?:"
+    r"эй\s+бобр"
+    r"|эй\s+боб[её]р"
+    r"|эй\s+яйцо"
+    r"|яйцеслав"
+    r"|яйцо"
+    r"|боб[её]р"
+    r"|бобр"
+    r"|курва"
+    r"|бот"
+    r"|ассистент"
+    r"|помощник"
+    r"|профессор"
+    r"|эксперт"
+    r")\b"
+    r"[\s,.:;!?—-]*",
+    flags=re.IGNORECASE,
+)
+
+
+def extract_group_address(
+    text: str,
+) -> str | None:
+    """
+    Находит обращение к боту в начале сообщения
+    и возвращает текст после обращения.
+    """
+
+    match = GROUP_ADDRESS_RE.match(
+        text or ""
+    )
+
+    if not match:
+        return None
+
+    return text[
+        match.end():
+    ].strip()
 
 async def prepare_request_text(
     update: Update,
