@@ -3017,7 +3017,7 @@ async def answer_text_message(
         action=ChatAction.TYPING,
     )
 
-        try:
+    try:
         request_for_gemini = user_text
         private_user_id: int | None = None
 
