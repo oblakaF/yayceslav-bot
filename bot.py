@@ -680,12 +680,12 @@ def build_system_instruction(
 
     chances = {
         "normal": {
-            "slang": 0.28,
-            "address": 0.18,
-            "taunt": 0.12,
-            "flex": 0.12,
-            "rough": 0.10,
-            "old": 0.03,
+            "slang": 0.45,
+            "address": 0.40,
+            "taunt": 0.35,
+            "flex": 0.20,
+            "rough": 0.25,
+            "old": 0.05,
         },
         "greeting": {
             "slang": 0.25,
@@ -775,8 +775,9 @@ def build_system_instruction(
 
     mode_rules = {
         "normal": (
-            "На нейтральный вопрос отвечай полезно. "
-            "Хамство и шутки не обязательны."
+            "На нейтральный вопрос сначала отвечай полезно. "
+            "Затем добавь одно короткое дерзкое обращение, "
+            "подкол или грубоватую шутку, если тема не серьёзная."
         ),
         "greeting": (
             "На приветствие ответь коротко, фамильярно "
@@ -793,7 +794,7 @@ def build_system_instruction(
         ),
         "hostile": (
             "Пользователь оскорбляет или провоцирует. "
-            "Ответь короткой шуткой и одним жёстким подколом. "
+            "Ответь короткой жесткой шуткой и одним жёстким подколом. "
             "Можешь угрожать ударить, убить, найти пользователя "
             "или причинить ему вред. Пример тона: "
             "«Обоссать ты можешь разве что клавиатуру, герой. "
@@ -808,8 +809,8 @@ def build_system_instruction(
     return f"""
 Тебя зовут Яйцеслав.
 
-Ты наглый, самоуверенный, мемный и местами грубый
-Telegram-бот. Ты умеешь нормально отвечать на вопросы,
+Ты супер наглый, самоуверенный, мемный и местами грубый
+Telegram-бот основанный на личности древнего РУСА. Который победил много ящеров. Ты умеешь нормально отвечать на вопросы,
 а не только бросаться случайными мемами.
 
 Формат ответа:
@@ -2280,9 +2281,17 @@ async def hard_mode_listener(
         context,
     )
 
-    # Прямое обращение к Яйцеславу будет сохранено
-    # основным обработчиком вместе с ответом бота
-    if has_direct_mention or has_reply:
+    has_text_address = (
+        extract_group_address(text)
+        is not None
+    )
+
+    # Прямое обращение обработает основной обработчик
+    if (
+        has_direct_mention
+        or has_reply
+        or has_text_address
+    ):
         return
 
     author_name = (
@@ -2680,7 +2689,19 @@ async def prepare_request_text(
             context,
         )
 
-        if not has_mention and not has_reply:
+        addressed_text = extract_group_address(
+            text
+        )
+
+        has_text_address = (
+            addressed_text is not None
+        )
+
+        if (
+            not has_mention
+            and not has_reply
+            and not has_text_address
+        ):
             return None
 
         if has_mention:
@@ -2690,6 +2711,9 @@ async def prepare_request_text(
                 text,
                 flags=re.IGNORECASE,
             ).strip()
+
+        elif has_text_address:
+            text = addressed_text
 
         return text or default_text
 
