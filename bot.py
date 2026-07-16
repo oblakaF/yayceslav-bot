@@ -3622,7 +3622,7 @@ def main() -> None:
         ),
         group=1,
     )
-        application.add_error_handler(
+    application.add_error_handler(
         error_handler
     )
     print(
