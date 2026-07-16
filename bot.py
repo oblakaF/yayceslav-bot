@@ -250,13 +250,15 @@ async def register_user_and_chat(
         else "unknown"
     )
 
-    await asyncio.to_thread(
+       await asyncio.to_thread(
         register_user_and_chat_sync,
         user_id,
         chat_id,
         chat_type,
     )
-    def get_stats_snapshot_sync() -> dict[str, int]:
+
+
+def get_stats_snapshot_sync() -> dict[str, int]:
     """Читает всю накопленную статистику."""
 
     with sqlite3.connect(
