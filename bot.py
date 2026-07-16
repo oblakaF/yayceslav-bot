@@ -3406,7 +3406,18 @@ async def answer_text_message(
             force_voice=force_voice,
         )
         return
+    # Учитываем обычный текстовый запрос
+    await register_user_and_chat(
+        update
+    )
 
+    await increment_stat(
+        "total_requests"
+    )
+
+    await increment_stat(
+        "text_requests"
+    )
     use_voice_style = (
         force_voice
         or voice_mode_enabled(context)
@@ -3535,7 +3546,10 @@ async def answer_text_message(
             answer,
             force_voice=force_voice,
         )
-          
+
+        await increment_stat(
+            "bot_answers"
+        )    
     except Exception as error:
         logging.exception(
             "Ошибка текстового запроса: %s",
