@@ -5,6 +5,7 @@ import mimetypes
 import os
 import random
 import re
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any
@@ -92,8 +93,31 @@ TEMP_DIR.mkdir(exist_ok=True)
 # Максимальный размер принимаемого файла — 20 МБ
 MAX_FILE_SIZE = 20 * 1024 * 1024
 
+# ==============================
+# ПАМЯТЬ БОТА
+# ==============================
+
 # Максимальный объём текста из DOCX, XLSX, CSV и TXT
 MAX_EXTRACTED_CHARS = 50_000
+# ============================================================
+# КРАТКОВРЕМЕННАЯ ПАМЯТЬ
+# ============================================================
+
+# В группе бот помнит разговор 5 минут
+GROUP_MEMORY_SECONDS = 5 * 60
+
+# В личной переписке бот помнит текущую задачу 15 минут
+PRIVATE_MEMORY_SECONDS = 15 * 60
+
+# Не храним слишком много сообщений
+GROUP_MEMORY_MAX_MESSAGES = 30
+PRIVATE_MEMORY_MAX_MESSAGES = 40
+
+# Память по идентификатору группы
+GROUP_MEMORY: dict[int, deque] = defaultdict(deque)
+
+# Память по идентификатору пользователя
+PRIVATE_MEMORY: dict[int, deque] = defaultdict(deque)
 
 
 if not TELEGRAM_TOKEN:
