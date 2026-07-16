@@ -870,7 +870,8 @@ VOICE_STYLE_INSTRUCTION = """
 Ответ должен естественно и понятно звучать вслух.
 
 Правила голосового ответа:
-- дай прямой ответ в 2–5 коротких предложениях;
+- отвечай примерно с той же подробностью, что и обычным текстом;
+- обычно используй 4–8 предложений, а для сложного вопроса можно немного больше;
 - не повторяй вопрос пользователя;
 - не используй списки, Markdown, звёздочки, ссылки и эмодзи;
 - не произноси адреса сайтов;
@@ -3449,7 +3450,7 @@ async def answer_voice_or_audio(
                 ),
                 prompt,
             ],
-            max_output_tokens=180,
+            max_output_tokens=320,
             voice_style=True,
         )
 
@@ -3480,7 +3481,26 @@ async def answer_voice_or_audio(
 # ============================================================
 # ЗАПУСК БОТА
 # ============================================================
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Записывает необработанные ошибки в журнал."""
 
+    error = context.error
+
+    if error is None:
+        return
+
+    logging.error(
+        "Необработанная ошибка Telegram: %s",
+        error,
+        exc_info=(
+            type(error),
+            error,
+            error.__traceback__,
+        ),
+    )
 def main() -> None:
     """Запускает Telegram-бота."""
 
@@ -3601,6 +3621,9 @@ def main() -> None:
             hard_mode_listener,
         ),
         group=1,
+    )
+        application.add_error_handler(
+        error_handler
     )
     print(
         "Яйцеслав запущен.\n"
