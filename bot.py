@@ -3506,11 +3506,14 @@ def main() -> None:
 
     application = (
         Application.builder()
-        .token(TELEGRAM_TOKEN)
-        .concurrent_updates(8)
+        .token(TELEGRAM_BOT_TOKEN)
         .connect_timeout(30)
-        .read_timeout(60)
+        .read_timeout(30)
         .write_timeout(60)
+        .get_updates_connect_timeout(30)
+        .get_updates_read_timeout(60)
+        .get_updates_write_timeout(30)
+        .concurrent_updates(8)
         .build()
     )
 
