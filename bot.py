@@ -89,7 +89,61 @@ MAX_TTS_CHARS = 1500
 # Папка для временных файлов
 TEMP_DIR = Path("temp")
 TEMP_DIR.mkdir(exist_ok=True)
+# ============================================================
+# ПОСТОЯННАЯ СТАТИСТИКА
+# ============================================================
 
+# На Railway база хранится на подключённом Volume.
+# Локально используется обычная папка data.
+RAILWAY_DATA_DIR = Path("/app/data")
+
+if RAILWAY_DATA_DIR.exists():
+    DATA_DIR = RAILWAY_DATA_DIR
+else:
+    DATA_DIR = Path("data")
+
+DATA_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+STATS_DB_PATH = DATA_DIR / "yayceslav_stats.db"
+
+
+def initialize_stats_database() -> None:
+    """Создаёт постоянную базу статистики."""
+
+    with sqlite3.connect(STATS_DB_PATH) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS stats (
+                name TEXT PRIMARY KEY,
+                value INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY
+            )
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chats (
+                chat_id INTEGER PRIMARY KEY,
+                chat_type TEXT NOT NULL
+            )
+            """
+        )
+
+        connection.commit()
+
+
+initialize_stats_database()
 # Максимальный размер принимаемого файла — 20 МБ
 MAX_FILE_SIZE = 20 * 1024 * 1024
 
