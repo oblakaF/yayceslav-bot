@@ -256,6 +256,68 @@ async def register_user_and_chat(
         chat_id,
         chat_type,
     )
+    def get_stats_snapshot_sync() -> dict[str, int]:
+    """Читает всю накопленную статистику."""
+
+    with sqlite3.connect(
+        STATS_DB_PATH,
+        timeout=30,
+    ) as connection:
+        stat_rows = connection.execute(
+            """
+            SELECT name, value
+            FROM stats
+            """
+        ).fetchall()
+
+        result = {
+            str(name): int(value)
+            for name, value in stat_rows
+        }
+
+        result["unique_users"] = int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM users
+                """
+            ).fetchone()[0]
+        )
+
+        result["private_chats"] = int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM chats
+                WHERE chat_type = ?
+                """,
+                ("private",),
+            ).fetchone()[0]
+        )
+
+        result["groups"] = int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM chats
+                WHERE chat_type IN (?, ?)
+                """,
+                (
+                    "group",
+                    "supergroup",
+                ),
+            ).fetchone()[0]
+        )
+
+    return result
+
+
+async def get_stats_snapshot() -> dict[str, int]:
+    """Читает статистику без блокировки бота."""
+
+    return await asyncio.to_thread(
+        get_stats_snapshot_sync
+    )
 # Максимальный размер принимаемого файла — 20 МБ
 MAX_FILE_SIZE = 20 * 1024 * 1024
 
