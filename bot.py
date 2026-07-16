@@ -144,6 +144,118 @@ def initialize_stats_database() -> None:
 
 
 initialize_stats_database()
+def increment_stat_sync(
+    stat_name: str,
+    amount: int = 1,
+) -> None:
+    """Увеличивает постоянный счётчик."""
+
+    with sqlite3.connect(
+        STATS_DB_PATH,
+        timeout=30,
+    ) as connection:
+        connection.execute(
+            """
+            INSERT INTO stats (
+                name,
+                value
+            )
+            VALUES (?, ?)
+            ON CONFLICT(name)
+            DO UPDATE SET
+                value = value + excluded.value
+            """,
+            (
+                stat_name,
+                amount,
+            ),
+        )
+
+        connection.commit()
+
+
+async def increment_stat(
+    stat_name: str,
+    amount: int = 1,
+) -> None:
+    """Записывает статистику без блокировки бота."""
+
+    await asyncio.to_thread(
+        increment_stat_sync,
+        stat_name,
+        amount,
+    )
+
+
+def register_user_and_chat_sync(
+    user_id: int | None,
+    chat_id: int | None,
+    chat_type: str,
+) -> None:
+    """Запоминает уникального пользователя и чат."""
+
+    with sqlite3.connect(
+        STATS_DB_PATH,
+        timeout=30,
+    ) as connection:
+        if user_id is not None:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO users (
+                    user_id
+                )
+                VALUES (?)
+                """,
+                (user_id,),
+            )
+
+        if chat_id is not None:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO chats (
+                    chat_id,
+                    chat_type
+                )
+                VALUES (?, ?)
+                """,
+                (
+                    chat_id,
+                    chat_type,
+                ),
+            )
+
+        connection.commit()
+
+
+async def register_user_and_chat(
+    update: Update,
+) -> None:
+    """Записывает уникального пользователя и чат."""
+
+    user_id = (
+        update.effective_user.id
+        if update.effective_user
+        else None
+    )
+
+    chat_id = (
+        update.effective_chat.id
+        if update.effective_chat
+        else None
+    )
+
+    chat_type = (
+        update.effective_chat.type
+        if update.effective_chat
+        else "unknown"
+    )
+
+    await asyncio.to_thread(
+        register_user_and_chat_sync,
+        user_id,
+        chat_id,
+        chat_type,
+    )
 # Максимальный размер принимаемого файла — 20 МБ
 MAX_FILE_SIZE = 20 * 1024 * 1024
 
