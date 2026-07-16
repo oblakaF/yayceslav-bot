@@ -631,7 +631,7 @@ def maybe_pick(
     skoof: list[str],
     chance: float,
     max_count: int = 1,
-    youth_bias: float = 0.68,
+    youth_bias: float = 0.50,
 ) -> list[str]:
     """
     Иногда выбирает варианты из словарей.
