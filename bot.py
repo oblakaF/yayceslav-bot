@@ -3393,7 +3393,6 @@ async def answer_photo(
         await telegram_file.download_to_drive(
             custom_path=str(file_path)
         )
-
         answer = await ask_gemini(
             contents=[
                 types.Part.from_bytes(
@@ -3406,6 +3405,63 @@ async def answer_photo(
             voice_style=use_voice_style,
         )
 
+        # Запоминаем обсуждение фотографии
+        if update.effective_user:
+            memory_text = (
+                f"[Пользователь прислал фотографию] {prompt}"
+            )
+
+            if (
+                update.effective_chat.type
+                == ChatType.PRIVATE
+            ):
+                remember_message(
+                    PRIVATE_MEMORY,
+                    update.effective_user.id,
+                    "user",
+                    memory_text,
+                    PRIVATE_MEMORY_SECONDS,
+                    PRIVATE_MEMORY_MAX_MESSAGES,
+                )
+
+                remember_message(
+                    PRIVATE_MEMORY,
+                    update.effective_user.id,
+                    "assistant",
+                    answer,
+                    PRIVATE_MEMORY_SECONDS,
+                    PRIVATE_MEMORY_MAX_MESSAGES,
+                )
+
+            elif update.effective_chat.type in (
+                ChatType.GROUP,
+                ChatType.SUPERGROUP,
+            ):
+                author_name = (
+                    update.effective_user.full_name
+                    or update.effective_user.username
+                    or "Участник"
+                )
+
+                remember_message(
+                    GROUP_MEMORY,
+                    update.effective_chat.id,
+                    "user",
+                    memory_text,
+                    GROUP_MEMORY_SECONDS,
+                    GROUP_MEMORY_MAX_MESSAGES,
+                    author_name,
+                )
+
+                remember_message(
+                    GROUP_MEMORY,
+                    update.effective_chat.id,
+                    "assistant",
+                    answer,
+                    GROUP_MEMORY_SECONDS,
+                    GROUP_MEMORY_MAX_MESSAGES,
+                )
+       
         await send_answer(
             update,
             context,
