@@ -3017,12 +3017,58 @@ async def answer_text_message(
         action=ChatAction.TYPING,
     )
 
-    try:
+        try:
+        request_for_gemini = user_text
+        private_user_id: int | None = None
+
+        # Память применяется только в личной переписке
+        if (
+            update.effective_chat.type == ChatType.PRIVATE
+            and update.effective_user
+        ):
+            private_user_id = update.effective_user.id
+
+            previous_context = build_memory_context(
+                PRIVATE_MEMORY,
+                private_user_id,
+                PRIVATE_MEMORY_SECONDS,
+            )
+
+            if previous_context:
+                request_for_gemini = (
+                    "Ниже находится история текущей задачи "
+                    "пользователя. Учитывай её при ответе, "
+                    "но не пересказывай без необходимости.\n\n"
+                    f"{previous_context}\n\n"
+                    f"Новое сообщение пользователя:\n"
+                    f"{user_text}"
+                )
+
         answer = await ask_gemini(
-            contents=user_text,
+            contents=request_for_gemini,
             max_output_tokens=360,
             voice_style=use_voice_style,
         )
+
+        # После успешного ответа сохраняем вопрос и ответ
+        if private_user_id is not None:
+            remember_message(
+                PRIVATE_MEMORY,
+                private_user_id,
+                "user",
+                user_text,
+                PRIVATE_MEMORY_SECONDS,
+                PRIVATE_MEMORY_MAX_MESSAGES,
+            )
+
+            remember_message(
+                PRIVATE_MEMORY,
+                private_user_id,
+                "assistant",
+                answer,
+                PRIVATE_MEMORY_SECONDS,
+                PRIVATE_MEMORY_MAX_MESSAGES,
+            )
 
         await send_answer(
             update,
