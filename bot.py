@@ -1580,7 +1580,18 @@ async def perform_web_search(
             "Напиши нормальный запрос."
         )
         return
+    # Учитываем интернет-поиск
+    await register_user_and_chat(
+        update
+    )
 
+    await increment_stat(
+        "total_requests"
+    )
+
+    await increment_stat(
+        "search_requests"
+    )
     await context.bot.send_chat_action(
         chat_id=update.effective_chat.id,
         action=ChatAction.TYPING,
@@ -1730,7 +1741,11 @@ async def perform_web_search(
             answer,
             force_voice=force_voice,
         )
-
+        
+        await increment_stat(
+            "bot_answers"
+        )
+        
     except Exception as error:
         logging.exception(
             "Ошибка интернет-поиска: %s",
