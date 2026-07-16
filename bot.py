@@ -2777,6 +2777,9 @@ async def enforce_rate_limit(
         history.popleft()
 
     if len(history) >= limit:
+        await increment_stat(
+            "rate_limit_hits"
+        )
         wait_seconds = max(
             1,
             int(
