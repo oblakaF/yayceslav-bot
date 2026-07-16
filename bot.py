@@ -3037,11 +3037,14 @@ async def answer_text_message(
         action=ChatAction.TYPING,
     )
 
-    try:
+      try:
         request_for_gemini = user_text
-        private_user_id: int | None = None
 
-        # Память применяется только в личной переписке
+        private_user_id: int | None = None
+        group_chat_id: int | None = None
+        group_author_name = ""
+
+        # Личная переписка: память текущей задачи 15 минут
         if (
             update.effective_chat.type == ChatType.PRIVATE
             and update.effective_user
@@ -3064,13 +3067,48 @@ async def answer_text_message(
                     f"{user_text}"
                 )
 
+        # Группа: память разговора за последние пять минут
+        elif (
+            update.effective_chat.type in (
+                ChatType.GROUP,
+                ChatType.SUPERGROUP,
+            )
+            and update.effective_user
+        ):
+            group_chat_id = update.effective_chat.id
+
+            group_author_name = (
+                update.effective_user.full_name
+                or update.effective_user.username
+                or "Участник"
+            )
+
+            previous_context = build_memory_context(
+                GROUP_MEMORY,
+                group_chat_id,
+                GROUP_MEMORY_SECONDS,
+            )
+
+            if previous_context:
+                request_for_gemini = (
+                    "Ниже приведена переписка группы "
+                    "за последние пять минут. "
+                    "Используй её только как контекст. "
+                    "Не пересказывай всю переписку и не утверждай, "
+                    "что сообщения адресовались тебе.\n\n"
+                    f"{previous_context}\n\n"
+                    f"Новое обращение к тебе от "
+                    f"{group_author_name}:\n"
+                    f"{user_text}"
+                )
+
         answer = await ask_gemini(
             contents=request_for_gemini,
             max_output_tokens=360,
             voice_style=use_voice_style,
         )
 
-        # После успешного ответа сохраняем вопрос и ответ
+        # Сохраняем вопрос и ответ в памяти лички
         if private_user_id is not None:
             remember_message(
                 PRIVATE_MEMORY,
@@ -3090,13 +3128,34 @@ async def answer_text_message(
                 PRIVATE_MEMORY_MAX_MESSAGES,
             )
 
+        # Сохраняем обращение и ответ в памяти группы
+        if group_chat_id is not None:
+            remember_message(
+                GROUP_MEMORY,
+                group_chat_id,
+                "user",
+                user_text,
+                GROUP_MEMORY_SECONDS,
+                GROUP_MEMORY_MAX_MESSAGES,
+                group_author_name,
+            )
+
+            remember_message(
+                GROUP_MEMORY,
+                group_chat_id,
+                "assistant",
+                answer,
+                GROUP_MEMORY_SECONDS,
+                GROUP_MEMORY_MAX_MESSAGES,
+            )
+
         await send_answer(
             update,
             context,
             answer,
             force_voice=force_voice,
         )
-
+          
     except Exception as error:
         logging.exception(
             "Ошибка текстового запроса: %s",
