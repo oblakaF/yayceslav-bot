@@ -3079,7 +3079,6 @@ async def answer_document(
         "media",
     ):
         return
-
     caption_text = update.message.caption or ""
 
     force_voice = (
@@ -3089,17 +3088,12 @@ async def answer_document(
 
     use_voice_style = force_voice
 
-if force_voice:
-    prompt = (
-        remove_voice_request(prompt)
-        or "Коротко проанализируй файл."
-    )
-
-    use_voice_style = (
-        force_voice
-        or voice_mode_enabled(context)
-    )
-
+    if force_voice:
+        prompt = (
+            remove_voice_request(prompt)
+            or "Коротко проанализируй файл."
+        )
+   
     if (
         document.file_size
         and document.file_size > MAX_FILE_SIZE
