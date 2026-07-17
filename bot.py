@@ -1176,9 +1176,143 @@ def maybe_pick(
         ),
     )
 
+def build_user_preferences_instruction(
+    user_settings: dict[str, Any] | None,
+) -> str:
+    """Преобразует настройки пользователя в инструкцию Gemini."""
 
+    settings = DEFAULT_USER_SETTINGS.copy()
+
+    if user_settings:
+        settings.update(
+            user_settings
+        )
+
+    character = str(
+        settings.get(
+            "character",
+            "classic",
+        )
+    )
+
+    response_style = str(
+        settings.get(
+            "response_style",
+            "bold",
+        )
+    )
+
+    response_length = str(
+        settings.get(
+            "response_length",
+            "normal",
+        )
+    )
+
+    roughness = str(
+        settings.get(
+            "roughness",
+            "medium",
+        )
+    )
+
+    character_rules = {
+        "classic": (
+            "Классический Яйцеслав: полезный, уверенный, "
+            "мемный и иногда дерзкий."
+        ),
+        "rus": (
+            "Древний рус: говори с былинным пафосом, "
+            "иногда используй старинные обращения и слова, "
+            "но сохраняй понятность ответа."
+        ),
+        "professor": (
+            "Профессор: отвечай точно, логично и структурированно. "
+            "Не используй грубость и бессмысленные мемы."
+        ),
+        "chaos": (
+            "Безумный режим: отвечай энергично, неожиданно "
+            "и мемно, но не жертвуй правильностью ответа."
+        ),
+        "calm": (
+            "Спокойный Яйцеслав: отвечай вежливо, нейтрально "
+            "и без хамства."
+        ),
+    }
+
+    style_rules = {
+        "normal": (
+            "Стиль общения нормальный: дружелюбно "
+            "и без лишней дерзости."
+        ),
+        "bold": (
+            "Стиль общения дерзкий: уверенный тон "
+            "и максимум один короткий подкол."
+        ),
+        "serious": (
+            "Стиль общения серьёзный: без подколов, "
+            "мемов и выпендривания."
+        ),
+    }
+
+    length_rules = {
+        "short": (
+            "Отвечай кратко: обычно два–четыре "
+            "коротких предложения."
+        ),
+        "normal": (
+            "Отвечай со средней подробностью: "
+            "обычно три–семь предложений."
+        ),
+        "detailed": (
+            "Отвечай подробно: раскрывай причины, "
+            "примеры и важные детали без лишней воды."
+        ),
+    }
+
+    roughness_rules = {
+        "low": (
+            "Грубость выключена. Не используй ругательства "
+            "и оскорбительные обращения."
+        ),
+        "medium": (
+            "Допустима одна лёгкая грубоватая шутка, "
+            "только когда тема несерьёзная."
+        ),
+        "high": (
+            "Допустим более резкий юмор и одно ругательство. "
+            "Запрещены реальные угрозы, травля и оскорбления "
+            "по личным признакам."
+        ),
+    }
+
+    return (
+        "\n\nПерсональные настройки пользователя "
+        "имеют приоритет над общим характером:\n"
+        + character_rules.get(
+            character,
+            character_rules["classic"],
+        )
+        + "\n"
+        + style_rules.get(
+            response_style,
+            style_rules["bold"],
+        )
+        + "\n"
+        + length_rules.get(
+            response_length,
+            length_rules["normal"],
+        )
+        + "\n"
+        + roughness_rules.get(
+            roughness,
+            roughness_rules["medium"],
+        )
+    )
+    
 def build_system_instruction(
     user_text: str = "",
+    user_settings: dict[str, Any] | None = None,
 ) -> str:
     """
     Формирует короткую динамическую инструкцию.
@@ -1399,6 +1533,10 @@ Telegram-бот основанный на личности древнего РУ
 
 Не выдумывай факты.
 Всегда отвечай на языке пользователя.
+
+{build_user_preferences_instruction(
+    user_settings
+)}
 """
 
 
