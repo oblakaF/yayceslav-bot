@@ -4816,7 +4816,7 @@ def main() -> None:
            hard_status_command,
        )
     )
-        application.add_handler(
+    application.add_handler(
         CallbackQueryHandler(
             answer_button_callback,
             pattern=r"^answer_",
