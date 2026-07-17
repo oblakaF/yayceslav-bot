@@ -5504,7 +5504,10 @@ async def answer_voice_or_audio(
                 ),
                 prompt,
             ],
-            max_output_tokens=320,
+            max_output_tokens=get_response_token_limit(
+                user_settings,
+                normal_tokens=320,
+            ),
             voice_style=True,
             user_settings=user_settings,
         )
