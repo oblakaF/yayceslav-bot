@@ -5308,6 +5308,13 @@ async def answer_voice_or_audio(
         action=ChatAction.TYPING,
     )
 
+    user_settings = None
+
+    if update.effective_user:
+        user_settings = await get_user_settings(
+            update.effective_user.id
+        )
+
     try:
         telegram_file = await media.get_file()
 
