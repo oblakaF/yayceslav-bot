@@ -3762,6 +3762,7 @@ async def answer_text_message(
             context,
             answer,
             force_voice=force_voice,
+            show_buttons=True,
         )
 
         await increment_stat(
