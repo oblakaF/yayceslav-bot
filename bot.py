@@ -5124,7 +5124,10 @@ async def answer_document(
                         f"Запрос пользователя: {prompt}"
                     ),
                 ],
-                max_output_tokens=500,
+                max_output_tokens=get_response_token_limit(
+                    user_settings,
+                    normal_tokens=500,
+                ),
                 voice_style=use_voice_style,
                 user_settings=user_settings,
             )
@@ -5158,7 +5161,10 @@ async def answer_document(
                         f"Запрос пользователя: {prompt}"
                     ),
                 ],
-                max_output_tokens=300,
+                max_output_tokens=get_response_token_limit(
+                    user_settings,
+                    normal_tokens=300,
+                ),
                 voice_style=use_voice_style,
                 user_settings=user_settings,
             )
@@ -5183,7 +5189,10 @@ async def answer_document(
                     f"Содержимое DOCX:\n"
                     f"{extracted_text}"
                 ),
-                max_output_tokens=500,
+                max_output_tokens=get_response_token_limit(
+                    user_settings,
+                    normal_tokens=500,
+                ),
                 voice_style=use_voice_style,
                 user_settings=user_settings,
             )
@@ -5208,7 +5217,10 @@ async def answer_document(
                     f"Данные XLSX:\n"
                     f"{extracted_text}"
                 ),
-                max_output_tokens=500,
+                max_output_tokens=get_response_token_limit(
+                    user_settings,
+                    normal_tokens=500,
+                ),
                 voice_style=use_voice_style,
                 user_settings=user_settings,
             )
@@ -5228,7 +5240,10 @@ async def answer_document(
                     f"Данные CSV:\n"
                     f"{extracted_text}"
                 ),
-                max_output_tokens=500,
+                max_output_tokens=get_response_token_limit(
+                    user_settings,
+                    normal_tokens=500,
+                ),
                 voice_style=use_voice_style,
                 user_settings=user_settings,
             )
@@ -5257,7 +5272,10 @@ async def answer_document(
                     f"Содержимое файла:\n"
                     f"{extracted_text}"
                 ),
-                max_output_tokens=500,
+                max_output_tokens=get_response_token_limit(
+                    user_settings,
+                    normal_tokens=500,
+                ),
                 voice_style=use_voice_style,
                 user_settings=user_settings,
             )
