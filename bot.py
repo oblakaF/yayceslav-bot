@@ -1642,6 +1642,8 @@ async def perform_web_search(
 
     message = update.effective_message
 
+    message = update.effective_message
+
     if (
         not message
         or not update.effective_chat
@@ -3345,7 +3347,7 @@ async def send_voice_answer(
     output_path = TEMP_DIR / (
         f"tts_"
         f"{update.effective_chat.id}_"
-        f"{update.message.message_id}.mp3"
+        f"{message.message_id}.mp3"
     )
 
     edge_success = False
@@ -3432,7 +3434,7 @@ async def send_voice_answer(
         try:
             # Сначала отправляем как настоящую голосовуху
             with output_path.open("rb") as audio_file:
-                await update.message.reply_voice(
+                await message.reply_voice(
                     voice=audio_file,
                     filename="yayceslav.mp3",
                 )
@@ -3447,7 +3449,7 @@ async def send_voice_answer(
                 raise
 
             with output_path.open("rb") as audio_file:
-                await update.message.reply_audio(
+                await message.reply_audio(
                     audio=audio_file,
                     filename="yayceslav.mp3",
                     title="Ответ Яйцеслава",
