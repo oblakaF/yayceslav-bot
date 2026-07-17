@@ -3549,7 +3549,172 @@ async def send_answer(
             ],
             reply_markup=reply_markup,
         )
+async def answer_button_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Обрабатывает кнопки под ответом в личном чате."""
 
+    query = update.callback_query
+
+    if not query:
+        return
+
+    if (
+        not update.effective_chat
+        or update.effective_chat.type
+        != ChatType.PRIVATE
+    ):
+        await query.answer()
+        return
+
+    user_query = str(
+        context.user_data.get(
+            "last_user_query",
+            "",
+        )
+    ).strip()
+
+    last_answer = str(
+        context.user_data.get(
+            "last_answer",
+            "",
+        )
+    ).strip()
+
+    if not user_query or not last_answer:
+        await query.answer(
+            "Этот ответ уже устарел. "
+            "Задай вопрос ещё раз.",
+            show_alert=True,
+        )
+        return
+
+    action = query.data or ""
+
+    allowed_actions = (
+        "answer_search",
+        "answer_more",
+        "answer_shorter",
+        "answer_voice",
+    )
+
+    if action not in allowed_actions:
+        await query.answer(
+            "Неизвестная кнопка.",
+            show_alert=True,
+        )
+        return
+
+    await query.answer()
+
+    # Поиск исходного вопроса в интернете
+    if action == "answer_search":
+        await perform_web_search(
+            update=update,
+            context=context,
+            query=user_query,
+        )
+        return
+
+    # Озвучка текущего ответа
+    if action == "answer_voice":
+        try:
+            await send_voice_answer(
+                update,
+                last_answer,
+            )
+        except Exception as error:
+            logging.exception(
+                "Ошибка озвучки кнопкой: %s",
+                error,
+            )
+
+            message = update.effective_message
+
+            if message:
+                await message.reply_text(
+                    "Не удалось озвучить ответ."
+                )
+
+        return
+
+    if action == "answer_more":
+        prompt = f"""
+Пользователь ранее задал вопрос:
+
+{user_query}
+
+Текущий ответ:
+
+{last_answer}
+
+Раскрой текущий ответ подробнее.
+Добавь полезные объяснения, примеры и важные детали.
+Не повторяй длинное вступление.
+Не упоминай, что ты переписываешь предыдущий ответ.
+""".strip()
+
+        max_tokens = 650
+
+    else:
+        prompt = f"""
+Пользователь ранее задал вопрос:
+
+{user_query}
+
+Текущий ответ:
+
+{last_answer}
+
+Сократи текущий ответ.
+Оставь только главное и сохрани важные факты.
+Ответ должен состоять примерно из двух–четырёх
+коротких предложений.
+Не упоминай, что ты сокращаешь предыдущий ответ.
+""".strip()
+
+        max_tokens = 220
+
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id,
+        action=ChatAction.TYPING,
+    )
+
+    try:
+        new_answer = await ask_gemini(
+            contents=prompt,
+            max_output_tokens=max_tokens,
+        )
+
+        context.user_data[
+            "last_answer"
+        ] = new_answer
+
+        await send_answer(
+            update,
+            context,
+            new_answer,
+            show_buttons=True,
+        )
+
+        await increment_stat(
+            "bot_answers"
+        )
+
+    except Exception as error:
+        logging.exception(
+            "Ошибка кнопки ответа: %s",
+            error,
+        )
+
+        message = update.effective_message
+
+        if message:
+            await message.reply_text(
+                "Не удалось изменить ответ. "
+                "Нейронка опять поплыла."
+            )
 # ============================================================
 # ТЕКСТОВЫЕ СООБЩЕНИЯ
 # ============================================================
@@ -3786,7 +3951,6 @@ async def answer_text_message(
             "Связь с нейросетью опять пала в бою 🥚\n"
             "Повтори позже, нищий."
         )
-
 
 # ============================================================
 # ФОТОГРАФИИ
