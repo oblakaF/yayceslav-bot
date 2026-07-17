@@ -4505,10 +4505,36 @@ async def answer_text_message(
                 "что именно ему озвучить."
             )
 
-    # Проверяем просьбу выполнить поиск
+    # Загружаем персональные настройки
+    user_settings = None
+
+    if update.effective_user:
+        user_settings = await get_user_settings(
+            update.effective_user.id
+        )
+
+    search_mode = str(
+        (
+            user_settings
+            or DEFAULT_USER_SETTINGS
+        ).get(
+            "search_mode",
+            "button",
+        )
+    )
+
+    # Проверяем явную просьбу выполнить поиск
     search_query = extract_search_query(
         user_text
     )
+
+    # В автоматическом режиме сами включаем поиск
+    if (
+        search_query is None
+        and search_mode == "auto"
+        and should_auto_search(user_text)
+    ):
+        search_query = user_text
 
     if search_query is not None:
         await perform_web_search(
