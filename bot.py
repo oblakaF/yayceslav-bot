@@ -314,6 +314,120 @@ async def update_user_setting(
         setting_name,
         setting_value,
     )
+  CHARACTER_LABELS = {
+    "classic": "🥚 Классический",
+    "rus": "🗿 Древний рус",
+    "professor": "🎓 Профессор",
+    "chaos": "🤡 Безумный",
+    "calm": "🧘 Спокойный",
+}
+
+STYLE_LABELS = {
+    "normal": "Нормальный",
+    "bold": "Дерзкий",
+    "serious": "Серьёзный",
+}
+
+LENGTH_LABELS = {
+    "short": "Кратко",
+    "normal": "Обычно",
+    "detailed": "Подробно",
+}
+
+SEARCH_MODE_LABELS = {
+    "auto": "Автоматически",
+    "button": "Только по кнопке",
+}
+
+ROUGHNESS_LABELS = {
+    "low": "Низкая",
+    "medium": "Средняя",
+    "high": "Высокая",
+}
+
+
+def build_settings_keyboard(
+    settings: dict[str, Any],
+) -> InlineKeyboardMarkup:
+    """Создаёт главное меню настроек."""
+
+    character = CHARACTER_LABELS.get(
+        str(settings.get("character")),
+        CHARACTER_LABELS["classic"],
+    )
+
+    style = STYLE_LABELS.get(
+        str(settings.get("response_style")),
+        STYLE_LABELS["bold"],
+    )
+
+    response_length = LENGTH_LABELS.get(
+        str(settings.get("response_length")),
+        LENGTH_LABELS["normal"],
+    )
+
+    search_mode = SEARCH_MODE_LABELS.get(
+        str(settings.get("search_mode")),
+        SEARCH_MODE_LABELS["button"],
+    )
+
+    roughness = ROUGHNESS_LABELS.get(
+        str(settings.get("roughness")),
+        ROUGHNESS_LABELS["medium"],
+    )
+
+    voice = (
+        "Включён"
+        if settings.get("voice_enabled")
+        else "Выключен"
+    )
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    f"🎭 Персонаж: {character}",
+                    callback_data="settings_character",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    f"💬 Стиль: {style}",
+                    callback_data="settings_style",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    f"📏 Длина: {response_length}",
+                    callback_data="settings_length",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    f"🔊 Голос: {voice}",
+                    callback_data="settings_voice",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    f"🔎 Поиск: {search_mode}",
+                    callback_data="settings_search",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    f"🤬 Грубость: {roughness}",
+                    callback_data="settings_roughness",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "♻️ Сбросить настройки",
+                    callback_data="settings_reset",
+                )
+            ],
+        ]
+    )  
 def increment_stat_sync(
     stat_name: str,
     amount: int = 1,
