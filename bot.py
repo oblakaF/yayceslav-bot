@@ -2430,7 +2430,9 @@ async def hard_on_command(
 ) -> None:
     """Включает хард-мод в группе."""
 
-    if not update.message:
+    message = update.effective_message
+
+    if not message:
         return
 
     if not await user_is_group_admin(
@@ -3505,7 +3507,7 @@ async def send_answer(
                 error,
             )
 
-            await update.message.reply_text(
+            await message.reply_text(
                 "Голосовой тракт охрип. "
                 "Держи ответ текстом."
             )
@@ -3535,7 +3537,7 @@ async def send_answer(
                 build_private_answer_keyboard()
             )
 
-        await update.message.reply_text(
+        await message.reply_text(
             answer_text[
                 position:position + 4000
             ],
