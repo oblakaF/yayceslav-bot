@@ -4307,9 +4307,17 @@ async def answer_button_callback(
     )
 
     try:
+        user_settings = None
+
+        if update.effective_user:
+            user_settings = await get_user_settings(
+                update.effective_user.id
+            )
+
         new_answer = await ask_gemini(
             contents=prompt,
             max_output_tokens=max_tokens,
+            user_settings=user_settings,
         )
 
         context.user_data[
