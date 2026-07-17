@@ -4444,7 +4444,19 @@ async def answer_text_message(
             user_settings = await get_user_settings(
                 update.effective_user.id
             )
+        settings_voice_enabled = bool(
+            user_settings
+            and user_settings.get(
+                "voice_enabled",
+                False,
+            )
+        )
 
+        use_voice_style = (
+            use_voice_style
+            or settings_voice_enabled
+        )
+        
         private_user_id: int | None = None
         group_chat_id: int | None = None
         group_author_name = ""
@@ -4567,10 +4579,13 @@ async def answer_text_message(
             update,
             context,
             answer,
-            force_voice=force_voice,
+            force_voice=(
+                force_voice
+                or settings_voice_enabled
+            ),
             show_buttons=True,
         )
-
+        
         await increment_stat(
             "bot_answers"
         )    
