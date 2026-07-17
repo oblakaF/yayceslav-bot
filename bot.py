@@ -1659,6 +1659,7 @@ async def ask_gemini(
     contents: Any,
     max_output_tokens: int = 320,
     voice_style: bool = False,
+    user_settings: dict[str, Any] | None = None,
 ) -> str:
     """Отправляет запрос Gemini с тремя попытками."""
 
@@ -1668,7 +1669,8 @@ async def ask_gemini(
         style_text = ""
 
     current_instruction = build_system_instruction(
-        style_text
+        style_text,
+        user_settings,
     )
 
     if voice_style:
