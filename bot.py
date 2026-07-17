@@ -3249,7 +3249,6 @@ def voice_mode_enabled(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> bool:
     """Проверяет постоянный голосовой режим пользователя."""
-
     return bool(
         context.user_data.get(
             "voice_mode",
@@ -3258,7 +3257,7 @@ def voice_mode_enabled(
     )
 
 
- def build_private_answer_keyboard() -> InlineKeyboardMarkup:
+def build_private_answer_keyboard() -> InlineKeyboardMarkup:
     """Создаёт кнопки под ответом в личном чате."""
 
     return InlineKeyboardMarkup(
