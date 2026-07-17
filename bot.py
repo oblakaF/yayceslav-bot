@@ -3688,6 +3688,14 @@ async def answer_text_message(
 
         # Сохраняем вопрос и ответ в памяти лички
         if private_user_id is not None:
+            context.user_data[
+                "last_user_query"
+            ] = user_text
+
+            context.user_data[
+                "last_answer"
+            ] = answer
+            
             remember_message(
                 PRIVATE_MEMORY,
                 private_user_id,
