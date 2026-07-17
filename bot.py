@@ -1309,7 +1309,42 @@ def build_user_preferences_instruction(
             roughness_rules["medium"],
         )
     )
-    
+def get_response_token_limit(
+    user_settings: dict[str, Any] | None,
+    normal_tokens: int = 360,
+) -> int:
+    """Возвращает лимит ответа с учётом настройки длины."""
+
+    settings = DEFAULT_USER_SETTINGS.copy()
+
+    if user_settings:
+        settings.update(
+            user_settings
+        )
+
+    response_length = str(
+        settings.get(
+            "response_length",
+            "normal",
+        )
+    )
+
+    token_limits = {
+        "short": max(
+            160,
+            int(normal_tokens * 0.65),
+        ),
+        "normal": normal_tokens,
+        "detailed": min(
+            900,
+            int(normal_tokens * 1.7),
+        ),
+    }
+
+    return token_limits.get(
+        response_length,
+        normal_tokens,
+    )    
 def build_system_instruction(
     user_text: str = "",
     user_settings: dict[str, Any] | None = None,
