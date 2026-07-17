@@ -2170,7 +2170,189 @@ async def settings_command(
         reply_markup=build_settings_keyboard(
             settings
         ),
-    )    
+    )
+async def settings_button_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Изменяет настройки по нажатию кнопок."""
+
+    del context
+
+    query = update.callback_query
+
+    if (
+        not query
+        or not update.effective_user
+        or not update.effective_chat
+    ):
+        return
+
+    if (
+        update.effective_chat.type
+        != ChatType.PRIVATE
+    ):
+        await query.answer(
+            "Настройки доступны только "
+            "в личном чате.",
+            show_alert=True,
+        )
+        return
+
+    action = query.data or ""
+    user_id = update.effective_user.id
+
+    setting_cycles = {
+        "settings_character": (
+            "character",
+            (
+                "classic",
+                "rus",
+                "professor",
+                "chaos",
+                "calm",
+            ),
+        ),
+        "settings_style": (
+            "response_style",
+            (
+                "normal",
+                "bold",
+                "serious",
+            ),
+        ),
+        "settings_length": (
+            "response_length",
+            (
+                "short",
+                "normal",
+                "detailed",
+            ),
+        ),
+        "settings_search": (
+            "search_mode",
+            (
+                "button",
+                "auto",
+            ),
+        ),
+        "settings_roughness": (
+            "roughness",
+            (
+                "low",
+                "medium",
+                "high",
+            ),
+        ),
+    }
+
+    try:
+        settings = await get_user_settings(
+            user_id
+        )
+
+        if action == "settings_voice":
+            new_voice_value = not bool(
+                settings.get(
+                    "voice_enabled",
+                    False,
+                )
+            )
+
+            await update_user_setting(
+                user_id,
+                "voice_enabled",
+                new_voice_value,
+            )
+
+        elif action == "settings_reset":
+            for (
+                setting_name,
+                setting_value,
+            ) in DEFAULT_USER_SETTINGS.items():
+                await update_user_setting(
+                    user_id,
+                    setting_name,
+                    setting_value,
+                )
+
+        elif action in setting_cycles:
+            (
+                setting_name,
+                available_values,
+            ) = setting_cycles[action]
+
+            current_value = str(
+                settings.get(
+                    setting_name,
+                    available_values[0],
+                )
+            )
+
+            try:
+                current_index = (
+                    available_values.index(
+                        current_value
+                    )
+                )
+            except ValueError:
+                current_index = -1
+
+            next_index = (
+                current_index + 1
+            ) % len(available_values)
+
+            await update_user_setting(
+                user_id,
+                setting_name,
+                available_values[next_index],
+            )
+
+        else:
+            await query.answer(
+                "Неизвестная настройка.",
+                show_alert=True,
+            )
+            return
+
+        updated_settings = (
+            await get_user_settings(
+                user_id
+            )
+        )
+
+        try:
+            await query.edit_message_reply_markup(
+                reply_markup=build_settings_keyboard(
+                    updated_settings
+                )
+            )
+        except BadRequest as error:
+            if (
+                "not modified"
+                not in str(error).lower()
+            ):
+                raise
+
+        if action == "settings_reset":
+            await query.answer(
+                "Настройки сброшены."
+            )
+        else:
+            await query.answer(
+                "Настройка сохранена."
+            )
+
+    except Exception as error:
+        logging.exception(
+            "Ошибка изменения настроек: %s",
+            error,
+        )
+
+        await query.answer(
+            "Не удалось сохранить настройку.",
+            show_alert=True,
+        )    
 # ============================================================
 # ЧТЕНИЕ ФАЙЛОВ
 # ============================================================
