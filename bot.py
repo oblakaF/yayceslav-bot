@@ -3474,7 +3474,9 @@ async def send_answer(
     Команда /voice_on включает голосовой режим постоянно.
     """
 
-    if not update.message:
+    message = update.effective_message
+
+    if not message:
         return
 
     answer_text = (
