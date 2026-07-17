@@ -5315,6 +5315,12 @@ def main() -> None:
         )
     )
     application.add_handler(
+        CallbackQueryHandler(
+            settings_button_callback,
+            pattern=r"^settings_",
+        )
+    )
+    application.add_handler(
         MessageHandler(
             filters.PHOTO,
             answer_photo,
