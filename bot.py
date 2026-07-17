@@ -241,7 +241,7 @@ async def get_user_settings(
         get_user_settings_sync,
         user_id,
     )
-    USER_SETTING_COLUMNS = {
+USER_SETTING_COLUMNS = {
     "character",
     "response_style",
     "response_length",
