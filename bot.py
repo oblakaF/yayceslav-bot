@@ -2291,7 +2291,13 @@ async def perform_web_search(
                     PRIVATE_MEMORY_SECONDS,
                     PRIVATE_MEMORY_MAX_MESSAGES,
                 )
+                context.user_data[
+                    "last_user_query"
+                ] = query
 
+                context.user_data[
+                    "last_answer"
+                ] = answer
             elif update.effective_chat.type in (
                 ChatType.GROUP,
                 ChatType.SUPERGROUP,
@@ -2328,6 +2334,7 @@ async def perform_web_search(
                 force_voice
                 or settings_voice_enabled
             ),
+            show_buttons=True,
         )
         
         await increment_stat(
