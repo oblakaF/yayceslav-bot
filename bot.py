@@ -4870,9 +4870,25 @@ async def answer_document(
         return
     caption_text = update.message.caption or ""
 
+    user_settings = None
+
+    if update.effective_user:
+        user_settings = await get_user_settings(
+            update.effective_user.id
+        )
+
+    settings_voice_enabled = bool(
+        user_settings
+        and user_settings.get(
+            "voice_enabled",
+            False,
+        )
+    )
+
     force_voice = (
         text_requests_voice(caption_text)
         or voice_mode_enabled(context)
+        or settings_voice_enabled
     )
 
     use_voice_style = force_voice
