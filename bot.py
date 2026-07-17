@@ -3461,6 +3461,7 @@ async def send_answer(
     context: ContextTypes.DEFAULT_TYPE,
     text: str,
     force_voice: bool = False,
+    show_buttons: bool = False,
 ) -> None:
     """
     Отправляет либо голосовой, либо текстовый ответ.
@@ -3514,10 +3515,29 @@ async def send_answer(
         len(answer_text),
         4000,
     ):
+        is_last_part = (
+            position + 4000
+            >= len(answer_text)
+        )
+
+        reply_markup = None
+
+        if (
+            show_buttons
+            and update.effective_chat
+            and update.effective_chat.type
+            == ChatType.PRIVATE
+            and is_last_part
+        ):
+            reply_markup = (
+                build_private_answer_keyboard()
+            )
+
         await update.message.reply_text(
             answer_text[
                 position:position + 4000
-            ]
+            ],
+            reply_markup=reply_markup,
         )
 
 # ============================================================
