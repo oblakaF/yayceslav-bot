@@ -2105,9 +2105,25 @@ async def perform_web_search(
             results
         )
 
+        user_settings = None
+
+        if update.effective_user:
+            user_settings = await get_user_settings(
+                update.effective_user.id
+            )
+
+        settings_voice_enabled = bool(
+            user_settings
+            and user_settings.get(
+                "voice_enabled",
+                False,
+            )
+        )
+
         use_voice_style = (
             force_voice
             or voice_mode_enabled(context)
+            or settings_voice_enabled
         )
 
         if use_voice_style:
@@ -2152,6 +2168,7 @@ async def perform_web_search(
             contents=gemini_prompt,
             max_output_tokens=350,
             voice_style=use_voice_style,
+            user_settings=user_settings,
         )
 
         # В голосовом ответе дополнительно удаляем
@@ -2230,7 +2247,10 @@ async def perform_web_search(
             update,
             context,
             answer,
-            force_voice=force_voice,
+            force_voice=(
+                force_voice
+                or settings_voice_enabled
+            ),
         )
         
         await increment_stat(
