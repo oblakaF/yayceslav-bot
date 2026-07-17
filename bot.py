@@ -155,7 +155,20 @@ def initialize_stats_database() -> None:
             )
             """
         )
-
+        
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER PRIMARY KEY,
+                character TEXT NOT NULL DEFAULT 'classic',
+                response_style TEXT NOT NULL DEFAULT 'bold',
+                response_length TEXT NOT NULL DEFAULT 'normal',
+                voice_enabled INTEGER NOT NULL DEFAULT 0,
+                search_mode TEXT NOT NULL DEFAULT 'button',
+                roughness TEXT NOT NULL DEFAULT 'medium'
+            )
+            """
+        )
         connection.commit()
 
 
