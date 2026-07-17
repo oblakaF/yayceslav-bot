@@ -4816,6 +4816,12 @@ def main() -> None:
            hard_status_command,
        )
     )
+        application.add_handler(
+        CallbackQueryHandler(
+            answer_button_callback,
+            pattern=r"^answer_",
+        )
+    )
     application.add_handler(
         MessageHandler(
             filters.PHOTO,
