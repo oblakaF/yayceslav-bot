@@ -173,6 +173,74 @@ def initialize_stats_database() -> None:
 
 
 initialize_stats_database()
+DEFAULT_USER_SETTINGS = {
+    "character": "classic",
+    "response_style": "bold",
+    "response_length": "normal",
+    "voice_enabled": False,
+    "search_mode": "button",
+    "roughness": "medium",
+}
+
+
+def get_user_settings_sync(
+    user_id: int,
+) -> dict[str, Any]:
+    """Получает сохранённые настройки пользователя."""
+
+    with sqlite3.connect(
+        STATS_DB_PATH,
+        timeout=30,
+    ) as connection:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO user_settings (
+                user_id
+            )
+            VALUES (?)
+            """,
+            (user_id,),
+        )
+
+        row = connection.execute(
+            """
+            SELECT
+                character,
+                response_style,
+                response_length,
+                voice_enabled,
+                search_mode,
+                roughness
+            FROM user_settings
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+        connection.commit()
+
+    if row is None:
+        return DEFAULT_USER_SETTINGS.copy()
+
+    return {
+        "character": str(row[0]),
+        "response_style": str(row[1]),
+        "response_length": str(row[2]),
+        "voice_enabled": bool(row[3]),
+        "search_mode": str(row[4]),
+        "roughness": str(row[5]),
+    }
+
+
+async def get_user_settings(
+    user_id: int,
+) -> dict[str, Any]:
+    """Читает настройки без блокировки бота."""
+
+    return await asyncio.to_thread(
+        get_user_settings_sync,
+        user_id,
+    )
 def increment_stat_sync(
     stat_name: str,
     amount: int = 1,
