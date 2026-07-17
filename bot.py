@@ -4470,6 +4470,13 @@ async def answer_button_callback(
             update,
             context,
             new_answer,
+            force_voice=bool(
+                user_settings
+                and user_settings.get(
+                    "voice_enabled",
+                    False,
+                )
+            ),
             show_buttons=True,
         )
 
