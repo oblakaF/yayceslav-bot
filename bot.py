@@ -1834,7 +1834,7 @@ async def perform_web_search(
             error,
         )
 
-        await update.message.reply_text(
+        await message.reply_text(
             "Интернет-поиск поплыл. "
             "Повтори позже, легенда."
         )
