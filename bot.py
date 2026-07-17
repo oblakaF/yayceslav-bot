@@ -4881,7 +4881,10 @@ async def answer_photo(
                 ),
                 prompt,
             ],
-            max_output_tokens=250,
+            max_output_tokens=get_response_token_limit(
+                user_settings,
+                normal_tokens=250,
+            ),
             voice_style=use_voice_style,
             user_settings=user_settings,
         )
