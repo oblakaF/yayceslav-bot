@@ -1640,8 +1640,10 @@ async def perform_web_search(
 ) -> None:
     """Ищет информацию и формирует краткий ответ Gemini."""
 
+    message = update.effective_message
+
     if (
-        not update.message
+        not message
         or not update.effective_chat
     ):
         return
@@ -1655,7 +1657,7 @@ async def perform_web_search(
     query = query.strip()
 
     if not query:
-        await update.message.reply_text(
+        await message.reply_text(
             "Что искать-то, гений? "
             "Напиши нормальный запрос."
         )
@@ -1684,7 +1686,7 @@ async def perform_web_search(
         )
 
         if not results:
-            await update.message.reply_text(
+            await message.reply_text(
                 "Поиск ничего не нашёл. "
                 "Редкий анлак даже для Яйцеслава."
             )
