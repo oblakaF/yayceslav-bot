@@ -3256,6 +3256,37 @@ def voice_mode_enabled(
             False,
         )
     )
+ def build_private_answer_keyboard() -> InlineKeyboardMarkup:
+    """Создаёт кнопки под ответом в личном чате."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🔎 Поиск в интернете",
+                    callback_data="answer_search",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📚 Подробнее",
+                    callback_data="answer_more",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✂️ Короче",
+                    callback_data="answer_shorter",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔊 Голосом",
+                    callback_data="answer_voice",
+                )
+            ],
+        ]
+    )   
 # ============================================================
 # ОТПРАВКА ТЕКСТОВЫХ И ГОЛОСОВЫХ ОТВЕТОВ
 # ============================================================
