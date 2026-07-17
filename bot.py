@@ -4688,7 +4688,10 @@ async def answer_text_message(
 
         answer = await ask_gemini(
             contents=request_for_gemini,
-            max_output_tokens=360,
+            max_output_tokens=get_response_token_limit(
+                user_settings,
+                normal_tokens=360,
+            ),
             voice_style=use_voice_style,
             user_settings=user_settings,
         )
