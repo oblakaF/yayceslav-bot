@@ -3309,8 +3309,10 @@ async def send_voice_answer(
     Если edge-tts не работает, использует gTTS.
     """
 
+    message = update.effective_message
+
     if (
-        not update.message
+        not message
         or not update.effective_chat
     ):
         return
