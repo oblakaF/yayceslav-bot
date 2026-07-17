@@ -2135,6 +2135,42 @@ async def search_command(
         query=query,
         force_voice=force_voice,
     )
+async def settings_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Показывает персональные настройки пользователя."""
+
+    if (
+        not update.message
+        or not update.effective_user
+        or not update.effective_chat
+    ):
+        return
+
+    if (
+        update.effective_chat.type
+        != ChatType.PRIVATE
+    ):
+        await update.message.reply_text(
+            "Настройки доступны только "
+            "в личном чате со мной."
+        )
+        return
+
+    settings = await get_user_settings(
+        update.effective_user.id
+    )
+
+    await update.message.reply_text(
+        "⚙️ Настройки Яйцеслава\n\n"
+        "Нажимай на нужный пункт. "
+        "Выбранные параметры сохраняются "
+        "после перезапуска бота.",
+        reply_markup=build_settings_keyboard(
+            settings
+        ),
+    )    
 # ============================================================
 # ЧТЕНИЕ ФАЙЛОВ
 # ============================================================
