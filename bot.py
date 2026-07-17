@@ -241,6 +241,79 @@ async def get_user_settings(
         get_user_settings_sync,
         user_id,
     )
+    USER_SETTING_COLUMNS = {
+    "character",
+    "response_style",
+    "response_length",
+    "voice_enabled",
+    "search_mode",
+    "roughness",
+}
+
+
+def update_user_setting_sync(
+    user_id: int,
+    setting_name: str,
+    setting_value: Any,
+) -> None:
+    """Сохраняет одну настройку пользователя."""
+
+    if setting_name not in USER_SETTING_COLUMNS:
+        raise ValueError(
+            f"Неизвестная настройка: {setting_name}"
+        )
+
+    if setting_name == "voice_enabled":
+        database_value = int(
+            bool(setting_value)
+        )
+    else:
+        database_value = str(
+            setting_value
+        )
+
+    with sqlite3.connect(
+        STATS_DB_PATH,
+        timeout=30,
+    ) as connection:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO user_settings (
+                user_id
+            )
+            VALUES (?)
+            """,
+            (user_id,),
+        )
+
+        connection.execute(
+            f"""
+            UPDATE user_settings
+            SET {setting_name} = ?
+            WHERE user_id = ?
+            """,
+            (
+                database_value,
+                user_id,
+            ),
+        )
+
+        connection.commit()
+
+
+async def update_user_setting(
+    user_id: int,
+    setting_name: str,
+    setting_value: Any,
+) -> None:
+    """Сохраняет настройку без блокировки бота."""
+
+    await asyncio.to_thread(
+        update_user_setting_sync,
+        user_id,
+        setting_name,
+        setting_value,
+    )
 def increment_stat_sync(
     stat_name: str,
     amount: int = 1,
