@@ -3256,6 +3256,8 @@ def voice_mode_enabled(
             False,
         )
     )
+
+
  def build_private_answer_keyboard() -> InlineKeyboardMarkup:
     """Создаёт кнопки под ответом в личном чате."""
 
