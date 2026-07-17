@@ -20,10 +20,16 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from openpyxl import load_workbook
-from telegram import ReactionTypeEmoji, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReactionTypeEmoji,
+    Update,
+)
 from telegram.constants import ChatAction, ChatType
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
