@@ -4438,6 +4438,13 @@ async def answer_text_message(
     try:
         request_for_gemini = user_text
 
+        user_settings = None
+
+        if update.effective_user:
+            user_settings = await get_user_settings(
+                update.effective_user.id
+            )
+
         private_user_id: int | None = None
         group_chat_id: int | None = None
         group_author_name = ""
@@ -4504,6 +4511,7 @@ async def answer_text_message(
             contents=request_for_gemini,
             max_output_tokens=360,
             voice_style=use_voice_style,
+            user_settings=user_settings,
         )
 
         # Сохраняем вопрос и ответ в памяти лички
