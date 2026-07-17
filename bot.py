@@ -5003,6 +5003,8 @@ async def answer_document(
                     ),
                 ],
                 max_output_tokens=300,
+                voice_style=use_voice_style,
+                user_settings=user_settings,
             )
 
         # Word
@@ -5027,6 +5029,7 @@ async def answer_document(
                 ),
                 max_output_tokens=500,
                 voice_style=use_voice_style,
+                user_settings=user_settings,
             )
 
         # Excel
@@ -5051,6 +5054,7 @@ async def answer_document(
                 ),
                 max_output_tokens=500,
                 voice_style=use_voice_style,
+                user_settings=user_settings,
             )
 
         # CSV
@@ -5070,6 +5074,7 @@ async def answer_document(
                 ),
                 max_output_tokens=500,
                 voice_style=use_voice_style,
+                user_settings=user_settings,
             )
 
         # Текстовые файлы
@@ -5098,6 +5103,7 @@ async def answer_document(
                 ),
                 max_output_tokens=500,
                 voice_style=use_voice_style,
+                user_settings=user_settings,
             )
 
         else:
