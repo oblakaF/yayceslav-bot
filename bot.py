@@ -4569,12 +4569,6 @@ async def answer_text_message(
     try:
         request_for_gemini = user_text
 
-        user_settings = None
-
-        if update.effective_user:
-            user_settings = await get_user_settings(
-                update.effective_user.id
-            )
         settings_voice_enabled = bool(
             user_settings
             and user_settings.get(
