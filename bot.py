@@ -314,7 +314,7 @@ async def update_user_setting(
         setting_name,
         setting_value,
     )
-  CHARACTER_LABELS = {
+CHARACTER_LABELS = {
     "classic": "🥚 Классический",
     "rus": "🗿 Древний рус",
     "professor": "🎓 Профессор",
