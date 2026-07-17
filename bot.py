@@ -5056,6 +5056,12 @@ def main() -> None:
     )
     application.add_handler(
         CommandHandler(
+            "settings",
+            settings_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
             "forget",
             forget_command,
         )
