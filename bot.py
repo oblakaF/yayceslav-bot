@@ -4935,6 +4935,13 @@ async def answer_document(
         action=ChatAction.TYPING,
     )
 
+    user_settings = None
+
+    if update.effective_user:
+        user_settings = await get_user_settings(
+            update.effective_user.id
+        )
+
     try:
         telegram_file = await document.get_file()
 
@@ -5326,6 +5333,7 @@ async def answer_voice_or_audio(
             ],
             max_output_tokens=320,
             voice_style=True,
+            user_settings=user_settings,
         )
         # Запоминаем обсуждение голосового сообщения
         if update.effective_user:
