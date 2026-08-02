@@ -82,3 +82,37 @@ def test_absurd_comparisons_cover_expected_themes():
     assert expected_themes <= vocabulary.ABSURD_COMPARISONS.keys()
     for comparisons in vocabulary.ABSURD_COMPARISONS.values():
         assert len(comparisons) > 0
+
+
+def test_absurd_comparisons_reach_at_least_a_hundred_total():
+    total = sum(len(v) for v in vocabulary.ABSURD_COMPARISONS.values())
+    assert total >= 100
+
+
+def test_absurd_comparisons_have_no_exact_duplicates_within_theme():
+    for theme, comparisons in vocabulary.ABSURD_COMPARISONS.items():
+        assert len(comparisons) == len(set(comparisons)), theme
+
+
+def test_slang_2010s_and_2020s_do_not_overlap():
+    overlap = set(vocabulary.SLANG_2010S) & set(vocabulary.SLANG_2020S)
+    assert overlap == set()
+
+
+def test_slang_2010s_and_2020s_have_no_internal_duplicates():
+    assert len(vocabulary.SLANG_2010S) == len(set(vocabulary.SLANG_2010S))
+    assert len(vocabulary.SLANG_2020S) == len(set(vocabulary.SLANG_2020S))
+
+
+def test_russian_internet_classics_nonempty_and_distinct():
+    assert len(vocabulary.RUSSIAN_INTERNET_CLASSICS) > 0
+    assert len(vocabulary.RUSSIAN_INTERNET_CLASSICS) == len(
+        set(vocabulary.RUSSIAN_INTERNET_CLASSICS)
+    )
+
+
+def test_old_russian_metaphors_nonempty_and_distinct():
+    assert len(vocabulary.OLD_RUSSIAN_METAPHORS) > 0
+    assert len(vocabulary.OLD_RUSSIAN_METAPHORS) == len(
+        set(vocabulary.OLD_RUSSIAN_METAPHORS)
+    )
