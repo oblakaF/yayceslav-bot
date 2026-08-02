@@ -35,9 +35,12 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+import humor_engine
+import intent
 from personality import (
     DEFAULT_USER_SETTINGS,
     build_system_instruction,
+    detect_conversation_mode,
     VOICE_STYLE_INSTRUCTION,
 )
 from vocabulary import (
@@ -797,11 +800,196 @@ def build_memory_context(
 # GEMINI
 # ============================================================
 
+def _build_humor_instruction(
+    decision: humor_engine.HumorDecision,
+) -> str:
+    """Превращает решение HumorEngine в подсказку для Gemini."""
+
+    if not decision.humor_allowed:
+        return ""
+
+    lines = [
+        f"Дополнительная подсказка юмора (тип: {decision.humor_type})."
+    ]
+
+    if decision.selected_phrase:
+        lines.append(
+            "Можно оттолкнуться от идеи (не копируй дословно, "
+            f"адаптируй под контекст): \"{decision.selected_phrase}\""
+        )
+
+    if decision.selected_comparison:
+        lines.append(
+            "Уместно похожее по духу сравнение (не копируй дословно): "
+            f"\"{decision.selected_comparison}\""
+        )
+
+    if decision.should_use_old_russian:
+        lines.append(
+            "Уместно одно старинное слово из разрешённого списка."
+        )
+
+    if decision.should_use_slang:
+        lines.append(
+            "Уместен один вариант молодёжного сленга."
+        )
+
+    if decision.should_be_self_ironic:
+        lines.append(
+            "Тон — самоирония, а не превосходство."
+        )
+
+    if decision.humor_type == "banter_hostile":
+        strategy_hints = {
+            "mirror": "зеркально отрази грубость, не эскалируя её.",
+            "insult_flip": (
+                "переверни оскорбление на пользователя, "
+                "без реальных угроз."
+            ),
+            "deadpan_protocol": (
+                "ответь подчёркнуто официально на несерьёзную грубость."
+            ),
+            "technical_analogy": (
+                "сравни пользователя с чем-то техническим "
+                "(роутер, баг, зависший процесс)."
+            ),
+            "calm_hyperbole": "спокойная гипербола, без надрыва.",
+            "old_russian_verdict": "вынеси шуточный древнерусский приговор.",
+            "gaming_analogy": (
+                "сравни с игровой ситуацией (нуб, вайп, лаг)."
+            ),
+            "short_absurd": (
+                "один короткий абсурдный образ, без развёрнутого объяснения."
+            ),
+            "literal_reading": "прочти оскорбление подчёркнуто буквально.",
+            "self_irony": (
+                "признай подкол пользователя удачным, без раскаяния."
+            ),
+        }
+
+        strategy_hint = strategy_hints.get(
+            decision.comeback_strategy or "", ""
+        )
+
+        if strategy_hint:
+            lines.append(
+                f"Стратегия ответа: {strategy_hint}"
+            )
+
+        if decision.outcome in (
+            humor_engine.OUTCOME_USER_WON,
+            humor_engine.OUTCOME_DRAW,
+        ):
+            lines.append(
+                "В этот раз признай, что подкол пользователя удался — "
+                "коротко, без раскаяния и без нытья."
+            )
+
+        lines.append(
+            "Одна короткая реплика и дальше по делу. "
+            "Не оправдывайся, не читай мораль, не изображай обиду, "
+            "не пиши, что тебе неприятно."
+        )
+
+    return "\n".join(lines)
+
+
+def build_full_system_instruction(
+    style_text: str,
+    user_settings: dict[str, Any] | None = None,
+    voice_style: bool = False,
+    chat_id: int | None = None,
+    chat_type: str = "private",
+    user_name: str = "",
+    recent_messages: list[str] | None = None,
+    bot_was_mentioned: bool = True,
+) -> str:
+    """
+    Собирает системную инструкцию для Gemini целиком:
+    базовый характер + подсказка HumorEngine + голосовой стиль.
+
+    Вынесено из ask_gemini отдельной чистой функцией, чтобы
+    её можно было протестировать без сетевого вызова к Gemini.
+    """
+
+    current_instruction = build_system_instruction(
+        style_text,
+        user_settings,
+    )
+
+    if style_text:
+        settings = user_settings or DEFAULT_USER_SETTINGS
+
+        conversation_mode = detect_conversation_mode(style_text)
+
+        resolved_intent, intent_confidence = intent.classify_intent(
+            style_text,
+            chat_type=chat_type,
+            recent_messages=recent_messages,
+        )
+
+        emotional_tone = intent.detect_emotional_tone(style_text)
+
+        humor_ctx = humor_engine.HumorContext(
+            conversation_mode=conversation_mode,
+            user_text=style_text,
+            recent_messages=recent_messages or [],
+            user_name=user_name,
+            chat_type=chat_type,
+            selected_character=str(
+                settings.get("character", "classic")
+            ),
+            roughness=str(
+                settings.get("roughness", "medium")
+            ),
+            response_style=str(
+                settings.get("response_style", "bold")
+            ),
+            serious_topic=(conversation_mode == "serious"),
+            bot_was_mentioned=bot_was_mentioned,
+            message_intent=resolved_intent,
+            intent_confidence=intent_confidence,
+            emotional_tone=emotional_tone,
+        )
+
+        tracker_chat_id = chat_id if chat_id is not None else 0
+
+        if conversation_mode == "hostile":
+            humor_decision = humor_engine.decide_banter(
+                humor_ctx, tracker_chat_id
+            )
+        else:
+            humor_decision = humor_engine.decide_humor(
+                humor_ctx, tracker_chat_id
+            )
+
+        humor_instruction = _build_humor_instruction(humor_decision)
+
+        if humor_instruction:
+            current_instruction += (
+                "\n\n"
+                + humor_instruction
+            )
+
+    if voice_style:
+        current_instruction += (
+            "\n\n"
+            + VOICE_STYLE_INSTRUCTION
+        )
+
+    return current_instruction
+
+
 async def ask_gemini(
     contents: Any,
     max_output_tokens: int = 320,
     voice_style: bool = False,
     user_settings: dict[str, Any] | None = None,
+    chat_id: int | None = None,
+    chat_type: str = "private",
+    user_name: str = "",
+    recent_messages: list[str] | None = None,
+    bot_was_mentioned: bool = True,
 ) -> str:
     """Отправляет запрос Gemini с тремя попытками."""
 
@@ -810,16 +998,16 @@ async def ask_gemini(
     else:
         style_text = ""
 
-    current_instruction = build_system_instruction(
+    current_instruction = build_full_system_instruction(
         style_text,
         user_settings,
+        voice_style=voice_style,
+        chat_id=chat_id,
+        chat_type=chat_type,
+        user_name=user_name,
+        recent_messages=recent_messages,
+        bot_was_mentioned=bot_was_mentioned,
     )
-
-    if voice_style:
-        current_instruction += (
-            "\n\n"
-            + VOICE_STYLE_INSTRUCTION
-        )
 
     last_error: Exception | None = None
 
@@ -3753,6 +3941,8 @@ async def answer_text_message(
         private_user_id: int | None = None
         group_chat_id: int | None = None
         group_author_name = ""
+        request_user_name = ""
+        recent_messages_list: list[str] = []
 
         # Личная переписка: память текущей задачи 15 минут
         if (
@@ -3761,6 +3951,12 @@ async def answer_text_message(
         ):
             private_user_id = update.effective_user.id
 
+            request_user_name = (
+                update.effective_user.full_name
+                or update.effective_user.username
+                or ""
+            )
+
             previous_context = build_memory_context(
                 PRIVATE_MEMORY,
                 private_user_id,
@@ -3768,6 +3964,8 @@ async def answer_text_message(
             )
 
             if previous_context:
+                recent_messages_list = previous_context.splitlines()
+
                 request_for_gemini = (
                     "Ниже находится история текущей задачи "
                     "пользователя. Учитывай её при ответе, "
@@ -3792,6 +3990,7 @@ async def answer_text_message(
                 or update.effective_user.username
                 or "Участник"
             )
+            request_user_name = group_author_name
 
             previous_context = build_memory_context(
                 GROUP_MEMORY,
@@ -3800,6 +3999,8 @@ async def answer_text_message(
             )
 
             if previous_context:
+                recent_messages_list = previous_context.splitlines()
+
                 request_for_gemini = (
                     "Ниже приведена переписка группы "
                     "за последние пять минут. "
@@ -3820,6 +4021,11 @@ async def answer_text_message(
             ),
             voice_style=use_voice_style,
             user_settings=user_settings,
+            chat_id=update.effective_chat.id,
+            chat_type=str(update.effective_chat.type),
+            user_name=request_user_name,
+            recent_messages=recent_messages_list,
+            bot_was_mentioned=True,
         )
 
         # Сохраняем вопрос и ответ в памяти лички
