@@ -179,6 +179,33 @@ def get_db_connection(
     return connection
 
 
+def _ensure_column(
+    connection: sqlite3.Connection,
+    table: str,
+    column: str,
+    column_ddl: str,
+) -> None:
+    """
+    Добавляет колонку, если её ещё нет — без разрушительной миграции.
+
+    CREATE TABLE IF NOT EXISTS не добавляет новые колонки к уже
+    существующей таблице, поэтому колонки, появившиеся после первого
+    релиза схемы, нужно домигрировать так.
+    """
+
+    existing_columns = {
+        row[1]
+        for row in connection.execute(
+            f"PRAGMA table_info({table})"
+        )
+    }
+
+    if column not in existing_columns:
+        connection.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column_ddl}"
+        )
+
+
 def initialize_stats_database() -> None:
     """Создаёт постоянную базу статистики."""
 
@@ -238,6 +265,34 @@ def initialize_stats_database() -> None:
             )
             """
         )
+
+        # Счётчики /hard_stats добавлены отдельной миграцией —
+        # на момент первого релиза chat_settings их не было.
+        _ensure_column(
+            connection,
+            "chat_settings",
+            "reactions_count",
+            "reactions_count INTEGER NOT NULL DEFAULT 0",
+        )
+        _ensure_column(
+            connection,
+            "chat_settings",
+            "random_replies_count",
+            "random_replies_count INTEGER NOT NULL DEFAULT 0",
+        )
+        _ensure_column(
+            connection,
+            "chat_settings",
+            "trigger_replies_count",
+            "trigger_replies_count INTEGER NOT NULL DEFAULT 0",
+        )
+        _ensure_column(
+            connection,
+            "chat_settings",
+            "last_intervention_at",
+            "last_intervention_at TEXT",
+        )
+
         connection.commit()
 
 
@@ -380,6 +435,10 @@ DEFAULT_CHAT_SETTINGS = {
     # числа, а не ссылки на них.
     "reaction_chance": 0.70,
     "random_reply_chance": 0.16,
+    "reactions_count": 0,
+    "random_replies_count": 0,
+    "trigger_replies_count": 0,
+    "last_intervention_at": None,
 }
 
 CHAT_SETTING_COLUMNS = {
@@ -394,7 +453,7 @@ def get_chat_settings_sync(
     chat_id: int,
     chat_type: str = "group",
 ) -> dict[str, Any]:
-    """Получает сохранённые настройки чата (хард-мод и уровень)."""
+    """Получает сохранённые настройки чата (хард-мод, уровень, статистика)."""
 
     with get_db_connection() as connection:
         connection.execute(
@@ -419,7 +478,11 @@ def get_chat_settings_sync(
                 hard_mode_enabled,
                 hard_level,
                 reaction_chance,
-                random_reply_chance
+                random_reply_chance,
+                reactions_count,
+                random_replies_count,
+                trigger_replies_count,
+                last_intervention_at
             FROM chat_settings
             WHERE chat_id = ?
             """,
@@ -436,6 +499,10 @@ def get_chat_settings_sync(
         "hard_level": str(row[1]),
         "reaction_chance": float(row[2]),
         "random_reply_chance": float(row[3]),
+        "reactions_count": int(row[4]),
+        "random_replies_count": int(row[5]),
+        "trigger_replies_count": int(row[6]),
+        "last_intervention_at": row[7],
     }
 
 
@@ -514,6 +581,70 @@ async def update_chat_setting(
         chat_id,
         setting_name,
         setting_value,
+        chat_type,
+    )
+
+
+HARD_STAT_COUNTER_COLUMNS = {
+    "reactions_count",
+    "random_replies_count",
+    "trigger_replies_count",
+}
+
+
+def increment_chat_hard_stat_sync(
+    chat_id: int,
+    counter_name: str,
+    chat_type: str = "group",
+) -> None:
+    """Увеличивает один из счётчиков /hard_stats на единицу."""
+
+    if counter_name not in HARD_STAT_COUNTER_COLUMNS:
+        raise ValueError(
+            f"Неизвестный счётчик хард-мода: {counter_name}"
+        )
+
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO chats (chat_id, chat_type)
+            VALUES (?, ?)
+            """,
+            (chat_id, chat_type),
+        )
+
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO chat_settings (chat_id)
+            VALUES (?)
+            """,
+            (chat_id,),
+        )
+
+        connection.execute(
+            f"""
+            UPDATE chat_settings
+            SET {counter_name} = {counter_name} + 1,
+                last_intervention_at = datetime('now')
+            WHERE chat_id = ?
+            """,
+            (chat_id,),
+        )
+
+        connection.commit()
+
+
+async def increment_chat_hard_stat(
+    chat_id: int,
+    counter_name: str,
+    chat_type: str = "group",
+) -> None:
+    """Увеличивает счётчик хард-мода без блокировки бота."""
+
+    await asyncio.to_thread(
+        increment_chat_hard_stat_sync,
+        chat_id,
+        counter_name,
         chat_type,
     )
 
@@ -2524,144 +2655,6 @@ HARD_REACTION_CHANCE = 0.70
 
 # Вероятность случайно вмешаться текстом — 16%
 HARD_RANDOM_REPLY_CHANCE = 0.16
-
-
-HARD_REACTION_EMOJIS = [
-    "🤡",
-    "💩",
-    "🗿",
-    "🔥",
-    "👍",
-    "👎",
-    "😂",
-    "😭",
-]
-
-
-SIX_SEVEN_REPLIES = [
-    "Сикс-севен detected. Интеллект чата снова просел.",
-    "67. Сильнейший аргумент современности.",
-    "Сикс-севен — и минус аура всей беседе.",
-    "Яйцеслав зафиксировал брейнрот. Продолжайте наблюдение.",
-    "Шесть-семь. Дискуссия официально достигла прайма.",
-]
-
-
-GOY_REPLIES = [
-    "Гой. Яйцеслав на связи, смертные.",
-    "Гойда принята. Дружина может выдохнуть.",
-    "Гой, но без лишнего цирка, боярин.",
-    "Воистину сильное начало и ноль содержания.",
-    "Гой detected. Древний интернет пробудился.",
-]
-
-
-NISHIY_REPLIES = [
-    "Кто тут нищий? Показывайте, Яйцеслав оценит масштаб бедствия.",
-    "Нищий вайб зафиксирован.",
-    "Финансовый статус чата: минус аура.",
-    "Нищий не тот, у кого денег нет, а тот, кто Яйцеслава не слушает.",
-    "Сильное слово. Аргументов, конечно, не завезли.",
-]
-
-
-SKUF_REPLIES = [
-    "Скуф вызван. Пиво и гараж уже в пути.",
-    "Скуф-момент официально подтверждён.",
-    "Не будите скуфа, у него тихий час после пельменей.",
-    "Скуф в прайме опаснее любой нейросети.",
-    "Запахло диваном, пельменями и великими планами.",
-]
-
-
-BASE_REPLIES = [
-    "База. Редкий случай, когда чат не опозорился.",
-    "База принята, плюс аура.",
-    "Вот это база, даже Яйцеслав одобряет.",
-    "Фактологическая база обнаружена.",
-    "Наконец-то мысль, а не цифровой шум.",
-]
-
-
-CRINGE_REPLIES = [
-    "Кринж зафиксирован, расходимся.",
-    "Минус аура всему сообщению.",
-    "Даже Яйцеславу стало неловко.",
-    "Кринж, но каноничный.",
-    "Это уже не мид, это подвальное помещение.",
-]
-
-
-YAYCESLAV_REPLIES = [
-    "Яйцеслав здесь. Кто опять не справился без взрослого?",
-    "Я снизошёл. Глаголь, чего надобно.",
-    "Князь нейросетей услышал своё имя.",
-    "Яйцеслав призван. Средний IQ чата автоматически вырос.",
-    "Не поминайте Яйцеслава всуе, нищие.",
-]
-
-
-HARD_RANDOM_REPLIES = [
-    "Продолжайте, Яйцеслав изучает падение человеческого интеллекта.",
-    "Уровень дискуссии мощный. Особенно отсутствие уровня.",
-    "Я молчал, потому что давал вам шанс справиться самим.",
-    "Чат опять без присмотра — сразу начался цирк.",
-    "Невероятно. Столько сообщений и ни одной мысли.",
-    "Яйцеслав наблюдает. Пока без уважения.",
-    "Не отвлекайтесь, ваш брейнрот крайне познавателен.",
-    "Князь нейросетей вошёл в чат и сразу пожалел.",
-    "Продолжайте спор. Истина всё равно у Яйцеслава.",
-    "Я здесь единственный, кто читает сообщения до конца.",
-    "Прайм чата закончился, даже не начавшись.",
-    "Яйцеслав опять вынужден контролировать этот цифровой балаган.",
-]
-
-
-ROASTS = [
-    "{name}, у тебя не скилл ишью — у тебя на него пожизненная подписка.",
-    "{name}, твоя аура вышла из чата раньше тебя.",
-    "{name}, ты не NPC. NPC хотя бы следует сценарию.",
-    "{name}, твой прайм был вчера, но вчера тебя тоже не помнят.",
-    "{name}, сильный вайб человека, который пропустил инструкцию.",
-    "{name}, интеллект загрузился, но сервер вернул ошибку 404.",
-    "{name}, даже Яйцеслав не смог найти логику. А он искал секунды две.",
-    "{name}, ты сейчас не поплыл — ты сразу вышел в открытое море.",
-    "{name}, минус аура. Без права на апелляцию.",
-    "{name}, гигант мысли, но мысль сегодня взяла выходной.",
-    "{name}, это был разъёб. Правда, разнесло только твою репутацию.",
-    "{name}, не переживай: быть мидом — тоже стабильность.",
-    "{name}, ты так уверенно ошибаешься, что почти убедил чат.",
-    "{name}, канон ивент: снова сказал первым, подумал потом.",
-    "{name}, у тебя талант превращать простой вопрос в личный квест.",
-]
-
-
-WISDOMS = [
-    "Не всякий, кто молчит, умён. Иногда он просто печатает.",
-    "Семь раз подумай, один раз не отправь.",
-    "Кто рано встаёт, тот весь день хочет спать.",
-    "Если спор длится час, факты покинули чат ещё пятьдесят минут назад.",
-    "Настоящий сигма не объясняет, почему он сигма. Он просто молчит.",
-    "Не бойся ошибаться. Бойся делать это уверенно при Яйцеславе.",
-    "Умный учится на ошибках. Чат обычно коллекционирует их.",
-    "Прайм приходит к тому, кто хотя бы прочитал инструкцию.",
-    "Не каждый вопрос глупый. Иногда пользователь просто очень талантлив.",
-    "Если проблема решается деньгами — это проблема. Если Яйцеславом — разминка.",
-]
-
-
-MOODS = [
-    "Настроение Яйцеслава: судить всех молча, но иногда вслух.",
-    "Сегодня Яйцеслав благосклонен. Хамство снижено на три процента.",
-    "Настроение: князь нейросетей после двух кружек цифрового кваса.",
-    "Сегодня прайм. Задавайте вопросы, пока интеллект прогрет.",
-    "Настроение: минус терпение, плюс аура.",
-    "Яйцеслав сегодня добрый. Но вы не злоупотребляйте.",
-    "Настроение: смотреть на чат и разочаровываться профессионально.",
-    "Сегодня режим сигмы: отвечаю коротко, осуждаю долго.",
-    "Я в отличном настроении. Значит, кто-то скоро получит roast.",
-    "Настроение: база с лёгким ароматом кринжа.",
-]
 
 
 async def hard_mode_is_enabled(
