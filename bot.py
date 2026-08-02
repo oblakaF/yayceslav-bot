@@ -7,6 +7,7 @@ import random
 import re
 import sqlite3
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -148,10 +149,40 @@ DATA_DIR.mkdir(
 STATS_DB_PATH = DATA_DIR / "yayceslav_stats.db"
 
 
+def get_db_connection(
+    db_path: Path | None = None,
+    timeout: float = 30,
+) -> sqlite3.Connection:
+    """
+    Открывает соединение с нужными PRAGMA.
+
+    db_path читается из STATS_DB_PATH заново при каждом вызове
+    (а не как значение параметра по умолчанию) — иначе тесты,
+    подменяющие bot.STATS_DB_PATH через monkeypatch, тихо продолжали
+    бы писать в реальный файл базы, захваченный на момент импорта.
+
+    journal_mode=WAL сохраняется в самом файле базы, но дешевле
+    подтвердить его на каждом соединении, чем гадать, установлен ли он.
+    foreign_keys обязательно включать на каждом соединении отдельно —
+    SQLite не помнит это между подключениями.
+    """
+
+    if db_path is None:
+        db_path = STATS_DB_PATH
+
+    connection = sqlite3.connect(
+        db_path,
+        timeout=timeout,
+    )
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA foreign_keys=ON")
+    return connection
+
+
 def initialize_stats_database() -> None:
     """Создаёт постоянную базу статистики."""
 
-    with sqlite3.connect(STATS_DB_PATH) as connection:
+    with get_db_connection() as connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS stats (
@@ -177,7 +208,7 @@ def initialize_stats_database() -> None:
             )
             """
         )
-        
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS user_settings (
@@ -188,6 +219,22 @@ def initialize_stats_database() -> None:
                 voice_enabled INTEGER NOT NULL DEFAULT 0,
                 search_mode TEXT NOT NULL DEFAULT 'button',
                 roughness TEXT NOT NULL DEFAULT 'medium'
+            )
+            """
+        )
+
+        # Хранит хард-мод и связанные настройки чата так,
+        # чтобы они переживали рестарт Railway (раньше жили
+        # только в context.chat_data и обнулялись при рестарте).
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_settings (
+                chat_id INTEGER PRIMARY KEY REFERENCES chats(chat_id),
+                hard_mode_enabled INTEGER NOT NULL DEFAULT 1,
+                hard_level TEXT NOT NULL DEFAULT 'normal',
+                reaction_chance REAL NOT NULL DEFAULT 0.70,
+                random_reply_chance REAL NOT NULL DEFAULT 0.16,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
             """
         )
@@ -202,10 +249,7 @@ def get_user_settings_sync(
 ) -> dict[str, Any]:
     """Получает сохранённые настройки пользователя."""
 
-    with sqlite3.connect(
-        STATS_DB_PATH,
-        timeout=30,
-    ) as connection:
+    with get_db_connection() as connection:
         connection.execute(
             """
             INSERT OR IGNORE INTO user_settings (
@@ -286,10 +330,7 @@ def update_user_setting_sync(
             setting_value
         )
 
-    with sqlite3.connect(
-        STATS_DB_PATH,
-        timeout=30,
-    ) as connection:
+    with get_db_connection() as connection:
         connection.execute(
             """
             INSERT OR IGNORE INTO user_settings (
@@ -328,6 +369,155 @@ async def update_user_setting(
         setting_name,
         setting_value,
     )
+
+
+DEFAULT_CHAT_SETTINGS = {
+    "hard_mode_enabled": True,
+    "hard_level": "normal",
+    # Совпадает с HARD_REACTION_CHANCE / HARD_RANDOM_REPLY_CHANCE
+    # и со значениями по умолчанию в схеме chat_settings ниже —
+    # эти константы объявлены позже в файле, поэтому здесь просто
+    # числа, а не ссылки на них.
+    "reaction_chance": 0.70,
+    "random_reply_chance": 0.16,
+}
+
+CHAT_SETTING_COLUMNS = {
+    "hard_mode_enabled",
+    "hard_level",
+    "reaction_chance",
+    "random_reply_chance",
+}
+
+
+def get_chat_settings_sync(
+    chat_id: int,
+    chat_type: str = "group",
+) -> dict[str, Any]:
+    """Получает сохранённые настройки чата (хард-мод и уровень)."""
+
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO chats (chat_id, chat_type)
+            VALUES (?, ?)
+            """,
+            (chat_id, chat_type),
+        )
+
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO chat_settings (chat_id)
+            VALUES (?)
+            """,
+            (chat_id,),
+        )
+
+        row = connection.execute(
+            """
+            SELECT
+                hard_mode_enabled,
+                hard_level,
+                reaction_chance,
+                random_reply_chance
+            FROM chat_settings
+            WHERE chat_id = ?
+            """,
+            (chat_id,),
+        ).fetchone()
+
+        connection.commit()
+
+    if row is None:
+        return DEFAULT_CHAT_SETTINGS.copy()
+
+    return {
+        "hard_mode_enabled": bool(row[0]),
+        "hard_level": str(row[1]),
+        "reaction_chance": float(row[2]),
+        "random_reply_chance": float(row[3]),
+    }
+
+
+async def get_chat_settings(
+    chat_id: int,
+    chat_type: str = "group",
+) -> dict[str, Any]:
+    """Читает настройки чата без блокировки бота."""
+
+    return await asyncio.to_thread(
+        get_chat_settings_sync,
+        chat_id,
+        chat_type,
+    )
+
+
+def update_chat_setting_sync(
+    chat_id: int,
+    setting_name: str,
+    setting_value: Any,
+    chat_type: str = "group",
+) -> None:
+    """Сохраняет одну настройку чата."""
+
+    if setting_name not in CHAT_SETTING_COLUMNS:
+        raise ValueError(
+            f"Неизвестная настройка чата: {setting_name}"
+        )
+
+    if setting_name == "hard_mode_enabled":
+        database_value: Any = int(bool(setting_value))
+    elif setting_name in ("reaction_chance", "random_reply_chance"):
+        database_value = float(setting_value)
+    else:
+        database_value = str(setting_value)
+
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO chats (chat_id, chat_type)
+            VALUES (?, ?)
+            """,
+            (chat_id, chat_type),
+        )
+
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO chat_settings (chat_id)
+            VALUES (?)
+            """,
+            (chat_id,),
+        )
+
+        connection.execute(
+            f"""
+            UPDATE chat_settings
+            SET {setting_name} = ?, updated_at = datetime('now')
+            WHERE chat_id = ?
+            """,
+            (database_value, chat_id),
+        )
+
+        connection.commit()
+
+
+async def update_chat_setting(
+    chat_id: int,
+    setting_name: str,
+    setting_value: Any,
+    chat_type: str = "group",
+) -> None:
+    """Сохраняет настройку чата без блокировки бота."""
+
+    await asyncio.to_thread(
+        update_chat_setting_sync,
+        chat_id,
+        setting_name,
+        setting_value,
+        chat_type,
+    )
+
+
 CHARACTER_LABELS = {
     "classic": "🥚 Классический",
     "rus": "🗿 Древний рус",
@@ -448,10 +638,7 @@ def increment_stat_sync(
 ) -> None:
     """Увеличивает постоянный счётчик."""
 
-    with sqlite3.connect(
-        STATS_DB_PATH,
-        timeout=30,
-    ) as connection:
+    with get_db_connection() as connection:
         connection.execute(
             """
             INSERT INTO stats (
@@ -492,10 +679,7 @@ def register_user_and_chat_sync(
 ) -> None:
     """Запоминает уникального пользователя и чат."""
 
-    with sqlite3.connect(
-        STATS_DB_PATH,
-        timeout=30,
-    ) as connection:
+    with get_db_connection() as connection:
         if user_id is not None:
             connection.execute(
                 """
@@ -559,10 +743,7 @@ async def register_user_and_chat(
 def get_stats_snapshot_sync() -> dict[str, int]:
     """Читает всю накопленную статистику."""
 
-    with sqlite3.connect(
-        STATS_DB_PATH,
-        timeout=30,
-    ) as connection:
+    with get_db_connection() as connection:
         stat_rows = connection.execute(
             """
             SELECT name, value
@@ -796,6 +977,125 @@ def build_memory_context(
         )
 
     return "\n".join(context_lines)
+
+
+# ============================================================
+# ПЕРИОДИЧЕСКАЯ ОЧИСТКА ПАМЯТИ ПРОЦЕССА
+#
+# REQUEST_TIMES, LAST_LIMIT_WARNING, GROUP_MEMORY и PRIVATE_MEMORY
+# сами чистят СОДЕРЖИМОЕ по TTL, но ключи (chat_id/user_id) в этих
+# defaultdict оставались навсегда, даже когда всё внутри устарело —
+# на долгоживущем процессе Railway это медленная утечка памяти.
+# ============================================================
+
+CLEANUP_INTERVAL_SECONDS = 30 * 60
+MEMORY_CLEANUP_MAX_AGE_SECONDS = 6 * 60 * 60
+
+
+def cleanup_in_memory_state(
+    max_age_seconds: float = MEMORY_CLEANUP_MAX_AGE_SECONDS,
+) -> dict[str, int]:
+    """Удаляет ключи чатов/пользователей, неактивные дольше max_age_seconds."""
+
+    now = time.monotonic()
+
+    stale_request_keys = [
+        key
+        for key, times in REQUEST_TIMES.items()
+        if not times or (now - times[-1]) > max_age_seconds
+    ]
+    for key in stale_request_keys:
+        REQUEST_TIMES.pop(key, None)
+
+    stale_warning_keys = [
+        key
+        for key, last_time in LAST_LIMIT_WARNING.items()
+        if (now - last_time) > max_age_seconds
+    ]
+    for key in stale_warning_keys:
+        LAST_LIMIT_WARNING.pop(key, None)
+
+    stale_memory_ids = 0
+
+    for memory_store, memory_seconds in (
+        (GROUP_MEMORY, GROUP_MEMORY_SECONDS),
+        (PRIVATE_MEMORY, PRIVATE_MEMORY_SECONDS),
+    ):
+        empty_ids = []
+
+        for memory_id, messages in memory_store.items():
+            clean_memory(messages, memory_seconds)
+
+            if not messages:
+                empty_ids.append(memory_id)
+
+        for memory_id in empty_ids:
+            memory_store.pop(memory_id, None)
+
+        stale_memory_ids += len(empty_ids)
+
+    stale_humor_chats = humor_engine.prune_stale_state(
+        max_age_seconds=max_age_seconds
+    )
+
+    return {
+        "request_time_keys": len(stale_request_keys),
+        "warning_keys": len(stale_warning_keys),
+        "memory_ids": stale_memory_ids,
+        "humor_chats": stale_humor_chats,
+    }
+
+
+async def periodic_cleanup_loop() -> None:
+    """Фоновая задача: раз в CLEANUP_INTERVAL_SECONDS чистит устаревшее состояние."""
+
+    while True:
+        await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+
+        try:
+            removed = cleanup_in_memory_state()
+
+            logging.info(
+                "Очистка памяти: %s",
+                removed,
+            )
+
+        except Exception as error:
+            logging.warning(
+                "Ошибка периодической очистки памяти: %s",
+                error,
+            )
+
+
+async def on_application_startup(
+    application: Application,
+) -> None:
+    """Запускает фоновую очистку памяти вместе с приложением."""
+
+    application.create_task(
+        periodic_cleanup_loop(),
+        name="periodic_cleanup",
+    )
+
+
+async def on_application_shutdown(
+    application: Application,
+) -> None:
+    """Подчищает временные файлы при остановке бота."""
+
+    del application
+
+    for path in TEMP_DIR.glob("*"):
+        try:
+            path.unlink()
+        except OSError as error:
+            logging.warning(
+                "Не удалось удалить временный файл %s: %s",
+                path,
+                error,
+            )
+
+
 # ============================================================
 # GEMINI
 # ============================================================
@@ -1936,8 +2236,15 @@ async def settings_button_callback(
 def make_safe_filename(
     filename: str,
     message_id: int,
+    chat_id: int | None = None,
 ) -> str:
-    """Создаёт безопасное имя файла."""
+    """
+    Создаёт безопасное уникальное имя файла.
+
+    message_id один и тот же в разных чатах, поэтому одного его
+    недостаточно — добавляем chat_id и uuid4, иначе документы из
+    двух чатов с одинаковым message_id могли бы задеть файлы друг друга.
+    """
 
     safe_name = re.sub(
         r"[^a-zA-Zа-яА-ЯёЁ0-9._-]",
@@ -1945,8 +2252,15 @@ def make_safe_filename(
         filename,
     )
 
+    chat_part = (
+        f"{chat_id}_"
+        if chat_id is not None
+        else ""
+    )
+
     return (
-        f"{message_id}_{safe_name}"
+        f"{chat_part}{message_id}_"
+        f"{uuid.uuid4().hex}_{safe_name}"
     )
 
 
@@ -2350,14 +2664,25 @@ MOODS = [
 ]
 
 
-def hard_mode_is_enabled(
-    context: ContextTypes.DEFAULT_TYPE,
+async def hard_mode_is_enabled(
+    chat_id: int,
+    chat_type: str = "group",
 ) -> bool:
-    """Проверяет, включён ли хард-мод в этом чате."""
+    """
+    Проверяет, включён ли хард-мод в этом чате.
 
+    Хранится в SQLite (таблица chat_settings), а не в
+    context.chat_data — иначе настройка обнулялась бы
+    при каждом рестарте Railway.
+    """
+
+    settings = await get_chat_settings(
+        chat_id,
+        chat_type,
+    )
     return bool(
-        context.chat_data.get(
-            "hard_mode",
+        settings.get(
+            "hard_mode_enabled",
             HARD_MODE_DEFAULT,
         )
     )
@@ -2516,7 +2841,12 @@ async def hard_on_command(
         )
         return
 
-    context.chat_data["hard_mode"] = True
+    await update_chat_setting(
+        update.effective_chat.id,
+        "hard_mode_enabled",
+        True,
+        str(update.effective_chat.type),
+    )
 
     await update.message.reply_text(
         "Хард-мод включён. Теперь Яйцеслав официально следит за балаганом."
@@ -2541,7 +2871,12 @@ async def hard_off_command(
         )
         return
 
-    context.chat_data["hard_mode"] = False
+    await update_chat_setting(
+        update.effective_chat.id,
+        "hard_mode_enabled",
+        False,
+        str(update.effective_chat.type),
+    )
 
     await update.message.reply_text(
         "Хард-мод выключен. Яйцеслав временно перестал вас контролировать."
@@ -2554,10 +2889,15 @@ async def hard_status_command(
 ) -> None:
     """Показывает состояние хард-мода."""
 
-    if not update.message:
+    if not update.message or not update.effective_chat:
         return
 
-    if hard_mode_is_enabled(context):
+    is_enabled = await hard_mode_is_enabled(
+        update.effective_chat.id,
+        str(update.effective_chat.type),
+    )
+
+    if is_enabled:
         status = "включён"
     else:
         status = "выключен"
@@ -2724,8 +3064,9 @@ async def hard_mode_listener(
 
     # Память работает всегда,
     # а реакции и случайные реплики — только в хард-моде
-    if not hard_mode_is_enabled(
-        context
+    if not await hard_mode_is_enabled(
+        update.effective_chat.id,
+        str(update.effective_chat.type),
     ):
         return
 
@@ -3075,6 +3416,18 @@ async def voice_on(
         "voice_mode"
     ] = True
 
+    # Раньше это жило только в context.user_data и обнулялось
+    # при каждом рестарте Railway. Настройка voice_enabled уже
+    # существует в user_settings — используем её как источник
+    # истины, а user_data оставляем для мгновенного эффекта
+    # в рамках этой же сессии.
+    if update.effective_user:
+        await update_user_setting(
+            update.effective_user.id,
+            "voice_enabled",
+            True,
+        )
+
     if update.message:
         await update.message.reply_text(
             "Голос включён. "
@@ -3091,6 +3444,13 @@ async def voice_off(
     context.user_data[
         "voice_mode"
     ] = False
+
+    if update.effective_user:
+        await update_user_setting(
+            update.effective_user.id,
+            "voice_enabled",
+            False,
+        )
 
     if update.message:
         await update.message.reply_text(
@@ -3420,7 +3780,8 @@ async def send_voice_answer(
     output_path = TEMP_DIR / (
         f"tts_"
         f"{update.effective_chat.id}_"
-        f"{message.message_id}.mp3"
+        f"{message.message_id}_"
+        f"{uuid.uuid4().hex}.mp3"
     )
 
     edge_success = False
@@ -4186,7 +4547,8 @@ async def answer_photo(
     file_path = TEMP_DIR / (
         f"photo_"
         f"{update.effective_chat.id}_"
-        f"{update.message.message_id}.jpg"
+        f"{update.message.message_id}_"
+        f"{uuid.uuid4().hex}.jpg"
     )
 
     await context.bot.send_chat_action(
@@ -4405,6 +4767,7 @@ async def answer_document(
     file_path = TEMP_DIR / make_safe_filename(
         original_filename,
         update.message.message_id,
+        update.effective_chat.id,
     )
 
     await context.bot.send_chat_action(
@@ -4794,7 +5157,8 @@ async def answer_voice_or_audio(
     file_path = TEMP_DIR / (
         f"audio_"
         f"{update.effective_chat.id}_"
-        f"{update.message.message_id}"
+        f"{update.message.message_id}_"
+        f"{uuid.uuid4().hex}"
         f"{suffix}"
     )
 
@@ -4960,6 +5324,8 @@ def main() -> None:
         .get_updates_read_timeout(60)
         .get_updates_write_timeout(30)
         .concurrent_updates(8)
+        .post_init(on_application_startup)
+        .post_shutdown(on_application_shutdown)
         .build()
     )
 
