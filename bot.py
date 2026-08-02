@@ -2656,6 +2656,127 @@ HARD_REACTION_CHANCE = 0.70
 # Вероятность случайно вмешаться текстом — 16%
 HARD_RANDOM_REPLY_CHANCE = 0.16
 
+# /hard_level задаёт базовые вероятности для чата.
+# calm — редкие нейтральные реакции, почти нет случайных реплик.
+# normal — текущий характер с контекстными реакциями.
+# chaos — чаще вмешивается, больше мемов, но всё ещё с кулдаунами
+# и с уважением к чувствительным темам.
+HARD_LEVEL_CHANCES = {
+    "calm": {
+        "reaction_chance": 0.25,
+        "random_reply_chance": 0.03,
+    },
+    "normal": {
+        "reaction_chance": HARD_REACTION_CHANCE,
+        "random_reply_chance": HARD_RANDOM_REPLY_CHANCE,
+    },
+    "chaos": {
+        "reaction_chance": 0.90,
+        "random_reply_chance": 0.35,
+    },
+}
+
+# Эмодзи по причине реакции — конкретнее, чем чистый random.choice
+# по всему списку HARD_REACTION_EMOJIS.
+REACTION_REASON_EMOJIS = {
+    "very_long_message": ("🗿",),
+    "one_word_reply": ("🗿", "🤡"),
+    "all_caps": ("🤡", "🔥"),
+    "many_question_marks": ("🗿", "🤡"),
+    "contradiction": ("🤡", "👎"),
+    "dispute": ("🗿",),
+    "repeated_message": ("🤡", "😭"),
+    "good_joke": ("😂", "🔥"),
+    "good_question": ("👍", "🔥"),
+    "agreed_with_bot": ("👍", "🔥"),
+    "corrected_bot": ("👍",),
+}
+
+
+def detect_reaction_reason(
+    text: str,
+    *,
+    is_reply_to_bot_message: bool = False,
+    previous_group_text: str | None = None,
+) -> str | None:
+    """
+    Определяет контекстную причину для реакции хард-мода.
+
+    Не всякая причина применима из hard_mode_listener: сообщения,
+    прямо адресованные боту (ответ на его сообщение), туда не
+    попадают — их обрабатывает основной текстовый хендлер. Функция
+    остаётся общей, чтобы agreed_with_bot/corrected_bot можно было
+    использовать и там при необходимости.
+    """
+
+    stripped = text.strip()
+
+    if not stripped:
+        return None
+
+    if len(stripped) > 500:
+        return "very_long_message"
+
+    word_count = len(stripped.split())
+
+    if word_count == 1 and len(stripped) <= 12:
+        return "one_word_reply"
+
+    letters = [
+        character
+        for character in stripped
+        if character.isalpha()
+    ]
+
+    if len(letters) >= 6 and stripped == stripped.upper():
+        return "all_caps"
+
+    if stripped.count("?") >= 3:
+        return "many_question_marks"
+
+    resolved_intent, confidence = intent.classify_intent(stripped)
+
+    if confidence != intent.LOW:
+        if is_reply_to_bot_message and resolved_intent == "agreement":
+            return "agreed_with_bot"
+
+        if is_reply_to_bot_message and resolved_intent == "correction":
+            return "corrected_bot"
+
+        if resolved_intent == "correction":
+            return "contradiction"
+
+        if resolved_intent == "disagreement":
+            return "dispute"
+
+    if previous_group_text:
+        candidate_norm = humor_engine.normalize_phrase(stripped)
+        previous_norm = humor_engine.normalize_phrase(previous_group_text)
+
+        if humor_engine.is_too_similar(candidate_norm, previous_norm):
+            return "repeated_message"
+
+    if confidence != intent.LOW and resolved_intent == "joke":
+        return "good_joke"
+
+    if (
+        confidence != intent.LOW
+        and resolved_intent == "question"
+        and word_count >= 5
+    ):
+        return "good_question"
+
+    return None
+
+
+def pick_reaction_emoji(
+    reason: str | None,
+) -> str:
+    """Выбирает эмодзи под причину реакции, иначе — случайное из общего пула."""
+
+    options = REACTION_REASON_EMOJIS.get(reason or "", HARD_REACTION_EMOJIS)
+    return random.choice(options)
+
 
 async def hard_mode_is_enabled(
     chat_id: int,
@@ -2885,18 +3006,135 @@ async def hard_status_command(
     if not update.message or not update.effective_chat:
         return
 
-    is_enabled = await hard_mode_is_enabled(
+    settings = await get_chat_settings(
         update.effective_chat.id,
         str(update.effective_chat.type),
     )
 
-    if is_enabled:
-        status = "включён"
-    else:
-        status = "выключен"
+    status = (
+        "включён"
+        if settings["hard_mode_enabled"]
+        else "выключен"
+    )
 
     await update.message.reply_text(
-        f"Хард-мод сейчас {status}."
+        f"Хард-мод сейчас {status}. Уровень: {settings['hard_level']}."
+    )
+
+
+HARD_LEVEL_REPLIES = {
+    "calm": "Спокойный режим. Реакции редкие, реплики почти не летят.",
+    "normal": "Обычный режим. Яйцеслав реагирует по ситуации.",
+    "chaos": "Режим хаоса. Реакций и реплик будет заметно больше.",
+}
+
+
+async def hard_level_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Задаёт уровень хард-мода: calm, normal или chaos."""
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Уровень хард-мода настраивается только в группах."
+        )
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Укажи уровень: /hard_level calm, /hard_level normal "
+            "или /hard_level chaos."
+        )
+        return
+
+    level = context.args[0].strip().lower()
+
+    if level not in HARD_LEVEL_CHANCES:
+        await update.message.reply_text(
+            "Такого уровня нет. Доступны: calm, normal, chaos."
+        )
+        return
+
+    if not await user_is_group_admin(
+        update,
+        context,
+    ):
+        await update.message.reply_text(
+            "Уровень хард-мода меняют только админы, нищий."
+        )
+        return
+
+    chances = HARD_LEVEL_CHANCES[level]
+
+    await update_chat_setting(
+        update.effective_chat.id,
+        "hard_level",
+        level,
+        str(update.effective_chat.type),
+    )
+    await update_chat_setting(
+        update.effective_chat.id,
+        "reaction_chance",
+        chances["reaction_chance"],
+        str(update.effective_chat.type),
+    )
+    await update_chat_setting(
+        update.effective_chat.id,
+        "random_reply_chance",
+        chances["random_reply_chance"],
+        str(update.effective_chat.type),
+    )
+
+    await update.message.reply_text(
+        HARD_LEVEL_REPLIES[level]
+    )
+
+
+async def hard_stats_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Показывает администратору статистику хард-мода этого чата."""
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Статистика хард-мода есть только для групп."
+        )
+        return
+
+    if not await user_is_group_admin(
+        update,
+        context,
+    ):
+        await update.message.reply_text(
+            "Статистику хард-мода смотрят только админы."
+        )
+        return
+
+    settings = await get_chat_settings(
+        update.effective_chat.id,
+        str(update.effective_chat.type),
+    )
+
+    last_intervention = (
+        settings["last_intervention_at"]
+        or "ещё не было"
+    )
+
+    await update.message.reply_text(
+        "Статистика хард-мода этого чата:\n"
+        f"Уровень: {settings['hard_level']}\n"
+        f"Реакций поставлено: {settings['reactions_count']}\n"
+        f"Случайных реплик: {settings['random_replies_count']}\n"
+        f"Ответов на триггеры: {settings['trigger_replies_count']}\n"
+        f"Последнее вмешательство: {last_intervention}"
     )
 
 
@@ -3044,10 +3282,23 @@ async def hard_mode_listener(
         or "Участник"
     )
 
+    chat_id = update.effective_chat.id
+    chat_type = str(update.effective_chat.type)
+
+    # Смотрим предыдущее сообщение группы ДО того, как допишем
+    # в память текущее — иначе "повтор одного и того же" будет
+    # сравнивать сообщение само с собой.
+    previous_messages = GROUP_MEMORY.get(chat_id)
+    previous_group_text = (
+        previous_messages[-1][3]
+        if previous_messages
+        else None
+    )
+
     # Запоминаем обычное сообщение группы на пять минут
     remember_message(
         GROUP_MEMORY,
-        update.effective_chat.id,
+        chat_id,
         "user",
         text,
         GROUP_MEMORY_SECONDS,
@@ -3057,11 +3308,20 @@ async def hard_mode_listener(
 
     # Память работает всегда,
     # а реакции и случайные реплики — только в хард-моде
-    if not await hard_mode_is_enabled(
-        update.effective_chat.id,
-        str(update.effective_chat.type),
-    ):
+    chat_settings_data = await get_chat_settings(
+        chat_id,
+        chat_type,
+    )
+
+    if not chat_settings_data["hard_mode_enabled"]:
         return
+
+    level_chances = HARD_LEVEL_CHANCES.get(
+        chat_settings_data["hard_level"],
+        HARD_LEVEL_CHANCES["normal"],
+    )
+    reaction_chance = level_chances["reaction_chance"]
+    random_reply_chance = level_chances["random_reply_chance"]
 
     now = time.monotonic()
 
@@ -3093,10 +3353,16 @@ async def hard_mode_listener(
             "hard_last_trigger_reply"
         ] = now
 
+        await increment_chat_hard_stat(
+            chat_id,
+            "trigger_replies_count",
+            chat_type,
+        )
+
         return
 
     # --------------------------------------------------------
-    # 2. Случайная реакция-эмодзи
+    # 2. Контекстная реакция-эмодзи
     # --------------------------------------------------------
 
     last_reaction = float(
@@ -3106,14 +3372,28 @@ async def hard_mode_listener(
         )
     )
 
+    reaction_reason = detect_reaction_reason(
+        text,
+        is_reply_to_bot_message=False,
+        previous_group_text=previous_group_text,
+    )
+
+    # Контекстная причина — не механическая случайность,
+    # даём ей более высокий шанс сработать.
+    effective_reaction_chance = (
+        max(reaction_chance, 0.85)
+        if reaction_reason
+        else reaction_chance
+    )
+
     if (
         now - last_reaction
         >= HARD_REACTION_COOLDOWN
         and random.random()
-        < HARD_REACTION_CHANCE
+        < effective_reaction_chance
     ):
-        reaction_emoji = random.choice(
-            HARD_REACTION_EMOJIS
+        reaction_emoji = pick_reaction_emoji(
+            reaction_reason
         )
 
         try:
@@ -3129,6 +3409,12 @@ async def hard_mode_listener(
             context.chat_data[
                 "hard_last_reaction"
             ] = now
+
+            await increment_chat_hard_stat(
+                chat_id,
+                "reactions_count",
+                chat_type,
+            )
 
         except Exception as error:
             # Некоторые группы разрешают не все реакции.
@@ -3153,7 +3439,7 @@ async def hard_mode_listener(
         now - last_random_reply
         >= HARD_RANDOM_REPLY_COOLDOWN
         and random.random()
-        < HARD_RANDOM_REPLY_CHANCE
+        < random_reply_chance
     ):
         await update.message.reply_text(
             random.choice(
@@ -3164,6 +3450,12 @@ async def hard_mode_listener(
         context.chat_data[
             "hard_last_random_reply"
         ] = now
+
+        await increment_chat_hard_stat(
+            chat_id,
+            "random_replies_count",
+            chat_type,
+        )
 async def enforce_rate_limit(
     update: Update,
     bucket: str,
@@ -3288,7 +3580,9 @@ async def help_command(
         "/mood — настроение Яйцеслава\n"
         "/hard_on — включить активность в группе\n"
         "/hard_off — выключить активность в группе\n"
-        "/hard_status — проверить активность"
+        "/hard_status — проверить активность\n"
+        "/hard_level calm|normal|chaos — настроить накал (админы)\n"
+        "/hard_stats — статистика хард-мода (админы)"
     )
 async def stats_command(
     update: Update,
@@ -5412,6 +5706,18 @@ def main() -> None:
             "hard_status",
            hard_status_command,
        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "hard_level",
+            hard_level_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "hard_stats",
+            hard_stats_command,
+        )
     )
     application.add_handler(
         CallbackQueryHandler(
