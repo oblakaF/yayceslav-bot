@@ -50,14 +50,18 @@ from personality import (
 from vocabulary import (
     BASE_REPLIES,
     CRINGE_REPLIES,
+    EXCUSES,
     GOY_REPLIES,
     HARD_RANDOM_REPLIES,
     HARD_REACTION_EMOJIS,
+    JOKE_TITLES,
     MOODS,
     NISHIY_REPLIES,
+    PROPHECIES,
     ROASTS,
     SIX_SEVEN_REPLIES,
     SKUF_REPLIES,
+    TOASTS,
     WISDOMS,
     YAYCESLAV_REPLIES,
 )
@@ -3692,6 +3696,677 @@ async def mood_command(
 
 
 # ============================================================
+# РАЗВЛЕКАТЕЛЬНЫЕ КОМАНДЫ: БЕЗ GEMINI
+# Тот же паттерн, что у /roast, /wisdom, /mood — просто случайный
+# выбор из словаря, без обращения к нейросети.
+# ============================================================
+
+async def title_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Выдаёт участнику шуточный титул."""
+
+    if not update.message or not update.effective_user:
+        return
+
+    target_name = update.effective_user.first_name or "неизвестный герой"
+    replied_message = update.message.reply_to_message
+
+    if (
+        replied_message
+        and replied_message.from_user
+        and not replied_message.from_user.is_bot
+    ):
+        target_name = (
+            replied_message.from_user.first_name
+            or target_name
+        )
+
+    await update.message.reply_text(
+        f"{target_name}, отныне ты — {random.choice(JOKE_TITLES)}."
+    )
+
+
+async def toast_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Произносит короткий тост."""
+
+    del context
+
+    if update.message:
+        await update.message.reply_text(
+            random.choice(TOASTS)
+        )
+
+
+async def prophecy_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Выдаёт заведомо развлекательное псевдопророчество."""
+
+    del context
+
+    if update.message:
+        await update.message.reply_text(
+            random.choice(PROPHECIES)
+        )
+
+
+async def excuse_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Создаёт безобидную смешную отговорку."""
+
+    del context
+
+    if update.message:
+        await update.message.reply_text(
+            random.choice(EXCUSES)
+        )
+
+
+# ============================================================
+# РАЗВЛЕКАТЕЛЬНЫЕ КОМАНДЫ: С GEMINI
+# Общий помощник переиспользует ask_gemini (значит, и HumorEngine,
+# и защиту от prompt injection, и системный характер Яйцеслава).
+# ============================================================
+
+async def _reply_with_gemini_feature(
+    update: Update,
+    prompt: str,
+    max_output_tokens: int = 280,
+) -> None:
+    """Отправляет prompt в Gemini и отвечает результатом на сообщение."""
+
+    if not update.message or not update.effective_chat:
+        return
+
+    try:
+        answer = await ask_gemini(
+            contents=prompt,
+            max_output_tokens=max_output_tokens,
+            chat_id=update.effective_chat.id,
+            chat_type=str(update.effective_chat.type),
+        )
+    except Exception as error:
+        logging.exception(
+            "Ошибка развлекательной команды: %s",
+            error,
+        )
+        answer = (
+            "Связь с нейросетью опять пала в бою 🥚\n"
+            "Повтори позже."
+        )
+
+    await update.message.reply_text(answer)
+
+
+async def judge_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Выносит короткий шуточный вердикт по сообщению в ответе."""
+
+    del context
+
+    if not update.message:
+        return
+
+    target = update.message.reply_to_message
+
+    if not target or not target.text:
+        await update.message.reply_text(
+            "Ответь этой командой на текстовое сообщение, "
+            "которое нужно рассудить."
+        )
+        return
+
+    author = (
+        target.from_user.full_name
+        if target.from_user
+        else "участник"
+    )
+
+    prompt = (
+        f"Вынеси короткий шуточный вердикт по сообщению участника "
+        f"{author}: «{target.text[:500]}». Один-два абзаца, с юмором, "
+        "без травли и без оскорблений по личным признакам."
+    )
+
+    await _reply_with_gemini_feature(update, prompt, max_output_tokens=200)
+
+
+async def argument_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Разбирает спор между позицией из ответа и позицией из аргументов."""
+
+    if not update.message:
+        return
+
+    target = update.message.reply_to_message
+
+    if not target or not target.text:
+        await update.message.reply_text(
+            "Ответь этой командой на сообщение с одной из позиций спора "
+            "и напиши вторую позицию после команды."
+        )
+        return
+
+    second_position = (
+        " ".join(context.args)
+        if context.args
+        else None
+    )
+
+    if not second_position:
+        await update.message.reply_text(
+            "Напиши вторую позицию спора после команды: "
+            "/argument вот моя позиция"
+        )
+        return
+
+    prompt = (
+        "Разбери спор между двумя позициями как объективный судья:\n"
+        f"Позиция 1: «{target.text[:400]}»\n"
+        f"Позиция 2: «{second_position[:400]}»\n"
+        "Укажи, кто привёл больше фактов, где логическая ошибка, "
+        "и дай короткий вердикт Яйцеслава. Без оскорблений по личным "
+        "признакам."
+    )
+
+    await _reply_with_gemini_feature(update, prompt, max_output_tokens=320)
+
+
+async def debate_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Аргументирует обе стороны вопроса и даёт осторожный вывод."""
+
+    if not update.message:
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Укажи тему: /debate стоит ли работать удалённо"
+        )
+        return
+
+    topic = " ".join(context.args)
+
+    prompt = (
+        f"Аргументируй кратко обе стороны вопроса: «{topic}». "
+        "Сначала за, потом против, затем один осторожный вывод. "
+        "Не выдавай медицинские, юридические или финансовые "
+        "рекомендации как окончательный факт."
+    )
+
+    await _reply_with_gemini_feature(update, prompt, max_output_tokens=320)
+
+
+async def explain_like_skoof_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Объясняет тему бытовым языком, как опытный мужик в гараже."""
+
+    if not update.message:
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Укажи тему: /explain_like_skoof блокчейн"
+        )
+        return
+
+    topic = " ".join(context.args)
+
+    prompt = (
+        f"Объясни тему «{topic}» простым бытовым языком, как опытный "
+        "мужик в гараже объясняет соседу. Сохраняй техническую "
+        "правильность объяснения."
+    )
+
+    await _reply_with_gemini_feature(update, prompt)
+
+
+async def explain_like_rus_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Объясняет тему в стиле древнего руса, сохраняя правильность."""
+
+    if not update.message:
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Укажи тему: /explain_like_rus что такое API"
+        )
+        return
+
+    topic = " ".join(context.args)
+
+    prompt = (
+        f"Объясни тему «{topic}» в стиле древнего руса — с былинными "
+        "оборотами и старинными словами, но сохрани техническую "
+        "правильность и понятность объяснения."
+    )
+
+    await _reply_with_gemini_feature(update, prompt)
+
+
+async def meme_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Создаёт короткую мемную подпись к сообщению или теме."""
+
+    if not update.message:
+        return
+
+    topic = (
+        " ".join(context.args)
+        if context.args
+        else None
+    )
+
+    target = update.message.reply_to_message
+
+    if not topic and target and target.text:
+        topic = target.text[:200]
+
+    if not topic:
+        await update.message.reply_text(
+            "Ответь на сообщение или напиши тему: /meme понедельник"
+        )
+        return
+
+    prompt = (
+        "Придумай короткую мемную подпись (одна-две строки) "
+        f"к ситуации: «{topic}»."
+    )
+
+    await _reply_with_gemini_feature(update, prompt, max_output_tokens=120)
+
+
+async def recap_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Кратко и смешно пересказывает последние сообщения группы."""
+
+    del context
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Пересказ доступен только в группах."
+        )
+        return
+
+    context_text = build_memory_context(
+        GROUP_MEMORY,
+        update.effective_chat.id,
+        GROUP_MEMORY_SECONDS,
+    )
+
+    if not context_text:
+        await update.message.reply_text(
+            "Пока нечего пересказывать — тихо в чате."
+        )
+        return
+
+    prompt = (
+        "Кратко и смешно перескажи последние сообщения группы "
+        "(2-4 предложения). Не цитируй чувствительные данные, "
+        "обобщай без прямых цитат:\n\n"
+        f"{context_text}"
+    )
+
+    await _reply_with_gemini_feature(update, prompt, max_output_tokens=200)
+
+
+async def fact_or_bayan_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Оценивает утверждение: факт, сомнительно, баян или нужна проверка."""
+
+    if not update.message:
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Напиши утверждение: /fact_or_bayan вода кипит при 100 градусах"
+        )
+        return
+
+    statement = " ".join(context.args)
+
+    prompt = (
+        f"Оцени утверждение: «{statement}». Ответь одной из категорий: "
+        "факт, сомнительно, баян или требуется интернет-проверка — "
+        "и дай короткое пояснение."
+    )
+
+    await _reply_with_gemini_feature(update, prompt, max_output_tokens=180)
+
+
+_ANTI_ADVICE_FORBIDDEN_RE = re.compile(
+    r"\b(здоровь\w*|лекарств\w*|лечит\w*|лечени\w*|болезн\w*|болит\w*|"
+    r"врач\w*|юрист\w*|закон\w*|суд\w*|"
+    r"финанс\w*|кредит\w*|инвестиц\w*|безопасност\w*|травм\w*|"
+    r"суицид\w*)\b",
+    re.IGNORECASE,
+)
+
+
+async def anti_advice_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Сначала шуточный плохой совет, потом настоящий полезный."""
+
+    if not update.message:
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Укажи тему: /anti_advice как готовиться к экзамену"
+        )
+        return
+
+    topic = " ".join(context.args)
+
+    if (
+        _ANTI_ADVICE_FORBIDDEN_RE.search(topic)
+        or is_serious_text(topic.lower())
+    ):
+        await update.message.reply_text(
+            "Для такой темы шуточный плохой совет не подойдёт — "
+            "здоровье, право, финансы и безопасность вне игры."
+        )
+        return
+
+    prompt = (
+        f"Сначала дай явно помеченный шуточный ПЛОХОЙ совет по теме "
+        f"«{topic}» (одна строка, начни с «Плохой совет:»), затем дай "
+        "настоящий полезный совет (начни с «На самом деле:»)."
+    )
+
+    await _reply_with_gemini_feature(update, prompt, max_output_tokens=220)
+
+
+async def translate_yayceslav_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Переводит канцелярский текст на понятный язык с комментарием."""
+
+    if not update.message:
+        return
+
+    text_to_translate = (
+        " ".join(context.args)
+        if context.args
+        else None
+    )
+
+    target = update.message.reply_to_message
+
+    if not text_to_translate and target and target.text:
+        text_to_translate = target.text
+
+    if not text_to_translate:
+        await update.message.reply_text(
+            "Напиши канцелярский текст или ответь на сообщение с ним."
+        )
+        return
+
+    prompt = (
+        "Переведи канцелярский или сложный текст на понятный "
+        "человеческий язык и добавь короткий комментарий: "
+        f"«{text_to_translate[:600]}»"
+    )
+
+    await _reply_with_gemini_feature(update, prompt, max_output_tokens=250)
+
+
+# ============================================================
+# /duel — шуточная дуэль только по согласию цели
+# ============================================================
+
+PENDING_DUELS: dict[str, dict[str, Any]] = {}
+
+
+async def duel_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Предлагает шуточную дуэль — начинается только после согласия цели."""
+
+    del context
+
+    if (
+        not update.message
+        or not update.effective_chat
+        or not update.effective_user
+    ):
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Дуэли — только в группах."
+        )
+        return
+
+    target_message = update.message.reply_to_message
+
+    if (
+        not target_message
+        or not target_message.from_user
+        or target_message.from_user.is_bot
+    ):
+        await update.message.reply_text(
+            "Ответь этой командой на сообщение того, "
+            "кого вызываешь на дуэль."
+        )
+        return
+
+    if target_message.from_user.id == update.effective_user.id:
+        await update.message.reply_text(
+            "Дуэль с самим собой Яйцеслав не считает дуэлью."
+        )
+        return
+
+    token = uuid.uuid4().hex[:12]
+
+    PENDING_DUELS[token] = {
+        "chat_id": update.effective_chat.id,
+        "challenger_id": update.effective_user.id,
+        "challenger_name": (
+            update.effective_user.full_name
+            or update.effective_user.username
+            or "Вызывающий"
+        ),
+        "target_id": target_message.from_user.id,
+        "target_name": (
+            target_message.from_user.full_name
+            or target_message.from_user.username
+            or "Соперник"
+        ),
+    }
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "Принять дуэль",
+                    callback_data=f"duel_accept_{token}",
+                )
+            ]
+        ]
+    )
+
+    await update.message.reply_text(
+        f"{PENDING_DUELS[token]['challenger_name']} вызывает "
+        f"{PENDING_DUELS[token]['target_name']} на шуточную дуэль!\n"
+        "Без согласия дуэли не будет.",
+        reply_markup=keyboard,
+    )
+
+
+async def duel_accept_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Обрабатывает согласие на дуэль и запускает три раунда."""
+
+    del context
+
+    query = update.callback_query
+
+    if not query or not query.data or not query.from_user:
+        return
+
+    token = query.data.removeprefix("duel_accept_")
+    duel = PENDING_DUELS.pop(token, None)
+
+    if duel is None:
+        await query.answer(
+            "Эта дуэль уже неактуальна.",
+            show_alert=True,
+        )
+        return
+
+    if query.from_user.id != duel["target_id"]:
+        await query.answer(
+            "Соглашаться может только вызванный на дуэль.",
+            show_alert=True,
+        )
+        return
+
+    await query.answer("Дуэль принята!")
+
+    try:
+        rounds_text = await ask_gemini(
+            contents=(
+                "Придумай три коротких раунда шуточной дуэли между "
+                f"{duel['challenger_name']} и {duel['target_name']}. "
+                "Каждый раунд — одна-две строки, абсурдное задание "
+                "или подкол, без реальных оскорблений и угроз. "
+                "Пронумеруй раунды."
+            ),
+            max_output_tokens=320,
+            chat_id=duel["chat_id"],
+            chat_type="group",
+        )
+    except Exception as error:
+        logging.exception(
+            "Ошибка генерации дуэли: %s",
+            error,
+        )
+        rounds_text = (
+            "Дуэль сорвалась — нейросеть спряталась в кусты."
+        )
+
+    if query.message:
+        await query.edit_message_text(
+            f"⚔️ Дуэль: {duel['challenger_name']} против "
+            f"{duel['target_name']}\n\n{rounds_text}"
+        )
+
+
+# ============================================================
+# /story — коллективная история группы
+# ============================================================
+
+STORY_STATE: dict[int, list[str]] = defaultdict(list)
+STORY_MAX_PARAGRAPHS = 12
+STORY_CONTEXT_PARAGRAPHS = 6
+
+
+async def story_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Продолжает коллективную историю группы на один абзац."""
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Коллективная история — это для групп."
+        )
+        return
+
+    chat_id = update.effective_chat.id
+    paragraphs = STORY_STATE[chat_id]
+
+    story_so_far = (
+        "\n".join(paragraphs[-STORY_CONTEXT_PARAGRAPHS:])
+        if paragraphs
+        else "История ещё не начиналась."
+    )
+
+    addition = (
+        " ".join(context.args)
+        if context.args
+        else ""
+    )
+
+    prompt = (
+        "Ты продолжаешь коллективную историю в группе, один абзац "
+        "за раз. Сохраняй уже упомянутых героев и события, "
+        "не начинай сначала.\n\n"
+        f"История до этого момента:\n{story_so_far}\n\n"
+    )
+
+    if addition:
+        prompt += f"Участник предлагает добавить: {addition}\n\n"
+
+    prompt += (
+        "Напиши только следующий абзац истории "
+        "(3-5 предложений), без пояснений от себя."
+    )
+
+    try:
+        new_paragraph = await ask_gemini(
+            contents=prompt,
+            max_output_tokens=220,
+            chat_id=chat_id,
+            chat_type=str(update.effective_chat.type),
+        )
+    except Exception as error:
+        logging.exception(
+            "Ошибка продолжения истории: %s",
+            error,
+        )
+        await update.message.reply_text(
+            "История сегодня не пишется — нейросеть устала."
+        )
+        return
+
+    paragraphs.append(new_paragraph)
+
+    if len(paragraphs) > STORY_MAX_PARAGRAPHS:
+        del paragraphs[: len(paragraphs) - STORY_MAX_PARAGRAPHS]
+
+    await update.message.reply_text(new_paragraph)
+
+
+# ============================================================
 # АНТИСПАМ ДЛЯ СЛУЧАЙНЫХ ВМЕШАТЕЛЬСТВ В ГРУППЕ
 #
 # Даже агрессивный Яйцеслав не должен отвечать на всё подряд.
@@ -4215,7 +4890,23 @@ async def help_command(
         "/remember_me текст — сохранить факт о себе\n"
         "/forget_me — удалить свой профиль в чате\n"
         "/people — известные участники (админы)\n"
-        "/set_archetype текст — задать архетип в ответ на сообщение (админы)"
+        "/set_archetype текст — задать архетип в ответ на сообщение (админы)\n"
+        "/title — шуточный титул\n"
+        "/toast — тост\n"
+        "/prophecy — псевдопророчество\n"
+        "/excuse — безобидная отговорка\n"
+        "/judge — вердикт по сообщению в ответе\n"
+        "/argument текст — разбор спора (ответь на первую позицию)\n"
+        "/debate тема — аргументы за и против\n"
+        "/explain_like_skoof тема — объяснение по-простому\n"
+        "/explain_like_rus тема — объяснение в стиле древнего руса\n"
+        "/meme тема — мемная подпись\n"
+        "/recap — пересказ последних сообщений группы\n"
+        "/fact_or_bayan утверждение — факт, баян или сомнительно\n"
+        "/anti_advice тема — сначала плохой совет, потом настоящий\n"
+        "/translate_yayceslav текст — перевод с канцелярского\n"
+        "/duel — вызвать на шуточную дуэль (ответом на сообщение)\n"
+        "/story — продолжить историю группы"
     )
 async def stats_command(
     update: Update,
@@ -6820,6 +7511,108 @@ def main() -> None:
         CommandHandler(
             "set_archetype",
             set_archetype_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "title",
+            title_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "toast",
+            toast_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "prophecy",
+            prophecy_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "excuse",
+            excuse_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "judge",
+            judge_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "argument",
+            argument_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "debate",
+            debate_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "explain_like_skoof",
+            explain_like_skoof_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "explain_like_rus",
+            explain_like_rus_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "meme",
+            meme_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "recap",
+            recap_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "fact_or_bayan",
+            fact_or_bayan_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "anti_advice",
+            anti_advice_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "translate_yayceslav",
+            translate_yayceslav_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "duel",
+            duel_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "story",
+            story_command,
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            duel_accept_callback,
+            pattern=r"^duel_accept_",
         )
     )
     application.add_handler(

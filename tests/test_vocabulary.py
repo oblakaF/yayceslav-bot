@@ -116,3 +116,15 @@ def test_old_russian_metaphors_nonempty_and_distinct():
     assert len(vocabulary.OLD_RUSSIAN_METAPHORS) == len(
         set(vocabulary.OLD_RUSSIAN_METAPHORS)
     )
+
+
+def test_fun_command_pools_are_nonempty_and_distinct():
+    pools = [
+        vocabulary.JOKE_TITLES,
+        vocabulary.TOASTS,
+        vocabulary.PROPHECIES,
+        vocabulary.EXCUSES,
+    ]
+    for pool in pools:
+        assert len(pool) > 0
+        assert len(pool) == len(set(pool))
