@@ -160,6 +160,21 @@ def test_joke_title_categories_have_ten_each_for_the_new_tone_set():
         assert len(vocabulary.JOKE_TITLE_CATEGORIES[category]) == 10, category
 
 
+def test_meme_era_packs_are_nonempty_and_distinct():
+    for name, pack in vocabulary.MEME_ERA_PACKS.items():
+        assert len(pack) > 0, name
+        assert len(pack) == len(set(pack)), name
+
+
+def test_meme_era_packs_avoid_self_harm_phrasing():
+    forbidden_fragments = ("убей себя", "убейся", "покончи с собой")
+    for name, pack in vocabulary.MEME_ERA_PACKS.items():
+        for phrase in pack:
+            lowered = phrase.lower()
+            for fragment in forbidden_fragments:
+                assert fragment not in lowered, (name, phrase)
+
+
 def test_popular_awards_have_at_least_fifteen_variants():
     popular_awards = (
         "chat_leader",
