@@ -42,6 +42,7 @@ import humor_engine
 import intent
 from personality import (
     DEFAULT_USER_SETTINGS,
+    HOSTILE_RE,
     build_system_instruction,
     detect_conversation_mode,
     is_serious_text,
@@ -2699,6 +2700,61 @@ def should_auto_search(
         marker in lowered
         for marker in fresh_markers
     )
+
+
+# Обращение ко второму лицу («ты», «тебя», «тебе», «тобой») рядом со
+# словом о способностях/поведении собеседника — та же схема, что и
+# personality.HOSTILE_RE, только не про оскорбление, а про любую
+# реплику ПРО бота (подкол, обещание, риторический вопрос о его
+# уме). Нужна, чтобы «сделаю тебя умнее, чем сейчас» не считалось
+# информационным запросом только из-за случайного слова «сейчас».
+BOT_SELF_REFERENCE_RE = re.compile(
+    r"(?:"
+    r"\b(?:ты|тебя|тебе|тобой)\b.{0,40}\b(?:"
+    r"умн\w*|туп\w*|глуп\w*|эксперт\w*|науч\w*|умеешь\w*|думаешь\w*|"
+    r"достал\w*|бесит\w*|надоел\w*|задолбал\w*|раздража\w*"
+    r")\b"
+    r"|"
+    r"\b(?:умн\w*|туп\w*|глуп\w*|науч\w*)\w*.{0,40}\b(?:тебя|тебе|тобой)\b"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def is_conversation_about_bot(
+    text: str,
+) -> bool:
+    """
+    Отличает реплику ПРО бота (шутка, подкол, обещание, оскорбление,
+    риторический вопрос о его способностях) от настоящего
+    информационного запроса.
+
+    Без этой проверки автопоиск в режиме "auto" мог сработать на
+    фразу вроде «может через месяц научу тебя и сделаю умнее, чем
+    сейчас, а то ты туповат» — should_auto_search() там срабатывает
+    только из-за случайного слова «сейчас», хотя сообщение вообще не
+    просит ничего искать.
+    """
+
+    if not text:
+        return False
+
+    lowered = text.lower()
+
+    if BOT_SELF_REFERENCE_RE.search(lowered):
+        return True
+
+    if intent.JOKE_MARKERS_RE.search(lowered):
+        return True
+
+    if intent.PROVOCATION_RE.search(lowered):
+        return True
+
+    if HOSTILE_RE.search(lowered):
+        return True
+
+    return False
+
 
 def is_news_query(
     query: str,
@@ -7743,10 +7799,13 @@ async def answer_text_message(
         user_text
     )
 
-    # В автоматическом режиме сами включаем поиск
+    # В автоматическом режиме сами включаем поиск — но только если
+    # сообщение реально похоже на информационный запрос, а не на
+    # реплику про самого бота (шутка/подкол/обещание/оскорбление).
     if (
         search_query is None
         and search_mode == "auto"
+        and not is_conversation_about_bot(user_text)
         and should_auto_search(user_text)
     ):
         search_query = user_text
