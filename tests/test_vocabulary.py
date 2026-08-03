@@ -142,6 +142,24 @@ def test_award_templates_have_name_placeholder_and_no_duplicates():
             assert "{name}" in template, (key, template)
 
 
+def test_joke_titles_reach_at_least_sixty_and_have_no_duplicates():
+    assert len(vocabulary.JOKE_TITLES) >= 60
+    assert len(vocabulary.JOKE_TITLES) == len(set(vocabulary.JOKE_TITLES))
+
+
+def test_joke_title_categories_have_ten_each_for_the_new_tone_set():
+    tone_categories = (
+        "harsh",
+        "friendly",
+        "neutral",
+        "toxic",
+        "insulting",
+        "sycophantic",
+    )
+    for category in tone_categories:
+        assert len(vocabulary.JOKE_TITLE_CATEGORIES[category]) == 10, category
+
+
 def test_popular_awards_have_at_least_fifteen_variants():
     popular_awards = (
         "chat_leader",

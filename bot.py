@@ -52,7 +52,6 @@ from vocabulary import (
     AWARD_TEMPLATES,
     BASE_REPLIES,
     CRINGE_REPLIES,
-    EXCUSES,
     GOY_REPLIES,
     HARD_RANDOM_REPLIES,
     HARD_REACTION_EMOJIS,
@@ -63,7 +62,6 @@ from vocabulary import (
     ROASTS,
     SIX_SEVEN_REPLIES,
     SKUF_REPLIES,
-    TOASTS,
     WISDOMS,
     YAYCESLAV_REPLIES,
 )
@@ -340,6 +338,16 @@ def initialize_stats_database() -> None:
                 PRIMARY KEY (chat_id, user_id)
             )
             """
+        )
+
+        # Текущий шуточный титул (/title) — отдельно от joke_archetype:
+        # архетип задаёт вручную админ, титул выпадает случайно самому
+        # участнику или тому, кому он ответил.
+        _ensure_column(
+            connection,
+            "chat_member_profiles",
+            "current_title",
+            "current_title TEXT",
         )
 
         # Недельная аналитика: агрегаты по дням, не полный текст
@@ -840,6 +848,7 @@ def _row_to_member_profile(row: Any) -> dict[str, Any]:
         "self_reported_facts": self_reported_facts,
         "joke_archetype": row[12],
         "relationship_level": int(row[13]),
+        "current_title": row[14],
     }
 
 
@@ -866,7 +875,8 @@ def get_member_profile_sync(
                 insults_to_bot,
                 self_reported_facts,
                 joke_archetype,
-                relationship_level
+                relationship_level,
+                current_title
             FROM chat_member_profiles
             WHERE chat_id = ? AND user_id = ?
             """,
@@ -1044,6 +1054,46 @@ async def set_member_joke_archetype(
     )
 
 
+def set_member_title_sync(
+    chat_id: int,
+    user_id: int,
+    title: str,
+    chat_type: str = "group",
+) -> None:
+    """Сохраняет текущий титул участника (/title), заменяя предыдущий."""
+
+    with get_db_connection() as connection:
+        _ensure_member_profile_row(
+            connection, chat_id, user_id, chat_type
+        )
+        connection.execute(
+            """
+            UPDATE chat_member_profiles
+            SET current_title = ?, updated_at = datetime('now')
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (title, chat_id, user_id),
+        )
+        connection.commit()
+
+
+async def set_member_title(
+    chat_id: int,
+    user_id: int,
+    title: str,
+    chat_type: str = "group",
+) -> None:
+    """Сохраняет титул без блокировки бота."""
+
+    await asyncio.to_thread(
+        set_member_title_sync,
+        chat_id,
+        user_id,
+        title,
+        chat_type,
+    )
+
+
 def append_self_reported_fact_sync(
     chat_id: int,
     user_id: int,
@@ -1159,7 +1209,8 @@ def list_chat_member_profiles_sync(
                 insults_to_bot,
                 self_reported_facts,
                 joke_archetype,
-                relationship_level
+                relationship_level,
+                current_title
             FROM chat_member_profiles
             WHERE chat_id = ?
             ORDER BY total_messages DESC
@@ -1922,8 +1973,10 @@ MAX_EXTRACTED_CHARS = 50_000
 # КРАТКОВРЕМЕННАЯ ПАМЯТЬ
 # ============================================================
 
-# В группе бот помнит разговор 5 минут
-GROUP_MEMORY_SECONDS = 5 * 60
+# В группе бот помнит разговор 15 минут (используется и для обычного
+# контекста, и как окно для /recap и /story — не более 30 сообщений,
+# см. GROUP_MEMORY_MAX_MESSAGES ниже).
+GROUP_MEMORY_SECONDS = 15 * 60
 
 # В личной переписке бот помнит текущую задачу 15 минут
 PRIVATE_MEMORY_SECONDS = 15 * 60
@@ -4153,11 +4206,18 @@ async def roast_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Подкалывает автора сообщения или человека в ответе."""
+    """
+    Прожаривает сообщение или участника.
+
+    Порядок: ответ на чужое сообщение — жарим автора и содержание;
+    иначе последнее собственное сообщение пользователя — жарим его
+    содержание; иначе — статичная прожарка самого вызвавшего команду.
+    """
 
     if (
         not update.message
         or not update.effective_user
+        or not update.effective_chat
     ):
         return
 
@@ -4166,12 +4226,12 @@ async def roast_command(
         or "неизвестный герой"
     )
 
-    replied_message = (
-        update.message.reply_to_message
-    )
+    replied_message = update.message.reply_to_message
+    topic_text: str | None = None
 
     if (
         replied_message
+        and replied_message.text
         and replied_message.from_user
         and not replied_message.from_user.is_bot
     ):
@@ -4179,6 +4239,22 @@ async def roast_command(
             replied_message.from_user.first_name
             or target_name
         )
+        topic_text = replied_message.text
+    else:
+        topic_text = get_last_user_message(
+            update.effective_chat.id,
+            update.effective_user.id,
+        )
+
+    if topic_text:
+        prompt = (
+            f"Прожарь {target_name} за конкретное сообщение: "
+            f"«{topic_text[:400]}». Едко, с юмором, привязано именно "
+            "к содержанию сообщения, без оскорблений по личным "
+            "признакам и без реальных угроз. Два-три предложения."
+        )
+        await _reply_with_gemini_feature(update, prompt, max_output_tokens=180)
+        return
 
     roast = random.choice(
         ROASTS
@@ -4229,47 +4305,6 @@ async def mood_command(
 # выбор из словаря, без обращения к нейросети.
 # ============================================================
 
-async def title_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
-    """Выдаёт участнику шуточный титул."""
-
-    if not update.message or not update.effective_user:
-        return
-
-    target_name = update.effective_user.first_name or "неизвестный герой"
-    replied_message = update.message.reply_to_message
-
-    if (
-        replied_message
-        and replied_message.from_user
-        and not replied_message.from_user.is_bot
-    ):
-        target_name = (
-            replied_message.from_user.first_name
-            or target_name
-        )
-
-    await update.message.reply_text(
-        f"{target_name}, отныне ты — {random.choice(JOKE_TITLES)}."
-    )
-
-
-async def toast_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
-    """Произносит короткий тост."""
-
-    del context
-
-    if update.message:
-        await update.message.reply_text(
-            random.choice(TOASTS)
-        )
-
-
 async def prophecy_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -4284,18 +4319,79 @@ async def prophecy_command(
         )
 
 
-async def excuse_command(
+def pick_new_title(
+    previous_title: str | None,
+) -> str:
+    """Выбирает новый титул, исключая предыдущий, если это возможно."""
+
+    candidates = [
+        title
+        for title in JOKE_TITLES
+        if title != previous_title
+    ]
+
+    if not candidates:
+        candidates = list(JOKE_TITLES)
+
+    return random.choice(candidates)
+
+
+async def title_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Создаёт безобидную смешную отговорку."""
+    """
+    Выдаёт случайный титул из подготовленного списка.
+
+    Титул сохраняется в профиле (заменяет предыдущий), не выпадает
+    два раза подряд одному и тому же человеку, и виден потом в
+    /profile и /whoami. При ответе на чужое сообщение титул уходит
+    тому, на чьё сообщение ответили, а не вызвавшему команду.
+    """
 
     del context
 
-    if update.message:
-        await update.message.reply_text(
-            random.choice(EXCUSES)
-        )
+    if (
+        not update.message
+        or not update.effective_user
+        or not update.effective_chat
+    ):
+        return
+
+    target_user = update.effective_user
+    replied_message = update.message.reply_to_message
+
+    if (
+        replied_message
+        and replied_message.from_user
+        and not replied_message.from_user.is_bot
+    ):
+        target_user = replied_message.from_user
+
+    chat_id = update.effective_chat.id
+    chat_type = str(update.effective_chat.type)
+
+    profile = await get_member_profile(chat_id, target_user.id)
+    previous_title = profile["current_title"] if profile else None
+
+    new_title = pick_new_title(previous_title)
+
+    await set_member_title(
+        chat_id,
+        target_user.id,
+        new_title,
+        chat_type,
+    )
+
+    display_name = (
+        target_user.first_name
+        or target_user.username
+        or "участник"
+    )
+
+    await update.message.reply_text(
+        f"{display_name}, отныне ты — {new_title}."
+    )
 
 
 # ============================================================
@@ -4334,82 +4430,159 @@ async def _reply_with_gemini_feature(
     await update.message.reply_text(answer)
 
 
+async def resolve_topic_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    fallback_scope: str = "own",
+) -> str | None:
+    """
+    Единый порядок источника текста для команд-разборов
+    (/argument, /debate, /judge, /translate_yayceslav, /fact_or_bayan,
+    /roast): сообщение, на которое ответили → текст после команды →
+    последнее обычное сообщение (своё или чата) → None.
+
+    fallback_scope="own" — последнее сообщение самого вызвавшего.
+    fallback_scope="chat" — последнее сообщение в группе от кого
+    угодно (нужно для /judge: рассудить можно и чужую реплику,
+    на которую никто не ответил явно). В личном чате «chat»
+    равнозначен «own» — там просто не с кем спутать автора.
+    """
+
+    message = update.message
+
+    if (
+        not message
+        or not update.effective_chat
+        or not update.effective_user
+    ):
+        return None
+
+    if message.reply_to_message and message.reply_to_message.text:
+        return message.reply_to_message.text
+
+    if context.args:
+        return " ".join(context.args)
+
+    if (
+        fallback_scope == "chat"
+        and update.effective_chat.type != ChatType.PRIVATE
+    ):
+        chat_messages = GROUP_MEMORY.get(update.effective_chat.id)
+
+        if chat_messages:
+            for _, role, _author_name, text in reversed(chat_messages):
+                if role == "user" and text:
+                    return text
+
+        return None
+
+    return get_last_user_message(
+        update.effective_chat.id,
+        update.effective_user.id,
+    )
+
+
 async def judge_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Выносит короткий шуточный вердикт по сообщению в ответе."""
-
-    del context
+    """Разбирает утверждение (своё, чужое или из ответа) и выносит вердикт."""
 
     if not update.message:
         return
 
     target = update.message.reply_to_message
+    topic = await resolve_topic_text(update, context, fallback_scope="chat")
 
-    if not target or not target.text:
+    if not topic:
         await update.message.reply_text(
-            "Ответь этой командой на текстовое сообщение, "
-            "которое нужно рассудить."
+            "Сначала напиши мысль в чат (или ответь на чьё-то сообщение), "
+            "потом вызывай /judge."
         )
         return
 
     author = (
         target.from_user.full_name
-        if target.from_user
-        else "участник"
+        if target and target.from_user
+        else None
+    )
+
+    subject = (
+        f"утверждение участника {author}"
+        if author
+        else "это утверждение"
     )
 
     prompt = (
-        f"Вынеси короткий шуточный вердикт по сообщению участника "
-        f"{author}: «{target.text[:500]}». Один-два абзаца, с юмором, "
-        "без травли и без оскорблений по личным признакам."
+        f"Разбери {subject}: «{topic[:500]}». Определи основную мысль, "
+        "приведи короткие аргументы за, приведи возражения, отметь "
+        "слабое место позиции, и дай собственный шуточный, но содержательный "
+        "вердикт Яйцеслава. Три-пять абзацев. Без травли и без "
+        "оскорблений по личным признакам."
     )
 
-    await _reply_with_gemini_feature(update, prompt, max_output_tokens=200)
+    await _reply_with_gemini_feature(update, prompt, max_output_tokens=420)
+
+
+ARGUMENT_POSITIONS = ("поддержать утверждение", "возразить утверждению")
 
 
 async def argument_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Разбирает спор между позицией из ответа и позицией из аргументов."""
+    """
+    Приводит аргумент к теме.
+
+    Если это явный спор двух позиций (ответ на сообщение + текст
+    после команды) — судит между ними, как раньше. Иначе берёт тему
+    (ответ/аргументы/последнее сообщение) и сама случайно выбирает,
+    поддержать её или возразить.
+    """
 
     if not update.message:
         return
 
-    target = update.message.reply_to_message
-
-    if not target or not target.text:
-        await update.message.reply_text(
-            "Ответь этой командой на сообщение с одной из позиций спора "
-            "и напиши вторую позицию после команды."
-        )
-        return
-
-    second_position = (
+    reply_target = update.message.reply_to_message
+    explicit_counter = (
         " ".join(context.args)
         if context.args
         else None
     )
 
-    if not second_position:
+    if reply_target and reply_target.text and explicit_counter:
+        prompt = (
+            "Разбери спор между двумя позициями как объективный судья:\n"
+            f"Позиция 1: «{reply_target.text[:400]}»\n"
+            f"Позиция 2: «{explicit_counter[:400]}»\n"
+            "Укажи, кто привёл больше фактов, где логическая ошибка, "
+            "и дай короткий вердикт Яйцеслава. Без оскорблений по личным "
+            "признакам."
+        )
+        await _reply_with_gemini_feature(update, prompt, max_output_tokens=420)
+        return
+
+    topic = await resolve_topic_text(update, context)
+
+    if not topic:
         await update.message.reply_text(
-            "Напиши вторую позицию спора после команды: "
-            "/argument вот моя позиция"
+            "Сначала напиши тему в чат (или ответь на сообщение с ней), "
+            "потом вызывай /argument."
         )
         return
 
+    position = random.choice(ARGUMENT_POSITIONS)
+
     prompt = (
-        "Разбери спор между двумя позициями как объективный судья:\n"
-        f"Позиция 1: «{target.text[:400]}»\n"
-        f"Позиция 2: «{second_position[:400]}»\n"
-        "Укажи, кто привёл больше фактов, где логическая ошибка, "
-        "и дай короткий вердикт Яйцеслава. Без оскорблений по личным "
-        "признакам."
+        f"Кто-то написал: «{topic[:400]}». Выбери позицию — "
+        f"{position} — и приведи нормальный аргумент с объяснением "
+        "(не одну строку), в уверенном ироничном тоне Яйцеслава, "
+        "с коротким подколом в конце. Два-четыре небольших абзаца. "
+        "Без реальных оскорблений и угроз."
     )
 
-    await _reply_with_gemini_feature(update, prompt, max_output_tokens=320)
+    await _reply_with_gemini_feature(update, prompt, max_output_tokens=380)
 
 
 async def debate_command(
@@ -4421,22 +4594,24 @@ async def debate_command(
     if not update.message:
         return
 
-    if not context.args:
+    topic = await resolve_topic_text(update, context)
+
+    if not topic:
         await update.message.reply_text(
-            "Укажи тему: /debate стоит ли работать удалённо"
+            "Укажи тему, ответь на сообщение с ней, или сначала "
+            "напиши тему в чат, а потом вызови /debate."
         )
         return
 
-    topic = " ".join(context.args)
-
     prompt = (
-        f"Аргументируй кратко обе стороны вопроса: «{topic}». "
-        "Сначала за, потом против, затем один осторожный вывод. "
+        f"Разбери тему подробно: «{topic[:400]}». Структура: "
+        "аргументы за, аргументы против, слабые места обеих сторон, "
+        "и итоговый вывод Яйцеслава. Четыре-семь абзацев. "
         "Не выдавай медицинские, юридические или финансовые "
         "рекомендации как окончательный факт."
     )
 
-    await _reply_with_gemini_feature(update, prompt, max_output_tokens=320)
+    await _reply_with_gemini_feature(update, prompt, max_output_tokens=650)
 
 
 async def explain_like_skoof_command(
@@ -4529,7 +4704,11 @@ async def recap_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Кратко и смешно пересказывает последние сообщения группы."""
+    """
+    Пересказывает последние сообщения группы: до 15 минут и не
+    больше 30 сообщений (двойное ограничение — оба лимита уже
+    заданы GROUP_MEMORY_SECONDS/GROUP_MEMORY_MAX_MESSAGES).
+    """
 
     del context
 
@@ -4555,39 +4734,101 @@ async def recap_command(
         return
 
     prompt = (
-        "Кратко и смешно перескажи последние сообщения группы "
-        "(2-4 предложения). Не цитируй чувствительные данные, "
-        "обобщай без прямых цитат:\n\n"
+        "Перескажи последние сообщения группы (5-10 предложений). "
+        "Опиши: основные темы разговора, кто какую позицию занимал, "
+        "к чему пришли, важные вопросы без ответа, и добавь короткий "
+        "шуточный комментарий Яйцеслава в конце. Не перечисляй "
+        "сообщения по одному, обобщай. Не цитируй чувствительные "
+        "данные дословно:\n\n"
         f"{context_text}"
     )
 
-    await _reply_with_gemini_feature(update, prompt, max_output_tokens=200)
+    await _reply_with_gemini_feature(update, prompt, max_output_tokens=420)
 
 
 async def fact_or_bayan_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Оценивает утверждение: факт, сомнительно, баян или нужна проверка."""
+    """
+    Оценивает утверждение: факт, сомнительно, баян или нужна проверка.
 
-    if not update.message:
+    Если модель сама решает, что нужна интернет-проверка, команда
+    автоматически ищет и уточняет вердикт по результатам поиска —
+    не просто говорит «проверь сам».
+    """
+
+    if not update.message or not update.effective_chat:
         return
 
-    if not context.args:
+    statement = await resolve_topic_text(update, context)
+
+    if not statement:
         await update.message.reply_text(
-            "Напиши утверждение: /fact_or_bayan вода кипит при 100 градусах"
+            "Напиши утверждение, ответь на сообщение с ним, или сначала "
+            "напиши его в чат, а потом вызови /fact_or_bayan."
         )
         return
 
-    statement = " ".join(context.args)
+    chat_id = update.effective_chat.id
+    chat_type = str(update.effective_chat.type)
 
     prompt = (
-        f"Оцени утверждение: «{statement}». Ответь одной из категорий: "
-        "факт, сомнительно, баян или требуется интернет-проверка — "
-        "и дай короткое пояснение."
+        f"Оцени утверждение: «{statement[:400]}». Ответь одной из "
+        "категорий: факт, сомнительно, баян или требуется "
+        "интернет-проверка — и дай пояснение в два-четыре предложения."
     )
 
-    await _reply_with_gemini_feature(update, prompt, max_output_tokens=180)
+    try:
+        verdict = await ask_gemini(
+            contents=prompt,
+            max_output_tokens=320,
+            chat_id=chat_id,
+            chat_type=chat_type,
+        )
+    except Exception as error:
+        logging.exception(
+            "Ошибка fact_or_bayan: %s",
+            error,
+        )
+        await update.message.reply_text(
+            "Связь с нейросетью опять пала в бою 🥚\nПовтори позже."
+        )
+        return
+
+    if "интернет-проверк" in verdict.lower():
+        try:
+            search_results = await search_web(statement, max_results=4)
+        except Exception as error:
+            logging.warning(
+                "Автопроверка fact_or_bayan не удалась: %s",
+                error,
+            )
+            search_results = []
+
+        if search_results:
+            follow_up_prompt = (
+                f"Утверждение: «{statement[:400]}»\n"
+                f"Результаты поиска:\n{format_search_results(search_results)}\n\n"
+                "На основе этого дай уточнённый вердикт: факт, "
+                "сомнительно или баян — и коротко объясни, опираясь "
+                "на источники (два-четыре предложения)."
+            )
+
+            try:
+                verdict = await ask_gemini(
+                    contents=follow_up_prompt,
+                    max_output_tokens=380,
+                    chat_id=chat_id,
+                    chat_type=chat_type,
+                )
+            except Exception as error:
+                logging.exception(
+                    "Ошибка уточнения fact_or_bayan: %s",
+                    error,
+                )
+
+    await update.message.reply_text(verdict)
 
 
 _ANTI_ADVICE_FORBIDDEN_RE = re.compile(
@@ -4644,30 +4885,23 @@ async def translate_yayceslav_command(
     if not update.message:
         return
 
-    text_to_translate = (
-        " ".join(context.args)
-        if context.args
-        else None
-    )
-
-    target = update.message.reply_to_message
-
-    if not text_to_translate and target and target.text:
-        text_to_translate = target.text
+    text_to_translate = await resolve_topic_text(update, context)
 
     if not text_to_translate:
         await update.message.reply_text(
-            "Напиши канцелярский текст или ответь на сообщение с ним."
+            "Напиши канцелярский текст, ответь на сообщение с ним, или "
+            "сначала напиши его в чат, а потом вызови /translate_yayceslav."
         )
         return
 
     prompt = (
         "Переведи канцелярский или сложный текст на понятный "
-        "человеческий язык и добавь короткий комментарий: "
-        f"«{text_to_translate[:600]}»"
+        "человеческий язык полностью, без искусственных сокращений, "
+        "и добавь короткий комментарий: "
+        f"«{text_to_translate[:800]}»"
     )
 
-    await _reply_with_gemini_feature(update, prompt, max_output_tokens=250)
+    await _reply_with_gemini_feature(update, prompt, max_output_tokens=500)
 
 
 # ============================================================
@@ -4854,6 +5088,12 @@ async def story_command(
         else ""
     )
 
+    recent_chat_text = build_memory_context(
+        GROUP_MEMORY,
+        chat_id,
+        GROUP_MEMORY_SECONDS,
+    )
+
     prompt = (
         "Ты продолжаешь коллективную историю в группе, один абзац "
         "за раз. Сохраняй уже упомянутых героев и события, "
@@ -4861,8 +5101,16 @@ async def story_command(
         f"История до этого момента:\n{story_so_far}\n\n"
     )
 
+    if recent_chat_text:
+        prompt += (
+            "Недавняя переписка группы (используй как материал для "
+            "новых сюжетных элементов — участников, события, шутки — "
+            "но не пересказывай её напрямую):\n"
+            f"{recent_chat_text}\n\n"
+        )
+
     if addition:
-        prompt += f"Участник предлагает добавить: {addition}\n\n"
+        prompt += f"Участник явно предлагает добавить: {addition}\n\n"
 
     prompt += (
         "Напиши только следующий абзац истории "
@@ -5509,6 +5757,47 @@ GROUP_LAST_SERIOUS_AT: dict[int, float] = {}
 GROUP_IGNORED_STREAK: dict[int, int] = defaultdict(int)
 TRIGGER_REPLY_LAST_BY_USER: dict[tuple[int, int], float] = {}
 
+# Последнее обычное сообщение пользователя в конкретном чате — чтобы
+# команды вроде /argument, /debate, /judge могли сработать по теме,
+# которую человек написал ДО команды, без повторного её ввода.
+LAST_USER_TEXT_MESSAGE: dict[tuple[int, int], tuple[float, str]] = {}
+LAST_USER_TEXT_MESSAGE_MAX_AGE_SECONDS = 30 * 60
+
+
+def record_last_user_message(
+    chat_id: int,
+    user_id: int,
+    text: str,
+) -> None:
+    """Запоминает последнее обычное сообщение пользователя в этом чате."""
+
+    if not text:
+        return
+
+    LAST_USER_TEXT_MESSAGE[(chat_id, user_id)] = (
+        time.monotonic(),
+        text,
+    )
+
+
+def get_last_user_message(
+    chat_id: int,
+    user_id: int,
+) -> str | None:
+    """Возвращает последнее сообщение пользователя, если оно не устарело."""
+
+    entry = LAST_USER_TEXT_MESSAGE.get((chat_id, user_id))
+
+    if entry is None:
+        return None
+
+    recorded_at, text = entry
+
+    if time.monotonic() - recorded_at > LAST_USER_TEXT_MESSAGE_MAX_AGE_SECONDS:
+        return None
+
+    return text
+
 
 def is_quiet_hours_msk() -> bool:
     """Проверяет тихие часы (00:00–07:00 по МСК) для случайных вмешательств."""
@@ -5677,6 +5966,12 @@ async def hard_mode_listener(
         chat_type,
         current_msk_date_str(),
         **build_text_activity_deltas(text),
+    )
+
+    record_last_user_message(
+        chat_id,
+        update.effective_user.id,
+        text,
     )
 
     # Смотрим предыдущее сообщение группы ДО того, как допишем
@@ -6278,6 +6573,10 @@ async def profile_command(
     total_messages = (
         profile["total_messages"] if profile else 0
     )
+    current_title = (
+        (profile.get("current_title") if profile else None)
+        or "пока нет — держи /title"
+    )
 
     await update.message.reply_text(
         "Твой профиль у Яйцеслава:\n"
@@ -6288,6 +6587,7 @@ async def profile_command(
         f"Голос: {'включён' if settings['voice_enabled'] else 'выключен'}\n"
         f"Поиск: {SEARCH_MODE_LABELS.get(settings['search_mode'], settings['search_mode'])}\n"
         f"Обращение: {nickname}\n"
+        f"Титул: {current_title}\n"
         f"Уровень знакомства в этом чате: {relationship_level}\n"
         f"Сообщений в этом чате: {total_messages}"
     )
@@ -6389,6 +6689,12 @@ async def whoami_command(
         else ""
     )
 
+    title_line = (
+        f"Титул: {profile['current_title']}\n"
+        if profile.get("current_title")
+        else ""
+    )
+
     facts_line = (
         (
             "Что ты сам просил запомнить: "
@@ -6404,6 +6710,7 @@ async def whoami_command(
         f"Статус: {RELATIONSHIP_LEVEL_LABELS.get(profile['relationship_level'], 'незнакомец')}\n"
         f"Сообщений: {profile['total_messages']}\n"
         f"{archetype_line}"
+        f"{title_line}"
         f"{facts_line}"
     )
 
@@ -7463,6 +7770,12 @@ async def answer_text_message(
                 or ""
             )
 
+            record_last_user_message(
+                update.effective_chat.id,
+                private_user_id,
+                user_text,
+            )
+
             previous_context = build_memory_context(
                 PRIVATE_MEMORY,
                 private_user_id,
@@ -7518,6 +7831,12 @@ async def answer_text_message(
                 **build_text_activity_deltas(
                     user_text, is_reply_to_bot=True
                 ),
+            )
+
+            record_last_user_message(
+                group_chat_id,
+                update.effective_user.id,
+                user_text,
             )
 
             previous_context = build_memory_context(
@@ -8655,20 +8974,8 @@ def main() -> None:
     )
     application.add_handler(
         CommandHandler(
-            "toast",
-            toast_command,
-        )
-    )
-    application.add_handler(
-        CommandHandler(
             "prophecy",
             prophecy_command,
-        )
-    )
-    application.add_handler(
-        CommandHandler(
-            "excuse",
-            excuse_command,
         )
     )
     application.add_handler(
