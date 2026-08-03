@@ -128,3 +128,26 @@ def test_fun_command_pools_are_nonempty_and_distinct():
     for pool in pools:
         assert len(pool) > 0
         assert len(pool) == len(set(pool))
+
+
+def test_award_templates_cover_all_labels():
+    assert vocabulary.AWARD_TEMPLATES.keys() == vocabulary.AWARD_LABELS.keys()
+
+
+def test_award_templates_have_name_placeholder_and_no_duplicates():
+    for key, templates in vocabulary.AWARD_TEMPLATES.items():
+        assert len(templates) > 0, key
+        assert len(templates) == len(set(templates)), key
+        for template in templates:
+            assert "{name}" in template, (key, template)
+
+
+def test_popular_awards_have_at_least_fifteen_variants():
+    popular_awards = (
+        "chat_leader",
+        "voice_leader",
+        "wall_of_text",
+        "bot_caller",
+    )
+    for key in popular_awards:
+        assert len(vocabulary.AWARD_TEMPLATES[key]) >= 15, key

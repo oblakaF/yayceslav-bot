@@ -48,6 +48,8 @@ from personality import (
     VOICE_STYLE_INSTRUCTION,
 )
 from vocabulary import (
+    AWARD_LABELS,
+    AWARD_TEMPLATES,
     BASE_REPLIES,
     CRINGE_REPLIES,
     EXCUSES,
@@ -340,6 +342,61 @@ def initialize_stats_database() -> None:
             """
         )
 
+        # Недельная аналитика: агрегаты по дням, не полный текст
+        # сообщений — статистика, а не архив переписки.
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_activity_daily (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                messages INTEGER NOT NULL DEFAULT 0,
+                text_characters INTEGER NOT NULL DEFAULT 0,
+                voice_messages INTEGER NOT NULL DEFAULT 0,
+                voice_duration_seconds INTEGER NOT NULL DEFAULT 0,
+                photos INTEGER NOT NULL DEFAULT 0,
+                videos INTEGER NOT NULL DEFAULT 0,
+                stickers INTEGER NOT NULL DEFAULT 0,
+                documents INTEGER NOT NULL DEFAULT 0,
+                replies INTEGER NOT NULL DEFAULT 0,
+                replies_to_bot INTEGER NOT NULL DEFAULT 0,
+                commands INTEGER NOT NULL DEFAULT 0,
+                night_messages INTEGER NOT NULL DEFAULT 0,
+                questions INTEGER NOT NULL DEFAULT 0,
+                links INTEGER NOT NULL DEFAULT 0,
+                edited_messages INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (chat_id, user_id, date)
+            )
+            """
+        )
+
+        # Расписание автоматического недельного отчёта.
+        # По умолчанию — воскресенье, 21:00 по МСК.
+        _ensure_column(
+            connection,
+            "chat_settings",
+            "weekly_report_enabled",
+            "weekly_report_enabled INTEGER NOT NULL DEFAULT 0",
+        )
+        _ensure_column(
+            connection,
+            "chat_settings",
+            "weekly_report_weekday",
+            "weekly_report_weekday INTEGER NOT NULL DEFAULT 6",
+        )
+        _ensure_column(
+            connection,
+            "chat_settings",
+            "weekly_report_time",
+            "weekly_report_time TEXT NOT NULL DEFAULT '21:00'",
+        )
+        _ensure_column(
+            connection,
+            "chat_settings",
+            "weekly_report_last_sent_date",
+            "weekly_report_last_sent_date TEXT",
+        )
+
         connection.commit()
 
 
@@ -498,6 +555,9 @@ CHAT_SETTING_COLUMNS = {
     "hard_level",
     "reaction_chance",
     "random_reply_chance",
+    "weekly_report_enabled",
+    "weekly_report_weekday",
+    "weekly_report_time",
 }
 
 
@@ -584,10 +644,12 @@ def update_chat_setting_sync(
             f"Неизвестная настройка чата: {setting_name}"
         )
 
-    if setting_name == "hard_mode_enabled":
+    if setting_name in ("hard_mode_enabled", "weekly_report_enabled"):
         database_value: Any = int(bool(setting_value))
     elif setting_name in ("reaction_chance", "random_reply_chance"):
         database_value = float(setting_value)
+    elif setting_name == "weekly_report_weekday":
+        database_value = int(setting_value)
     else:
         database_value = str(setting_value)
 
@@ -734,7 +796,7 @@ def compute_relationship_level(
 
 
 def _row_to_member_profile(row: Any) -> dict[str, Any]:
-    self_reported_raw = row[10]
+    self_reported_raw = row[11]
 
     try:
         self_reported_facts = (
@@ -746,19 +808,20 @@ def _row_to_member_profile(row: Any) -> dict[str, Any]:
         self_reported_facts = []
 
     return {
-        "current_display_name": row[0],
-        "username": row[1],
-        "first_seen_at": row[2],
-        "last_seen_at": row[3],
-        "total_messages": int(row[4]),
-        "total_voice_messages": int(row[5]),
-        "total_photos": int(row[6]),
-        "total_stickers": int(row[7]),
-        "replies_to_bot": int(row[8]),
-        "insults_to_bot": int(row[9]),
+        "user_id": int(row[0]),
+        "current_display_name": row[1],
+        "username": row[2],
+        "first_seen_at": row[3],
+        "last_seen_at": row[4],
+        "total_messages": int(row[5]),
+        "total_voice_messages": int(row[6]),
+        "total_photos": int(row[7]),
+        "total_stickers": int(row[8]),
+        "replies_to_bot": int(row[9]),
+        "insults_to_bot": int(row[10]),
         "self_reported_facts": self_reported_facts,
-        "joke_archetype": row[11],
-        "relationship_level": int(row[12]),
+        "joke_archetype": row[12],
+        "relationship_level": int(row[13]),
     }
 
 
@@ -772,6 +835,7 @@ def get_member_profile_sync(
         row = connection.execute(
             """
             SELECT
+                user_id,
                 current_display_name,
                 username,
                 first_seen_at,
@@ -1064,6 +1128,7 @@ def list_chat_member_profiles_sync(
         rows = connection.execute(
             """
             SELECT
+                user_id,
                 current_display_name,
                 username,
                 first_seen_at,
@@ -1102,6 +1167,376 @@ async def list_chat_member_profiles(
         chat_id,
         limit,
     )
+
+
+# ============================================================
+# НЕДЕЛЬНАЯ АНАЛИТИКА (chat_activity_daily)
+#
+# Храним агрегаты по дням, а не полный текст сообщений —
+# это статистика активности, а не архив переписки.
+# ============================================================
+
+MSK_TIMEZONE = timezone(timedelta(hours=3))
+
+# Тёмное время суток по МСК — то же окно, что и у quiet hours,
+# для единообразия "ночной активности" в разных местах бота.
+NIGHT_ACTIVITY_START_MSK = 0
+NIGHT_ACTIVITY_END_MSK = 6
+
+CHAT_ACTIVITY_COLUMNS = {
+    "messages",
+    "text_characters",
+    "voice_messages",
+    "voice_duration_seconds",
+    "photos",
+    "videos",
+    "stickers",
+    "documents",
+    "replies",
+    "replies_to_bot",
+    "commands",
+    "night_messages",
+    "questions",
+    "links",
+    "edited_messages",
+}
+
+_URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+
+
+def current_msk_datetime() -> datetime:
+    """Возвращает текущее время по МСК."""
+
+    return datetime.now(MSK_TIMEZONE)
+
+
+def current_msk_date_str() -> str:
+    """Возвращает текущую дату по МСК в формате YYYY-MM-DD."""
+
+    return current_msk_datetime().strftime("%Y-%m-%d")
+
+
+def is_night_activity_now_msk() -> bool:
+    """Проверяет, попадает ли текущий час по МСК в ночное окно."""
+
+    hour = current_msk_datetime().hour
+    return NIGHT_ACTIVITY_START_MSK <= hour < NIGHT_ACTIVITY_END_MSK
+
+
+def build_text_activity_deltas(
+    text: str,
+    *,
+    is_reply_to_bot: bool = False,
+) -> dict[str, int]:
+    """Строит набор приращений активности для одного текстового сообщения."""
+
+    return {
+        "messages": 1,
+        "text_characters": len(text),
+        "replies_to_bot": 1 if is_reply_to_bot else 0,
+        "night_messages": 1 if is_night_activity_now_msk() else 0,
+        "questions": 1 if "?" in text else 0,
+        "links": 1 if _URL_RE.search(text) else 0,
+    }
+
+
+def increment_chat_activity_sync(
+    chat_id: int,
+    user_id: int,
+    chat_type: str,
+    date_str: str,
+    **deltas: int,
+) -> None:
+    """Прибавляет дневные счётчики активности участника."""
+
+    unknown_columns = set(deltas) - CHAT_ACTIVITY_COLUMNS
+
+    if unknown_columns:
+        raise ValueError(
+            f"Неизвестные поля активности: {unknown_columns}"
+        )
+
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO chats (chat_id, chat_type)
+            VALUES (?, ?)
+            """,
+            (chat_id, chat_type),
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO users (user_id)
+            VALUES (?)
+            """,
+            (user_id,),
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO chat_activity_daily (chat_id, user_id, date)
+            VALUES (?, ?, ?)
+            """,
+            (chat_id, user_id, date_str),
+        )
+
+        for column, delta in deltas.items():
+            if not delta:
+                continue
+
+            connection.execute(
+                f"""
+                UPDATE chat_activity_daily
+                SET {column} = {column} + ?
+                WHERE chat_id = ? AND user_id = ? AND date = ?
+                """,
+                (delta, chat_id, user_id, date_str),
+            )
+
+        connection.commit()
+
+
+async def increment_chat_activity(
+    chat_id: int,
+    user_id: int,
+    chat_type: str,
+    date_str: str,
+    **deltas: int,
+) -> None:
+    """Прибавляет дневную активность без блокировки бота."""
+
+    await asyncio.to_thread(
+        increment_chat_activity_sync,
+        chat_id,
+        user_id,
+        chat_type,
+        date_str,
+        **deltas,
+    )
+
+
+def get_week_date_range(
+    reference_date: str | None = None,
+) -> tuple[str, str]:
+    """Возвращает (начало, конец) последних семи дней по МСК включительно."""
+
+    if reference_date is not None:
+        end = datetime.strptime(reference_date, "%Y-%m-%d")
+    else:
+        end = current_msk_datetime().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+
+    start = end - timedelta(days=6)
+
+    return (
+        start.strftime("%Y-%m-%d"),
+        end.strftime("%Y-%m-%d"),
+    )
+
+
+def get_weekly_activity_sync(
+    chat_id: int,
+    start_date: str,
+    end_date: str,
+) -> list[dict[str, Any]]:
+    """Возвращает агрегированную недельную активность по каждому участнику."""
+
+    with get_db_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                user_id,
+                SUM(messages),
+                SUM(text_characters),
+                SUM(voice_messages),
+                SUM(voice_duration_seconds),
+                SUM(photos),
+                SUM(videos),
+                SUM(stickers),
+                SUM(documents),
+                SUM(replies),
+                SUM(replies_to_bot),
+                SUM(commands),
+                SUM(night_messages),
+                SUM(questions),
+                SUM(links),
+                SUM(edited_messages)
+            FROM chat_activity_daily
+            WHERE chat_id = ? AND date BETWEEN ? AND ?
+            GROUP BY user_id
+            """,
+            (chat_id, start_date, end_date),
+        ).fetchall()
+
+    columns = (
+        "messages",
+        "text_characters",
+        "voice_messages",
+        "voice_duration_seconds",
+        "photos",
+        "videos",
+        "stickers",
+        "documents",
+        "replies",
+        "replies_to_bot",
+        "commands",
+        "night_messages",
+        "questions",
+        "links",
+        "edited_messages",
+    )
+
+    results = []
+
+    for row in rows:
+        entry = {"user_id": row[0]}
+        entry.update(
+            {
+                column: int(value or 0)
+                for column, value in zip(columns, row[1:])
+            }
+        )
+        results.append(entry)
+
+    return results
+
+
+async def get_weekly_activity(
+    chat_id: int,
+    start_date: str,
+    end_date: str,
+) -> list[dict[str, Any]]:
+    """Читает недельную активность без блокировки бота."""
+
+    return await asyncio.to_thread(
+        get_weekly_activity_sync,
+        chat_id,
+        start_date,
+        end_date,
+    )
+
+
+# Достаточно данных, чтобы награда что-то значила, а не досталась
+# за одно случайное сообщение.
+AWARD_MINIMUM_MESSAGES_FOR_STYLE_AWARDS = 5
+
+# Простые "больше всех по колонке" награды: ключ награды -> колонка.
+_SIMPLE_LEADER_AWARDS = {
+    "chat_leader": "messages",
+    "voice_leader": "voice_messages",
+    "wall_of_text": "text_characters",
+    "bot_caller": "replies_to_bot",
+    "pixel_provider": "photos",
+    "night_watch": "night_messages",
+    "argument_lord": "replies",
+    "reality_editor": "edited_messages",
+    "archivist": "documents",
+    "voice_from_the_deep": "voice_duration_seconds",
+}
+
+
+def _leader_by_column(
+    weekly_activity: list[dict[str, Any]],
+    column: str,
+) -> int | None:
+    """Возвращает user_id с максимальным значением колонки (если > 0)."""
+
+    best_user_id = None
+    best_value = 0
+
+    for entry in weekly_activity:
+        value = entry.get(column, 0)
+
+        if value > best_value:
+            best_value = value
+            best_user_id = entry["user_id"]
+
+    return best_user_id
+
+
+def compute_weekly_awards(
+    weekly_activity: list[dict[str, Any]],
+    known_members: list[dict[str, Any]],
+) -> list[tuple[str, int]]:
+    """
+    Определяет победителя каждой награды по числовым данным недели.
+
+    Не более одного победителя на награду, награда не выдаётся,
+    если ни у кого нет нужного минимума участия.
+    """
+
+    awards: list[tuple[str, int]] = []
+
+    for award_key, column in _SIMPLE_LEADER_AWARDS.items():
+        winner = _leader_by_column(weekly_activity, column)
+
+        if winner is not None:
+            awards.append((award_key, winner))
+
+    # Односложный мудрец: минимум пять сообщений, самая короткая
+    # средняя длина сообщения — это стиль, а не разовая случайность.
+    best_user_id = None
+    best_avg_length: float | None = None
+
+    for entry in weekly_activity:
+        messages = entry.get("messages", 0)
+
+        if messages < AWARD_MINIMUM_MESSAGES_FOR_STYLE_AWARDS:
+            continue
+
+        avg_length = entry.get("text_characters", 0) / messages
+
+        if best_avg_length is None or avg_length < best_avg_length:
+            best_avg_length = avg_length
+            best_user_id = entry["user_id"]
+
+    if best_user_id is not None:
+        awards.append(("one_word_sage", best_user_id))
+
+    # Куколд-наблюдатель: боту уже известен, раньше писал,
+    # на этой неделе — ни одного сообщения.
+    active_user_ids = {
+        entry["user_id"]
+        for entry in weekly_activity
+        if entry.get("messages", 0) > 0
+    }
+
+    silent_candidates = [
+        member
+        for member in known_members
+        if member.get("total_messages", 0) > 0
+        and member["user_id"] not in active_user_ids
+    ]
+
+    if silent_candidates:
+        chosen = random.choice(silent_candidates)
+        awards.append(("silent_observer", chosen["user_id"]))
+
+    return awards
+
+
+def format_awards_message(
+    awards: list[tuple[str, int]],
+    display_names: dict[int, str],
+) -> str:
+    """Превращает список наград в готовый текст сообщения."""
+
+    if not awards:
+        return "На этой неделе данных маловато — награды не набежали."
+
+    lines = ["Шуточные награды недели:"]
+
+    for award_key, user_id in awards:
+        name = display_names.get(user_id, "Неизвестный герой")
+        template = random.choice(
+            AWARD_TEMPLATES.get(award_key, ["{name} получает награду."])
+        )
+        lines.append(
+            f"\n🏆 {AWARD_LABELS.get(award_key, award_key)}\n"
+            + template.format(name=name)
+        )
+
+    return "\n".join(lines)
 
 
 CHARACTER_LABELS = {
@@ -1689,6 +2124,10 @@ async def on_application_startup(
     application.create_task(
         periodic_cleanup_loop(),
         name="periodic_cleanup",
+    )
+    application.create_task(
+        weekly_report_scheduler_loop(application),
+        name="weekly_report_scheduler",
     )
 
 
@@ -4367,6 +4806,565 @@ async def story_command(
 
 
 # ============================================================
+# НЕДЕЛЬНЫЕ ОТЧЁТЫ И РАСПИСАНИЕ АВТО-ОТЧЁТА
+# ============================================================
+
+WEEKDAY_NAMES_RU = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+    "понедельник": 0,
+    "вторник": 1,
+    "среда": 2,
+    "четверг": 3,
+    "пятница": 4,
+    "суббота": 5,
+    "воскресенье": 6,
+}
+
+WEEKDAY_LABELS_RU = {
+    0: "понедельник",
+    1: "вторник",
+    2: "среда",
+    3: "четверг",
+    4: "пятница",
+    5: "суббота",
+    6: "воскресенье",
+}
+
+_WEEK_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+async def _resolve_display_names(
+    known_members: list[dict[str, Any]],
+) -> dict[int, str]:
+    """Строит user_id -> отображаемое имя из уже загруженных профилей."""
+
+    return {
+        member["user_id"]: (
+            member["current_display_name"]
+            or f"участник {member['user_id']}"
+        )
+        for member in known_members
+    }
+
+
+async def build_weekly_report_text(
+    chat_id: int,
+    chat_type: str,
+) -> str:
+    """
+    Собирает текст «Летописи балагана за неделю».
+
+    Общая функция для /week и автоматической еженедельной рассылки —
+    чтобы они не могли разойтись в форматировании.
+    """
+
+    start_date, end_date = get_week_date_range()
+    weekly = await get_weekly_activity(chat_id, start_date, end_date)
+
+    if not weekly:
+        return "За эту неделю в чате было тихо — считать нечего."
+
+    known_members = await list_chat_member_profiles(chat_id, limit=50)
+    names = await _resolve_display_names(known_members)
+
+    total_messages = sum(entry["messages"] for entry in weekly)
+    total_voice = sum(entry["voice_messages"] for entry in weekly)
+    total_photos = sum(entry["photos"] for entry in weekly)
+    total_stickers = sum(entry["stickers"] for entry in weekly)
+    bot_mentions = sum(entry["replies_to_bot"] for entry in weekly)
+    active_participants = sum(
+        1 for entry in weekly if entry["messages"] > 0
+    )
+
+    top_by_messages = sorted(
+        (entry for entry in weekly if entry["messages"] > 0),
+        key=lambda entry: entry["messages"],
+        reverse=True,
+    )[:3]
+
+    top_lines = [
+        f"{index}. {names.get(entry['user_id'], 'участник')} — "
+        f"{entry['messages']} сообщ."
+        for index, entry in enumerate(top_by_messages, start=1)
+    ]
+
+    awards = compute_weekly_awards(weekly, known_members)
+    awards_text = (
+        format_awards_message(awards[:5], names)
+        if awards
+        else ""
+    )
+
+    verdict_prompt = (
+        "Дай короткую (одно-два предложения) контекстную шутливую "
+        f"оценку недели чата по цифрам: {total_messages} сообщений, "
+        f"{active_participants} активных участников, {total_voice} "
+        f"голосовых, {total_photos} фото. Без имён и лишних деталей."
+    )
+
+    try:
+        verdict = await ask_gemini(
+            contents=verdict_prompt,
+            max_output_tokens=100,
+            chat_id=chat_id,
+            chat_type=chat_type,
+        )
+    except Exception as error:
+        logging.exception(
+            "Ошибка вердикта недельного отчёта: %s",
+            error,
+        )
+        verdict = "Неделя как неделя — чат жил, Яйцеслав наблюдал."
+
+    report = (
+        "Летопись балагана за неделю\n\n"
+        f"Сообщений: {total_messages}\n"
+        f"Активных бояр: {active_participants}\n"
+        f"Голосовых: {total_voice}\n"
+        f"Фото: {total_photos}\n"
+        f"Стикеров: {total_stickers}\n"
+        f"Обращений к Яйцеславу: {bot_mentions}\n\n"
+        "Топ писателей:\n"
+        + (
+            "\n".join(top_lines)
+            if top_lines
+            else "Пока никого не набралось."
+        )
+        + "\n\n"
+    )
+
+    if awards_text:
+        report += awards_text + "\n\n"
+
+    report += f"Вердикт Яйцеслава:\n{verdict}"
+
+    return report
+
+
+async def week_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Показывает недельный отчёт текущей группы."""
+
+    del context
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Недельный отчёт есть только для групп."
+        )
+        return
+
+    report_text = await build_weekly_report_text(
+        update.effective_chat.id,
+        str(update.effective_chat.type),
+    )
+
+    await update.message.reply_text(report_text)
+
+
+async def week_me_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Показывает личную статистику участника за неделю."""
+
+    del context
+
+    if (
+        not update.message
+        or not update.effective_chat
+        or not update.effective_user
+    ):
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Личная статистика недели доступна в группах."
+        )
+        return
+
+    start_date, end_date = get_week_date_range()
+    weekly = await get_weekly_activity(
+        update.effective_chat.id, start_date, end_date
+    )
+
+    mine = next(
+        (
+            entry
+            for entry in weekly
+            if entry["user_id"] == update.effective_user.id
+        ),
+        None,
+    )
+
+    if mine is None or mine["messages"] == 0:
+        await update.message.reply_text(
+            "На этой неделе от тебя не было сообщений в этом чате."
+        )
+        return
+
+    await update.message.reply_text(
+        "Твоя статистика за неделю:\n"
+        f"Сообщений: {mine['messages']}\n"
+        f"Символов: {mine['text_characters']}\n"
+        f"Голосовых: {mine['voice_messages']}\n"
+        f"Фото: {mine['photos']}\n"
+        f"Обращений к Яйцеславу: {mine['replies_to_bot']}\n"
+        f"Ночных сообщений: {mine['night_messages']}"
+    )
+
+
+async def leaderboard_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Показывает таблицу активности за неделю."""
+
+    del context
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Таблица активности есть только в группах."
+        )
+        return
+
+    chat_id = update.effective_chat.id
+    start_date, end_date = get_week_date_range()
+    weekly = await get_weekly_activity(chat_id, start_date, end_date)
+
+    active = sorted(
+        (entry for entry in weekly if entry["messages"] > 0),
+        key=lambda entry: entry["messages"],
+        reverse=True,
+    )
+
+    if not active:
+        await update.message.reply_text(
+            "На этой неделе активности не было."
+        )
+        return
+
+    known_members = await list_chat_member_profiles(chat_id, limit=50)
+    names = await _resolve_display_names(known_members)
+
+    lines = ["Таблица активности за неделю:"]
+
+    for index, entry in enumerate(active[:10], start=1):
+        lines.append(
+            f"{index}. {names.get(entry['user_id'], 'участник')} — "
+            f"{entry['messages']} сообщ."
+        )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
+
+async def awards_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Показывает только шуточные награды недели."""
+
+    del context
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Награды недели — это для групп."
+        )
+        return
+
+    chat_id = update.effective_chat.id
+    start_date, end_date = get_week_date_range()
+    weekly = await get_weekly_activity(chat_id, start_date, end_date)
+    known_members = await list_chat_member_profiles(chat_id, limit=50)
+    names = await _resolve_display_names(known_members)
+
+    awards = compute_weekly_awards(weekly, known_members)
+
+    await update.message.reply_text(
+        format_awards_message(awards, names)
+    )
+
+
+async def week_auto_on_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Включает автоматический недельный отчёт (по умолчанию — Вс 21:00 МСК)."""
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Авто-отчёт настраивается в группах."
+        )
+        return
+
+    if not await user_is_group_admin(
+        update,
+        context,
+    ):
+        await update.message.reply_text(
+            "Включать авто-отчёт может только админ."
+        )
+        return
+
+    await update_chat_setting(
+        update.effective_chat.id,
+        "weekly_report_enabled",
+        True,
+        str(update.effective_chat.type),
+    )
+
+    await update.message.reply_text(
+        "Авто-отчёт включён. По умолчанию — воскресенье, 21:00 по МСК. "
+        "Изменить время: /week_time воскресенье 21:00"
+    )
+
+
+async def week_auto_off_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Выключает автоматический недельный отчёт."""
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Авто-отчёт настраивается в группах."
+        )
+        return
+
+    if not await user_is_group_admin(
+        update,
+        context,
+    ):
+        await update.message.reply_text(
+            "Выключать авто-отчёт может только админ."
+        )
+        return
+
+    await update_chat_setting(
+        update.effective_chat.id,
+        "weekly_report_enabled",
+        False,
+        str(update.effective_chat.type),
+    )
+
+    await update.message.reply_text(
+        "Авто-отчёт выключен."
+    )
+
+
+async def week_time_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Задаёт день и время автоматического недельного отчёта."""
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Расписание отчёта настраивается в группах."
+        )
+        return
+
+    if not await user_is_group_admin(
+        update,
+        context,
+    ):
+        await update.message.reply_text(
+            "Расписание меняют только админы."
+        )
+        return
+
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Формат: /week_time воскресенье 21:00"
+        )
+        return
+
+    weekday_raw = context.args[0].strip().lower()
+    time_raw = context.args[1].strip()
+    weekday = WEEKDAY_NAMES_RU.get(weekday_raw)
+
+    if weekday is None:
+        await update.message.reply_text(
+            "День недели не распознан. Пример: "
+            "/week_time воскресенье 21:00"
+        )
+        return
+
+    if not _WEEK_TIME_RE.match(time_raw):
+        await update.message.reply_text(
+            "Время укажи в формате ЧЧ:ММ, например 21:00."
+        )
+        return
+
+    await update_chat_setting(
+        update.effective_chat.id,
+        "weekly_report_weekday",
+        weekday,
+        str(update.effective_chat.type),
+    )
+    await update_chat_setting(
+        update.effective_chat.id,
+        "weekly_report_time",
+        time_raw,
+        str(update.effective_chat.type),
+    )
+
+    await update.message.reply_text(
+        f"Расписание обновлено: {WEEKDAY_LABELS_RU[weekday]} "
+        f"в {time_raw} по МСК."
+    )
+
+
+def get_weekly_report_chats_sync() -> list[dict[str, Any]]:
+    """Возвращает чаты с включённым авто-отчётом и их расписанием."""
+
+    with get_db_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                chat_id,
+                weekly_report_weekday,
+                weekly_report_time,
+                weekly_report_last_sent_date
+            FROM chat_settings
+            WHERE weekly_report_enabled = 1
+            """
+        ).fetchall()
+
+    return [
+        {
+            "chat_id": row[0],
+            "weekday": int(row[1]),
+            "time": row[2],
+            "last_sent_date": row[3],
+        }
+        for row in rows
+    ]
+
+
+async def get_weekly_report_chats() -> list[dict[str, Any]]:
+    """Читает список чатов с авто-отчётом без блокировки бота."""
+
+    return await asyncio.to_thread(
+        get_weekly_report_chats_sync
+    )
+
+
+def mark_weekly_report_sent_sync(
+    chat_id: int,
+) -> None:
+    """Отмечает, что авто-отчёт за сегодня уже отправлен."""
+
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            UPDATE chat_settings
+            SET weekly_report_last_sent_date = ?
+            WHERE chat_id = ?
+            """,
+            (current_msk_date_str(), chat_id),
+        )
+        connection.commit()
+
+
+async def mark_weekly_report_sent(
+    chat_id: int,
+) -> None:
+    """Отмечает отправку без блокировки бота."""
+
+    await asyncio.to_thread(
+        mark_weekly_report_sent_sync,
+        chat_id,
+    )
+
+
+# Раз в минуту — недорого (запросов обычно единицы), зато не
+# промахнёмся мимо назначенной минуты один раз в неделю.
+WEEKLY_REPORT_CHECK_INTERVAL_SECONDS = 60
+
+
+async def run_due_weekly_reports(
+    application: Application,
+) -> None:
+    """Отправляет авто-отчёт во все чаты, для которых сейчас их время."""
+
+    now = current_msk_datetime()
+    today_str = now.strftime("%Y-%m-%d")
+    current_hhmm = now.strftime("%H:%M")
+
+    for chat in await get_weekly_report_chats():
+        if chat["weekday"] != now.weekday():
+            continue
+
+        if chat["time"] != current_hhmm:
+            continue
+
+        if chat["last_sent_date"] == today_str:
+            continue
+
+        try:
+            report_text = await build_weekly_report_text(
+                chat["chat_id"], "group"
+            )
+            await application.bot.send_message(
+                chat_id=chat["chat_id"],
+                text=report_text,
+            )
+        except Exception as error:
+            logging.warning(
+                "Не удалось отправить авто-отчёт в чат %s: %s",
+                chat["chat_id"],
+                error,
+            )
+        finally:
+            await mark_weekly_report_sent(chat["chat_id"])
+
+
+async def weekly_report_scheduler_loop(
+    application: Application,
+) -> None:
+    """Фоновая задача: проверяет расписание авто-отчётов раз в минуту."""
+
+    while True:
+        await asyncio.sleep(WEEKLY_REPORT_CHECK_INTERVAL_SECONDS)
+
+        try:
+            await run_due_weekly_reports(application)
+        except Exception as error:
+            logging.warning(
+                "Ошибка планировщика недельных отчётов: %s",
+                error,
+            )
+
+
+# ============================================================
 # АНТИСПАМ ДЛЯ СЛУЧАЙНЫХ ВМЕШАТЕЛЬСТВ В ГРУППЕ
 #
 # Даже агрессивный Яйцеслав не должен отвечать на всё подряд.
@@ -4560,6 +5558,14 @@ async def hard_mode_listener(
         chat_type,
         author_name,
         update.effective_user.username,
+    )
+
+    await increment_chat_activity(
+        chat_id,
+        update.effective_user.id,
+        chat_type,
+        current_msk_date_str(),
+        **build_text_activity_deltas(text),
     )
 
     # Смотрим предыдущее сообщение группы ДО того, как допишем
@@ -4906,7 +5912,14 @@ async def help_command(
         "/anti_advice тема — сначала плохой совет, потом настоящий\n"
         "/translate_yayceslav текст — перевод с канцелярского\n"
         "/duel — вызвать на шуточную дуэль (ответом на сообщение)\n"
-        "/story — продолжить историю группы"
+        "/story — продолжить историю группы\n"
+        "/week — недельный отчёт группы\n"
+        "/week_me — твоя статистика за неделю\n"
+        "/leaderboard — таблица активности\n"
+        "/awards — шуточные награды недели\n"
+        "/week_auto_on — включить авто-отчёт (админы)\n"
+        "/week_auto_off — выключить авто-отчёт (админы)\n"
+        "/week_time день ЧЧ:ММ — расписание авто-отчёта (админы)"
     )
 async def stats_command(
     update: Update,
@@ -6386,6 +7399,16 @@ async def answer_text_message(
                 update.effective_user.username,
             )
 
+            await increment_chat_activity(
+                group_chat_id,
+                update.effective_user.id,
+                str(update.effective_chat.type),
+                current_msk_date_str(),
+                **build_text_activity_deltas(
+                    user_text, is_reply_to_bot=True
+                ),
+            )
+
             previous_context = build_memory_context(
                 GROUP_MEMORY,
                 group_chat_id,
@@ -7607,6 +8630,48 @@ def main() -> None:
         CommandHandler(
             "story",
             story_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "week",
+            week_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "week_me",
+            week_me_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "leaderboard",
+            leaderboard_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "awards",
+            awards_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "week_auto_on",
+            week_auto_on_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "week_auto_off",
+            week_auto_off_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "week_time",
+            week_time_command,
         )
     )
     application.add_handler(
