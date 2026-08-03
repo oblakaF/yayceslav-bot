@@ -1,3 +1,4 @@
+import sqlite3
 import time
 
 import bot
@@ -110,3 +111,68 @@ def test_cleanup_in_memory_state_removes_empty_group_memory_ids():
 
     assert old_chat_id not in bot.GROUP_MEMORY
     assert removed["memory_ids"] >= 1
+
+
+def test_schema_migration_adds_columns_without_losing_data(tmp_path, monkeypatch):
+    """
+    Simulates a database created before the counter/schedule columns
+    existed, to check the additive _ensure_column migration doesn't
+    lose the row that was already there.
+    """
+
+    db_path = tmp_path / "pre_migration.db"
+
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE chats (
+            chat_id INTEGER PRIMARY KEY,
+            chat_type TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE chat_settings (
+            chat_id INTEGER PRIMARY KEY REFERENCES chats(chat_id),
+            hard_mode_enabled INTEGER NOT NULL DEFAULT 1,
+            hard_level TEXT NOT NULL DEFAULT 'normal',
+            reaction_chance REAL NOT NULL DEFAULT 0.70,
+            random_reply_chance REAL NOT NULL DEFAULT 0.16,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    chat_id = 8001
+    connection.execute(
+        "INSERT INTO chats (chat_id, chat_type) VALUES (?, ?)",
+        (chat_id, "group"),
+    )
+    connection.execute(
+        "INSERT INTO chat_settings (chat_id, hard_level) VALUES (?, ?)",
+        (chat_id, "chaos"),
+    )
+    connection.commit()
+    connection.close()
+
+    monkeypatch.setattr(bot, "STATS_DB_PATH", db_path)
+    bot.initialize_stats_database()
+
+    settings = bot.get_chat_settings_sync(chat_id, "group")
+
+    # The pre-existing row and its custom value survive the migration.
+    assert settings["hard_level"] == "chaos"
+    # The new columns exist and take their defaults.
+    assert settings["reactions_count"] == 0
+    assert settings["random_replies_count"] == 0
+    assert settings["trigger_replies_count"] == 0
+
+    with bot.get_db_connection() as verify_connection:
+        row = verify_connection.execute(
+            "SELECT weekly_report_weekday, weekly_report_time "
+            "FROM chat_settings WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+
+    assert row[0] == 6
+    assert row[1] == "21:00"
