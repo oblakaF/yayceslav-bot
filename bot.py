@@ -370,6 +370,24 @@ def initialize_stats_database() -> None:
             """
         )
 
+        # Победитель каждой награды недели фиксируется один раз и
+        # больше не меняется — иначе /week, /awards и автоотчёт могли
+        # разойтись, а "Куколд-наблюдатель" выбирался бы заново
+        # (случайно) при каждом обращении. PRIMARY KEY физически не
+        # даёт появиться второму победителю той же награды за неделю.
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS weekly_award_winners (
+                chat_id INTEGER NOT NULL,
+                week_start TEXT NOT NULL,
+                award_key TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                selected_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (chat_id, week_start, award_key)
+            )
+            """
+        )
+
         # Расписание автоматического недельного отчёта.
         # По умолчанию — воскресенье, 21:00 по МСК.
         _ensure_column(
@@ -1513,6 +1531,77 @@ def compute_weekly_awards(
         awards.append(("silent_observer", chosen["user_id"]))
 
     return awards
+
+
+_AWARD_KEY_ORDER = {
+    key: index
+    for index, key in enumerate(AWARD_TEMPLATES.keys())
+}
+
+
+def get_or_create_weekly_awards_sync(
+    chat_id: int,
+    week_start: str,
+    weekly_activity: list[dict[str, Any]],
+    known_members: list[dict[str, Any]],
+) -> list[tuple[str, int]]:
+    """
+    Возвращает зафиксированных победителей недели, досчитывая только
+    те награды, у которых ещё нет сохранённого победителя.
+
+    PRIMARY KEY (chat_id, week_start, award_key) в weekly_award_winners
+    гарантирует, что при повторном вызове (в том числе одновременном —
+    из /week, /awards и автоотчёта) победитель каждой награды остаётся
+    один и тот же на всю неделю, а не переопределяется случайным
+    выбором заново.
+    """
+
+    computed = compute_weekly_awards(weekly_activity, known_members)
+
+    with get_db_connection() as connection:
+        for award_key, user_id in computed:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO weekly_award_winners
+                    (chat_id, week_start, award_key, user_id)
+                VALUES (?, ?, ?, ?)
+                """,
+                (chat_id, week_start, award_key, user_id),
+            )
+
+        connection.commit()
+
+        rows = connection.execute(
+            """
+            SELECT award_key, user_id
+            FROM weekly_award_winners
+            WHERE chat_id = ? AND week_start = ?
+            """,
+            (chat_id, week_start),
+        ).fetchall()
+
+    persisted = [(row[0], row[1]) for row in rows]
+    persisted.sort(
+        key=lambda item: _AWARD_KEY_ORDER.get(item[0], len(_AWARD_KEY_ORDER))
+    )
+    return persisted
+
+
+async def get_or_create_weekly_awards(
+    chat_id: int,
+    week_start: str,
+    weekly_activity: list[dict[str, Any]],
+    known_members: list[dict[str, Any]],
+) -> list[tuple[str, int]]:
+    """Читает/фиксирует победителей недели без блокировки бота."""
+
+    return await asyncio.to_thread(
+        get_or_create_weekly_awards_sync,
+        chat_id,
+        week_start,
+        weekly_activity,
+        known_members,
+    )
 
 
 def format_awards_message(
@@ -4894,7 +4983,9 @@ async def build_weekly_report_text(
         for index, entry in enumerate(top_by_messages, start=1)
     ]
 
-    awards = compute_weekly_awards(weekly, known_members)
+    awards = await get_or_create_weekly_awards(
+        chat_id, start_date, weekly, known_members
+    )
     awards_text = (
         format_awards_message(awards[:5], names)
         if awards
@@ -5096,7 +5187,9 @@ async def awards_command(
     known_members = await list_chat_member_profiles(chat_id, limit=50)
     names = await _resolve_display_names(known_members)
 
-    awards = compute_weekly_awards(weekly, known_members)
+    awards = await get_or_create_weekly_awards(
+        chat_id, start_date, weekly, known_members
+    )
 
     await update.message.reply_text(
         format_awards_message(awards, names)
@@ -5310,23 +5403,39 @@ async def mark_weekly_report_sent(
 WEEKLY_REPORT_CHECK_INTERVAL_SECONDS = 60
 
 
+def _time_str_to_minutes(
+    time_str: str,
+) -> int:
+    """Переводит «ЧЧ:ММ» в минуты от полуночи для сравнения времени."""
+
+    hour_str, minute_str = time_str.split(":")
+    return int(hour_str) * 60 + int(minute_str)
+
+
 async def run_due_weekly_reports(
     application: Application,
 ) -> None:
-    """Отправляет авто-отчёт во все чаты, для которых сейчас их время."""
+    """
+    Отправляет авто-отчёт во все чаты, для которых наступило их время.
+
+    Отмечает отчёт отправленным только при успешной отправке — если
+    send_message упал (бота убрали из группы, сеть моргнула), чат
+    просто получит повторную попытку на следующей минуте, а не будет
+    молча пропущен до следующей недели.
+    """
 
     now = current_msk_datetime()
     today_str = now.strftime("%Y-%m-%d")
-    current_hhmm = now.strftime("%H:%M")
+    now_minutes = now.hour * 60 + now.minute
 
     for chat in await get_weekly_report_chats():
         if chat["weekday"] != now.weekday():
             continue
 
-        if chat["time"] != current_hhmm:
+        if chat["last_sent_date"] == today_str:
             continue
 
-        if chat["last_sent_date"] == today_str:
+        if now_minutes < _time_str_to_minutes(chat["time"]):
             continue
 
         try:
@@ -5339,12 +5448,14 @@ async def run_due_weekly_reports(
             )
         except Exception as error:
             logging.warning(
-                "Не удалось отправить авто-отчёт в чат %s: %s",
+                "Не удалось отправить авто-отчёт в чат %s: %s "
+                "(попробуем снова на следующей минуте)",
                 chat["chat_id"],
                 error,
             )
-        finally:
-            await mark_weekly_report_sent(chat["chat_id"])
+            continue
+
+        await mark_weekly_report_sent(chat["chat_id"])
 
 
 async def weekly_report_scheduler_loop(
