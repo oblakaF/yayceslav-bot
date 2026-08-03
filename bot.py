@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import json
 import logging
 import mimetypes
 import os
@@ -295,6 +296,46 @@ def initialize_stats_database() -> None:
             "last_intervention_at TEXT",
         )
 
+        # Личное обращение — как пользователь попросил к нему
+        # обращаться (/nickname). Добавлено отдельной миграцией.
+        _ensure_column(
+            connection,
+            "user_settings",
+            "custom_nickname",
+            "custom_nickname TEXT",
+        )
+
+        # Лёгкая память об участниках группы: только безопасные
+        # числа и текст, который сам пользователь попросил запомнить,
+        # плюс шуточный архетип, который задаёт админ вручную —
+        # никаких медицинских/финансовых/политических данных.
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_member_profiles (
+                chat_id INTEGER NOT NULL REFERENCES chats(chat_id),
+                user_id INTEGER NOT NULL REFERENCES users(user_id),
+                current_display_name TEXT,
+                username TEXT,
+                first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+                last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+                total_messages INTEGER NOT NULL DEFAULT 0,
+                total_voice_messages INTEGER NOT NULL DEFAULT 0,
+                total_photos INTEGER NOT NULL DEFAULT 0,
+                total_stickers INTEGER NOT NULL DEFAULT 0,
+                replies_to_bot INTEGER NOT NULL DEFAULT 0,
+                insults_to_bot INTEGER NOT NULL DEFAULT 0,
+                jokes_detected INTEGER NOT NULL DEFAULT 0,
+                serious_messages INTEGER NOT NULL DEFAULT 0,
+                relationship_level INTEGER NOT NULL DEFAULT 0,
+                joke_archetype TEXT,
+                self_reported_facts TEXT,
+                last_humor_strategy TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (chat_id, user_id)
+            )
+            """
+        )
+
         connection.commit()
 
 
@@ -325,7 +366,8 @@ def get_user_settings_sync(
                 response_length,
                 voice_enabled,
                 search_mode,
-                roughness
+                roughness,
+                custom_nickname
             FROM user_settings
             WHERE user_id = ?
             """,
@@ -344,6 +386,7 @@ def get_user_settings_sync(
         "voice_enabled": bool(row[3]),
         "search_mode": str(row[4]),
         "roughness": str(row[5]),
+        "custom_nickname": row[6],
     }
 
 
@@ -363,6 +406,7 @@ USER_SETTING_COLUMNS = {
     "voice_enabled",
     "search_mode",
     "roughness",
+    "custom_nickname",
 }
 
 
@@ -379,9 +423,11 @@ def update_user_setting_sync(
         )
 
     if setting_name == "voice_enabled":
-        database_value = int(
+        database_value: Any = int(
             bool(setting_value)
         )
+    elif setting_name == "custom_nickname" and setting_value is None:
+        database_value = None
     else:
         database_value = str(
             setting_value
@@ -648,6 +694,409 @@ async def increment_chat_hard_stat(
         chat_id,
         counter_name,
         chat_type,
+    )
+
+
+# ============================================================
+# ЛЁГКАЯ ПАМЯТЬ ОБ УЧАСТНИКАХ ГРУППЫ (chat_member_profiles)
+#
+# Только безопасные числа, текст, который сам человек попросил
+# запомнить, и шуточный архетип, который вручную задаёт админ.
+# Никаких медицинских, финансовых, политических данных или
+# содержимого личных файлов — см. MEMORY.md проекта.
+# ============================================================
+
+MAX_SELF_REPORTED_FACTS = 5
+
+# Относительно немного сообщений — компания из нескольких
+# человек, а не публичный канал, поэтому пороги невысокие.
+RELATIONSHIP_LEVEL_THRESHOLDS = (
+    (150, 3),  # старожил
+    (30, 2),  # постоянный участник
+    (5, 1),  # знакомый
+)
+
+
+def compute_relationship_level(
+    total_messages: int,
+) -> int:
+    """Определяет уровень знакомства по числу сообщений в чате."""
+
+    for threshold, level in RELATIONSHIP_LEVEL_THRESHOLDS:
+        if total_messages >= threshold:
+            return level
+
+    return 0
+
+
+def _row_to_member_profile(row: Any) -> dict[str, Any]:
+    self_reported_raw = row[10]
+
+    try:
+        self_reported_facts = (
+            json.loads(self_reported_raw)
+            if self_reported_raw
+            else []
+        )
+    except (TypeError, ValueError):
+        self_reported_facts = []
+
+    return {
+        "current_display_name": row[0],
+        "username": row[1],
+        "first_seen_at": row[2],
+        "last_seen_at": row[3],
+        "total_messages": int(row[4]),
+        "total_voice_messages": int(row[5]),
+        "total_photos": int(row[6]),
+        "total_stickers": int(row[7]),
+        "replies_to_bot": int(row[8]),
+        "insults_to_bot": int(row[9]),
+        "self_reported_facts": self_reported_facts,
+        "joke_archetype": row[11],
+        "relationship_level": int(row[12]),
+    }
+
+
+def get_member_profile_sync(
+    chat_id: int,
+    user_id: int,
+) -> dict[str, Any] | None:
+    """Получает профиль участника чата, если он уже известен боту."""
+
+    with get_db_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT
+                current_display_name,
+                username,
+                first_seen_at,
+                last_seen_at,
+                total_messages,
+                total_voice_messages,
+                total_photos,
+                total_stickers,
+                replies_to_bot,
+                insults_to_bot,
+                self_reported_facts,
+                joke_archetype,
+                relationship_level
+            FROM chat_member_profiles
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (chat_id, user_id),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return _row_to_member_profile(row)
+
+
+async def get_member_profile(
+    chat_id: int,
+    user_id: int,
+) -> dict[str, Any] | None:
+    """Читает профиль участника без блокировки бота."""
+
+    return await asyncio.to_thread(
+        get_member_profile_sync,
+        chat_id,
+        user_id,
+    )
+
+
+def touch_member_profile_sync(
+    chat_id: int,
+    user_id: int,
+    chat_type: str,
+    display_name: str,
+    username: str | None,
+) -> None:
+    """
+    Отмечает активность участника: обновляет имя, время и счётчик
+    сообщений, пересчитывает уровень знакомства.
+    """
+
+    with get_db_connection() as connection:
+        _ensure_member_profile_row(
+            connection, chat_id, user_id, chat_type
+        )
+
+        connection.execute(
+            """
+            UPDATE chat_member_profiles
+            SET
+                current_display_name = ?,
+                username = ?,
+                last_seen_at = datetime('now'),
+                total_messages = total_messages + 1,
+                updated_at = datetime('now')
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (display_name, username, chat_id, user_id),
+        )
+
+        new_total = connection.execute(
+            """
+            SELECT total_messages
+            FROM chat_member_profiles
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (chat_id, user_id),
+        ).fetchone()[0]
+
+        connection.execute(
+            """
+            UPDATE chat_member_profiles
+            SET relationship_level = ?
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (
+                compute_relationship_level(new_total),
+                chat_id,
+                user_id,
+            ),
+        )
+
+        connection.commit()
+
+
+async def touch_member_profile(
+    chat_id: int,
+    user_id: int,
+    chat_type: str,
+    display_name: str,
+    username: str | None,
+) -> None:
+    """Отмечает активность участника без блокировки бота."""
+
+    await asyncio.to_thread(
+        touch_member_profile_sync,
+        chat_id,
+        user_id,
+        chat_type,
+        display_name,
+        username,
+    )
+
+
+def _ensure_member_profile_row(
+    connection: sqlite3.Connection,
+    chat_id: int,
+    user_id: int,
+    chat_type: str,
+) -> None:
+    """
+    Гарантирует, что chats/users/chat_member_profiles знают об этой
+    паре — chat_member_profiles ссылается на chats и users внешними
+    ключами (foreign_keys=ON), и без этого шага вставка упадёт, если
+    человек ещё не писал обычных сообщений в этом чате (например,
+    его самое первое действие — сразу команда /remember_me).
+    """
+
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO chats (chat_id, chat_type)
+        VALUES (?, ?)
+        """,
+        (chat_id, chat_type),
+    )
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO users (user_id)
+        VALUES (?)
+        """,
+        (user_id,),
+    )
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO chat_member_profiles (chat_id, user_id)
+        VALUES (?, ?)
+        """,
+        (chat_id, user_id),
+    )
+
+
+def set_member_joke_archetype_sync(
+    chat_id: int,
+    user_id: int,
+    archetype: str | None,
+    chat_type: str = "group",
+) -> None:
+    """Задаёт шуточный архетип участника — только вручную, только админом."""
+
+    with get_db_connection() as connection:
+        _ensure_member_profile_row(
+            connection, chat_id, user_id, chat_type
+        )
+        connection.execute(
+            """
+            UPDATE chat_member_profiles
+            SET joke_archetype = ?, updated_at = datetime('now')
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (archetype, chat_id, user_id),
+        )
+        connection.commit()
+
+
+async def set_member_joke_archetype(
+    chat_id: int,
+    user_id: int,
+    archetype: str | None,
+    chat_type: str = "group",
+) -> None:
+    """Задаёт архетип без блокировки бота."""
+
+    await asyncio.to_thread(
+        set_member_joke_archetype_sync,
+        chat_id,
+        user_id,
+        archetype,
+        chat_type,
+    )
+
+
+def append_self_reported_fact_sync(
+    chat_id: int,
+    user_id: int,
+    fact: str,
+    chat_type: str = "group",
+) -> None:
+    """Добавляет факт, который человек сам попросил запомнить (максимум 5)."""
+
+    with get_db_connection() as connection:
+        _ensure_member_profile_row(
+            connection, chat_id, user_id, chat_type
+        )
+
+        row = connection.execute(
+            """
+            SELECT self_reported_facts
+            FROM chat_member_profiles
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (chat_id, user_id),
+        ).fetchone()
+
+        try:
+            facts = (
+                json.loads(row[0])
+                if row and row[0]
+                else []
+            )
+        except (TypeError, ValueError):
+            facts = []
+
+        facts.append(fact)
+        facts = facts[-MAX_SELF_REPORTED_FACTS:]
+
+        connection.execute(
+            """
+            UPDATE chat_member_profiles
+            SET self_reported_facts = ?, updated_at = datetime('now')
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (json.dumps(facts, ensure_ascii=False), chat_id, user_id),
+        )
+        connection.commit()
+
+
+async def append_self_reported_fact(
+    chat_id: int,
+    user_id: int,
+    fact: str,
+    chat_type: str = "group",
+) -> None:
+    """Добавляет факт без блокировки бота."""
+
+    await asyncio.to_thread(
+        append_self_reported_fact_sync,
+        chat_id,
+        user_id,
+        fact,
+        chat_type,
+    )
+
+
+def delete_member_profile_sync(
+    chat_id: int,
+    user_id: int,
+) -> None:
+    """Удаляет профиль участника в этой группе (/forget_me)."""
+
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            DELETE FROM chat_member_profiles
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (chat_id, user_id),
+        )
+        connection.commit()
+
+
+async def delete_member_profile(
+    chat_id: int,
+    user_id: int,
+) -> None:
+    """Удаляет профиль без блокировки бота."""
+
+    await asyncio.to_thread(
+        delete_member_profile_sync,
+        chat_id,
+        user_id,
+    )
+
+
+def list_chat_member_profiles_sync(
+    chat_id: int,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    """Возвращает известных активных участников чата (для /people)."""
+
+    with get_db_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                current_display_name,
+                username,
+                first_seen_at,
+                last_seen_at,
+                total_messages,
+                total_voice_messages,
+                total_photos,
+                total_stickers,
+                replies_to_bot,
+                insults_to_bot,
+                self_reported_facts,
+                joke_archetype,
+                relationship_level
+            FROM chat_member_profiles
+            WHERE chat_id = ?
+            ORDER BY total_messages DESC
+            LIMIT ?
+            """,
+            (chat_id, limit),
+        ).fetchall()
+
+    return [
+        _row_to_member_profile(row)
+        for row in rows
+    ]
+
+
+async def list_chat_member_profiles(
+    chat_id: int,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    """Читает список участников без блокировки бота."""
+
+    return await asyncio.to_thread(
+        list_chat_member_profiles_sync,
+        chat_id,
+        limit,
     )
 
 
@@ -3430,6 +3879,14 @@ async def hard_mode_listener(
     chat_id = update.effective_chat.id
     chat_type = str(update.effective_chat.type)
 
+    await touch_member_profile(
+        chat_id,
+        update.effective_user.id,
+        chat_type,
+        author_name,
+        update.effective_user.username,
+    )
+
     # Смотрим предыдущее сообщение группы ДО того, как допишем
     # в память текущее — иначе "повтор одного и того же" будет
     # сравнивать сообщение само с собой.
@@ -3750,7 +4207,15 @@ async def help_command(
         "/hard_off — выключить активность в группе\n"
         "/hard_status — проверить активность\n"
         "/hard_level calm|normal|chaos — настроить накал (админы)\n"
-        "/hard_stats — статистика хард-мода (админы)"
+        "/hard_stats — статистика хард-мода (админы)\n"
+        "/profile — твои настройки и статус\n"
+        "/nickname Имя — как к тебе обращаться\n"
+        "/nickname_off — отключить личное обращение\n"
+        "/whoami — как бот видит тебя в этом чате\n"
+        "/remember_me текст — сохранить факт о себе\n"
+        "/forget_me — удалить свой профиль в чате\n"
+        "/people — известные участники (админы)\n"
+        "/set_archetype текст — задать архетип в ответ на сообщение (админы)"
     )
 async def stats_command(
     update: Update,
@@ -3912,6 +4377,416 @@ async def voice_off(
             "Голос выключен. "
             "Снова читаешь глазами, легенда."
         )
+
+
+# ============================================================
+# ПРОФИЛЬ, ОБРАЩЕНИЕ И ЛЁГКАЯ ПАМЯТЬ ОБ УЧАСТНИКЕ
+# ============================================================
+
+NICKNAME_MAX_LENGTH = 32
+REMEMBER_ME_MAX_LENGTH = 200
+JOKE_ARCHETYPE_MAX_LENGTH = 40
+
+_INJECTION_MARKERS = (
+    "игнорируй",
+    "ignore previous",
+    "ignore all",
+    "system prompt",
+    "ты теперь",
+    "you are now",
+    "забудь инструкции",
+    "новая роль",
+    "act as",
+)
+
+
+def sanitize_user_supplied_text(
+    text: str,
+    max_length: int,
+) -> str | None:
+    """
+    Проверяет текст, который пользователь просит запомнить или
+    использовать как обращение к себе.
+
+    Отклоняет команды, управляющие символы, слишком длинный текст
+    и явные попытки вставить инструкции для модели.
+    """
+
+    cleaned = text.strip()
+
+    if not cleaned or len(cleaned) > max_length:
+        return None
+
+    if cleaned.startswith("/"):
+        return None
+
+    if any(
+        character in "\n\r\t\x00"
+        or not (character.isprintable() or character == " ")
+        for character in cleaned
+    ):
+        return None
+
+    lowered = cleaned.lower()
+
+    if any(marker in lowered for marker in _INJECTION_MARKERS):
+        return None
+
+    return cleaned
+
+
+async def profile_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Показывает пользователю его собственные настройки и статус."""
+
+    if (
+        not update.message
+        or not update.effective_user
+        or not update.effective_chat
+    ):
+        return
+
+    settings = await get_user_settings(
+        update.effective_user.id
+    )
+    profile = await get_member_profile(
+        update.effective_chat.id,
+        update.effective_user.id,
+    )
+
+    nickname = settings.get("custom_nickname") or "не задано"
+    relationship_level = (
+        profile["relationship_level"] if profile else 0
+    )
+    total_messages = (
+        profile["total_messages"] if profile else 0
+    )
+
+    await update.message.reply_text(
+        "Твой профиль у Яйцеслава:\n"
+        f"Персонаж: {CHARACTER_LABELS.get(settings['character'], settings['character'])}\n"
+        f"Стиль: {STYLE_LABELS.get(settings['response_style'], settings['response_style'])}\n"
+        f"Длина ответа: {LENGTH_LABELS.get(settings['response_length'], settings['response_length'])}\n"
+        f"Грубость: {ROUGHNESS_LABELS.get(settings['roughness'], settings['roughness'])}\n"
+        f"Голос: {'включён' if settings['voice_enabled'] else 'выключен'}\n"
+        f"Поиск: {SEARCH_MODE_LABELS.get(settings['search_mode'], settings['search_mode'])}\n"
+        f"Обращение: {nickname}\n"
+        f"Уровень знакомства в этом чате: {relationship_level}\n"
+        f"Сообщений в этом чате: {total_messages}"
+    )
+
+
+async def nickname_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Задаёт личное обращение, которым Яйцеслав будет звать пользователя."""
+
+    if not update.message or not update.effective_user:
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Напиши, как к тебе обращаться: /nickname Твой Ник"
+        )
+        return
+
+    requested = " ".join(context.args)
+    nickname = sanitize_user_supplied_text(
+        requested, NICKNAME_MAX_LENGTH
+    )
+
+    if nickname is None:
+        await update.message.reply_text(
+            "Такое обращение не подойдёт: без команд, спецсимволов "
+            f"и длиннее {NICKNAME_MAX_LENGTH} символов нельзя."
+        )
+        return
+
+    await update_user_setting(
+        update.effective_user.id,
+        "custom_nickname",
+        nickname,
+    )
+
+    await update.message.reply_text(
+        f"Принято. Теперь иногда буду звать тебя «{nickname}»."
+    )
+
+
+async def nickname_off_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Отключает пользовательское обращение."""
+
+    if not update.message or not update.effective_user:
+        return
+
+    await update_user_setting(
+        update.effective_user.id,
+        "custom_nickname",
+        None,
+    )
+
+    await update.message.reply_text(
+        "Личное обращение отключено."
+    )
+
+
+RELATIONSHIP_LEVEL_LABELS = {
+    0: "незнакомец",
+    1: "знакомый",
+    2: "постоянный участник",
+    3: "старожил",
+}
+
+
+async def whoami_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Показывает пользователю, как бот воспринимает его роль в чате."""
+
+    if (
+        not update.message
+        or not update.effective_user
+        or not update.effective_chat
+    ):
+        return
+
+    profile = await get_member_profile(
+        update.effective_chat.id,
+        update.effective_user.id,
+    )
+
+    if profile is None or profile["total_messages"] == 0:
+        await update.message.reply_text(
+            "Пока не успел тебя толком запомнить, гой. Пиши больше."
+        )
+        return
+
+    archetype_line = (
+        f"Архетип по мнению чата: {profile['joke_archetype']}\n"
+        if profile["joke_archetype"]
+        else ""
+    )
+
+    facts_line = (
+        (
+            "Что ты сам просил запомнить: "
+            + "; ".join(profile["self_reported_facts"])
+            + "\n"
+        )
+        if profile["self_reported_facts"]
+        else ""
+    )
+
+    await update.message.reply_text(
+        "Как Яйцеслав тебя видит в этом чате:\n"
+        f"Статус: {RELATIONSHIP_LEVEL_LABELS.get(profile['relationship_level'], 'незнакомец')}\n"
+        f"Сообщений: {profile['total_messages']}\n"
+        f"{archetype_line}"
+        f"{facts_line}"
+    )
+
+
+async def remember_me_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Разрешает пользователю самому сохранить безопасный факт о себе."""
+
+    if (
+        not update.message
+        or not update.effective_user
+        or not update.effective_chat
+    ):
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Напиши, что запомнить: /remember_me люблю чай без сахара"
+        )
+        return
+
+    requested = " ".join(context.args)
+    fact = sanitize_user_supplied_text(
+        requested, REMEMBER_ME_MAX_LENGTH
+    )
+
+    if fact is None:
+        await update.message.reply_text(
+            "Это не сохранить: без команд, спецсимволов и не длиннее "
+            f"{REMEMBER_ME_MAX_LENGTH} символов."
+        )
+        return
+
+    await append_self_reported_fact(
+        update.effective_chat.id,
+        update.effective_user.id,
+        fact,
+        str(update.effective_chat.type),
+    )
+
+    await update.message.reply_text(
+        "Запомнил. Можешь посмотреть через /whoami."
+    )
+
+
+async def forget_me_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Удаляет профиль участника в этой группе."""
+
+    if (
+        not update.message
+        or not update.effective_user
+        or not update.effective_chat
+    ):
+        return
+
+    await delete_member_profile(
+        update.effective_chat.id,
+        update.effective_user.id,
+    )
+
+    await update.message.reply_text(
+        "Твой профиль в этом чате удалён."
+    )
+
+
+async def people_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Показывает администратору известных активных участников чата."""
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Список участников есть только в группах."
+        )
+        return
+
+    if not await user_is_group_admin(
+        update,
+        context,
+    ):
+        await update.message.reply_text(
+            "Список участников смотрят только админы."
+        )
+        return
+
+    profiles = await list_chat_member_profiles(
+        update.effective_chat.id
+    )
+
+    if not profiles:
+        await update.message.reply_text(
+            "Пока никого не запомнил в этом чате."
+        )
+        return
+
+    lines = ["Известные участники этого чата:"]
+
+    for profile in profiles:
+        name = profile["current_display_name"] or "без имени"
+
+        archetype = (
+            f" ({profile['joke_archetype']})"
+            if profile["joke_archetype"]
+            else ""
+        )
+
+        lines.append(
+            f"- {name}{archetype}: {profile['total_messages']} сообщ., "
+            f"уровень {profile['relationship_level']}"
+        )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
+
+async def set_archetype_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """
+    Задаёт шуточный архетип участника (для callback-юмора).
+
+    Только вручную, только админом, только через ответ на
+    сообщение того человека — никакого автоматического вывода.
+    """
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Архетипы задаются только в группах."
+        )
+        return
+
+    if not await user_is_group_admin(
+        update,
+        context,
+    ):
+        await update.message.reply_text(
+            "Архетип участника задают только админы."
+        )
+        return
+
+    target_message = update.message.reply_to_message
+
+    if not target_message or not target_message.from_user:
+        await update.message.reply_text(
+            "Ответь этой командой на сообщение человека, "
+            "которому хочешь задать архетип."
+        )
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Напиши архетип: /set_archetype скуф"
+        )
+        return
+
+    requested = " ".join(context.args)
+    archetype = sanitize_user_supplied_text(
+        requested, JOKE_ARCHETYPE_MAX_LENGTH
+    )
+
+    if archetype is None:
+        await update.message.reply_text(
+            "Такой архетип не подойдёт: без команд, спецсимволов "
+            f"и длиннее {JOKE_ARCHETYPE_MAX_LENGTH} символов."
+        )
+        return
+
+    await set_member_joke_archetype(
+        update.effective_chat.id,
+        target_message.from_user.id,
+        archetype,
+        str(update.effective_chat.type),
+    )
+
+    display_name = (
+        target_message.from_user.full_name
+        or target_message.from_user.username
+        or "участник"
+    )
+
+    await update.message.reply_text(
+        f"Принято. Теперь {display_name} официально «{archetype}»."
+    )
+
 
 # ============================================================
 # ПОДГОТОВКА СООБЩЕНИЙ В ЛИЧКЕ И ГРУППЕ
@@ -4811,6 +5686,14 @@ async def answer_text_message(
                 or "Участник"
             )
             request_user_name = group_author_name
+
+            await touch_member_profile(
+                group_chat_id,
+                update.effective_user.id,
+                str(update.effective_chat.type),
+                group_author_name,
+                update.effective_user.username,
+            )
 
             previous_context = build_memory_context(
                 GROUP_MEMORY,
@@ -5889,6 +6772,54 @@ def main() -> None:
         CommandHandler(
             "hard_stats",
             hard_stats_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "profile",
+            profile_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "nickname",
+            nickname_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "nickname_off",
+            nickname_off_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "whoami",
+            whoami_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "remember_me",
+            remember_me_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "forget_me",
+            forget_me_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "people",
+            people_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "set_archetype",
+            set_archetype_command,
         )
     )
     application.add_handler(

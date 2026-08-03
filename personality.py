@@ -29,6 +29,7 @@ DEFAULT_USER_SETTINGS = {
     "voice_enabled": False,
     "search_mode": "button",
     "roughness": "medium",
+    "custom_nickname": None,
 }
 
 
@@ -296,6 +297,16 @@ def build_user_preferences_instruction(
         ),
     }
 
+    custom_nickname = settings.get("custom_nickname")
+
+    nickname_rule = (
+        f"Иногда обращайся к пользователю как «{custom_nickname}» — "
+        "это обращение, которое он сам выбрал. Не используй его "
+        "в каждом ответе подряд."
+        if custom_nickname
+        else ""
+    )
+
     return (
         "\n\nПерсональные настройки пользователя "
         "имеют приоритет над общим характером:\n"
@@ -317,6 +328,11 @@ def build_user_preferences_instruction(
         + roughness_rules.get(
             roughness,
             roughness_rules["medium"],
+        )
+        + (
+            f"\n{nickname_rule}"
+            if nickname_rule
+            else ""
         )
     )
 

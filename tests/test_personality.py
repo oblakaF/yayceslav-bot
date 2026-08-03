@@ -29,3 +29,17 @@ def test_default_user_settings_has_expected_keys():
 def test_voice_style_instruction_is_nonempty_string():
     assert isinstance(personality.VOICE_STYLE_INSTRUCTION, str)
     assert "голос" in personality.VOICE_STYLE_INSTRUCTION.lower()
+
+
+def test_custom_nickname_included_when_set():
+    instruction = personality.build_user_preferences_instruction(
+        {"custom_nickname": "Скуфидон"}
+    )
+    assert "Скуфидон" in instruction
+
+
+def test_custom_nickname_omitted_when_not_set():
+    instruction = personality.build_user_preferences_instruction(
+        {"custom_nickname": None}
+    )
+    assert "Обращайся к пользователю как" not in instruction
