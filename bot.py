@@ -8,6 +8,7 @@ import re
 import sqlite3
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,7 @@ from personality import (
     DEFAULT_USER_SETTINGS,
     build_system_instruction,
     detect_conversation_mode,
+    is_serious_text,
     VOICE_STYLE_INSTRUCTION,
 )
 from vocabulary import (
@@ -1169,11 +1171,39 @@ def cleanup_in_memory_state(
         max_age_seconds=max_age_seconds
     )
 
+    stale_random_reply_chats = [
+        chat_id
+        for chat_id, history in GROUP_RANDOM_REPLY_TIMES.items()
+        if not history or (now - history[-1]) > max_age_seconds
+    ]
+    for chat_id in stale_random_reply_chats:
+        GROUP_RANDOM_REPLY_TIMES.pop(chat_id, None)
+        GROUP_IGNORED_STREAK.pop(chat_id, None)
+
+    stale_serious_chats = [
+        chat_id
+        for chat_id, last_serious_at in GROUP_LAST_SERIOUS_AT.items()
+        if (now - last_serious_at) > max_age_seconds
+    ]
+    for chat_id in stale_serious_chats:
+        GROUP_LAST_SERIOUS_AT.pop(chat_id, None)
+
+    stale_trigger_user_keys = [
+        key
+        for key, last_time in TRIGGER_REPLY_LAST_BY_USER.items()
+        if (now - last_time) > max_age_seconds
+    ]
+    for key in stale_trigger_user_keys:
+        TRIGGER_REPLY_LAST_BY_USER.pop(key, None)
+
     return {
         "request_time_keys": len(stale_request_keys),
         "warning_keys": len(stale_warning_keys),
         "memory_ids": stale_memory_ids,
         "humor_chats": stale_humor_chats,
+        "random_reply_chats": len(stale_random_reply_chats),
+        "serious_chats": len(stale_serious_chats),
+        "trigger_user_keys": len(stale_trigger_user_keys),
     }
 
 
@@ -3212,6 +3242,121 @@ async def mood_command(
         )
 
 
+# ============================================================
+# АНТИСПАМ ДЛЯ СЛУЧАЙНЫХ ВМЕШАТЕЛЬСТВ В ГРУППЕ
+#
+# Даже агрессивный Яйцеслав не должен отвечать на всё подряд.
+# ============================================================
+
+# Случайная текстовая реплика — не чаще раза в 2 минуты
+GROUP_RANDOM_REPLY_MIN_INTERVAL = 120.0
+
+# И не больше трёх штук за скользящее окно в 10 минут
+GROUP_RANDOM_REPLY_MAX_PER_WINDOW = 3
+GROUP_RANDOM_REPLY_WINDOW_SECONDS = 600.0
+
+# Одному и тому же человеку — не чаще раза в 60 секунд,
+# если он не обращается к боту напрямую (тогда действует
+# обычный enforce_rate_limit, а не это ограничение)
+TRIGGER_REPLY_PER_USER_COOLDOWN = 60.0
+
+# После серьёзного сообщения — пауза в случайном юморе
+SERIOUS_TOPIC_HUMOR_COOLDOWN = 300.0
+
+# Тихие часы по МСК: почти не вмешиваемся случайно
+QUIET_HOURS_START_MSK = 0
+QUIET_HOURS_END_MSK = 7
+
+# Если последние два случайных вмешательства проигнорировали —
+# лучше помолчать, чем настаивать
+IGNORED_STREAK_LIMIT = 2
+
+GROUP_RANDOM_REPLY_TIMES: dict[int, deque] = defaultdict(deque)
+GROUP_LAST_SERIOUS_AT: dict[int, float] = {}
+GROUP_IGNORED_STREAK: dict[int, int] = defaultdict(int)
+TRIGGER_REPLY_LAST_BY_USER: dict[tuple[int, int], float] = {}
+
+
+def is_quiet_hours_msk() -> bool:
+    """Проверяет тихие часы (00:00–07:00 по МСК) для случайных вмешательств."""
+
+    msk_now = datetime.now(
+        timezone(timedelta(hours=3))
+    )
+    return QUIET_HOURS_START_MSK <= msk_now.hour < QUIET_HOURS_END_MSK
+
+
+def is_serious_cooldown_active(
+    chat_id: int,
+    now: float,
+) -> bool:
+    """Проверяет, недавно ли в чате была серьёзная тема."""
+
+    last_serious_at = GROUP_LAST_SERIOUS_AT.get(chat_id)
+
+    return (
+        last_serious_at is not None
+        and now - last_serious_at < SERIOUS_TOPIC_HUMOR_COOLDOWN
+    )
+
+
+def group_random_reply_allowed(
+    chat_id: int,
+    now: float,
+) -> bool:
+    """
+    Проверяет групповые лимиты случайных реплик: не чаще раза
+    в 2 минуты, не больше трёх за 10 минут, тишина по ночам,
+    пауза после серьёзной темы и после двух проигнорированных подряд.
+    """
+
+    if is_quiet_hours_msk():
+        return False
+
+    if is_serious_cooldown_active(chat_id, now):
+        return False
+
+    if GROUP_IGNORED_STREAK[chat_id] >= IGNORED_STREAK_LIMIT:
+        return False
+
+    history = GROUP_RANDOM_REPLY_TIMES[chat_id]
+
+    while (
+        history
+        and now - history[0] > GROUP_RANDOM_REPLY_WINDOW_SECONDS
+    ):
+        history.popleft()
+
+    if (
+        history
+        and now - history[-1] < GROUP_RANDOM_REPLY_MIN_INTERVAL
+    ):
+        return False
+
+    if len(history) >= GROUP_RANDOM_REPLY_MAX_PER_WINDOW:
+        return False
+
+    return True
+
+
+def record_group_random_reply(
+    chat_id: int,
+    now: float,
+) -> None:
+    """Запоминает момент случайной реплики и растит счётчик игнора."""
+
+    GROUP_RANDOM_REPLY_TIMES[chat_id].append(now)
+    GROUP_IGNORED_STREAK[chat_id] += 1
+
+
+def register_group_engagement(
+    chat_id: int,
+) -> None:
+    """Сбрасывает счётчик игнора — кто-то ответил боту или обратился к нему."""
+
+    GROUP_IGNORED_STREAK[chat_id] = 0
+
+
 async def hard_mode_listener(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -3295,6 +3440,9 @@ async def hard_mode_listener(
         else None
     )
 
+    if is_serious_text(text.lower()):
+        GROUP_LAST_SERIOUS_AT[chat_id] = time.monotonic()
+
     # Запоминаем обычное сообщение группы на пять минут
     remember_message(
         GROUP_MEMORY,
@@ -3325,6 +3473,11 @@ async def hard_mode_listener(
 
     now = time.monotonic()
 
+    # Серьёзная тема ставит хард-мод на паузу целиком —
+    # это не время для реакций, триггеров или случайных реплик.
+    if is_serious_cooldown_active(chat_id, now):
+        return
+
     # --------------------------------------------------------
     # 1. Реакция на специальные слова
     # --------------------------------------------------------
@@ -3340,10 +3493,17 @@ async def hard_mode_listener(
         )
     )
 
+    user_id = update.effective_user.id
+    trigger_user_key = (chat_id, user_id)
+    last_trigger_reply_for_user = TRIGGER_REPLY_LAST_BY_USER.get(
+        trigger_user_key, 0.0
+    )
+
     if (
         trigger_reply
-        and now - last_trigger_reply
-        >= HARD_TRIGGER_COOLDOWN
+        and now - last_trigger_reply >= HARD_TRIGGER_COOLDOWN
+        and now - last_trigger_reply_for_user
+        >= TRIGGER_REPLY_PER_USER_COOLDOWN
     ):
         await update.message.reply_text(
             trigger_reply
@@ -3352,6 +3512,7 @@ async def hard_mode_listener(
         context.chat_data[
             "hard_last_trigger_reply"
         ] = now
+        TRIGGER_REPLY_LAST_BY_USER[trigger_user_key] = now
 
         await increment_chat_hard_stat(
             chat_id,
@@ -3386,6 +3547,8 @@ async def hard_mode_listener(
         else reaction_chance
     )
 
+    reacted_to_this_message = False
+
     if (
         now - last_reaction
         >= HARD_REACTION_COOLDOWN
@@ -3409,6 +3572,7 @@ async def hard_mode_listener(
             context.chat_data[
                 "hard_last_reaction"
             ] = now
+            reacted_to_this_message = True
 
             await increment_chat_hard_stat(
                 chat_id,
@@ -3426,6 +3590,9 @@ async def hard_mode_listener(
 
     # --------------------------------------------------------
     # 3. Редкое случайное вмешательство
+    #
+    # Реакция и текстовая реплика на одно и то же сообщение —
+    # это уже два вмешательства сразу, чего быть не должно.
     # --------------------------------------------------------
 
     last_random_reply = float(
@@ -3436,10 +3603,10 @@ async def hard_mode_listener(
     )
 
     if (
-        now - last_random_reply
-        >= HARD_RANDOM_REPLY_COOLDOWN
-        and random.random()
-        < random_reply_chance
+        not reacted_to_this_message
+        and now - last_random_reply >= HARD_RANDOM_REPLY_COOLDOWN
+        and random.random() < random_reply_chance
+        and group_random_reply_allowed(chat_id, now)
     ):
         await update.message.reply_text(
             random.choice(
@@ -3450,6 +3617,7 @@ async def hard_mode_listener(
         context.chat_data[
             "hard_last_random_reply"
         ] = now
+        record_group_random_reply(chat_id, now)
 
         await increment_chat_hard_stat(
             chat_id,
@@ -4632,6 +4800,10 @@ async def answer_text_message(
             and update.effective_user
         ):
             group_chat_id = update.effective_chat.id
+
+            # Кто-то напрямую обратился к боту — значит, предыдущие
+            # случайные вмешательства не были полным игнором.
+            register_group_engagement(group_chat_id)
 
             group_author_name = (
                 update.effective_user.full_name
