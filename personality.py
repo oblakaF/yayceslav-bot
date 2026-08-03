@@ -28,7 +28,12 @@ DEFAULT_USER_SETTINGS = {
     "response_length": "normal",
     "voice_enabled": False,
     "search_mode": "button",
-    "roughness": "medium",
+    # Владелец явно попросил повышенную токсичность по умолчанию —
+    # "всегда, кроме острых чувствительных тем" (те уже отдельно
+    # отключают грубость и юмор через is_serious_text/emotional_tone,
+    # независимо от этой настройки). Пользователь всё ещё может
+    # выставить себе "low"/"medium" через /settings.
+    "roughness": "high",
     "custom_nickname": None,
 }
 

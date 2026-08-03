@@ -438,9 +438,9 @@ def get_user_settings_sync(
         connection.execute(
             """
             INSERT OR IGNORE INTO user_settings (
-                user_id
+                user_id, roughness
             )
-            VALUES (?)
+            VALUES (?, 'high')
             """,
             (user_id,),
         )
@@ -524,9 +524,9 @@ def update_user_setting_sync(
         connection.execute(
             """
             INSERT OR IGNORE INTO user_settings (
-                user_id
+                user_id, roughness
             )
-            VALUES (?)
+            VALUES (?, 'high')
             """,
             (user_id,),
         )
