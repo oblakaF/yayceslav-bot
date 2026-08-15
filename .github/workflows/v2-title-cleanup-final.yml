@@ -37,3 +37,5 @@ jobs:
           git add vocabulary.py
           git commit -m "Remove legacy V1 title pools from V2 vocabulary"
           git push origin HEAD:feature/human-yayceslav-v2
+
+# one-shot retry after narrowing cleanup boundary to /toast
