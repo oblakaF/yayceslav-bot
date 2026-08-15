@@ -17,7 +17,7 @@ jobs:
         with:
           ref: agent/human-gemini-3-6-version
 
-      - name: Patch bot.py
+      - name: Patch bot.py and owner-only help test
         shell: python
         run: |
           from pathlib import Path
@@ -136,8 +136,21 @@ jobs:
           if text.count(settings_handler) != 1:
               raise SystemExit(f"Expected one settings handler, found {text.count(settings_handler)}")
           text = text.replace(settings_handler, version_handler + settings_handler, 1)
-
           path.write_text(text, encoding="utf-8")
+
+          help_test_path = Path("tests/test_help_command.py")
+          help_test = help_test_path.read_text(encoding="utf-8")
+          old_exclusion = 'COMMANDS_EXCLUDED_FROM_HELP = {"start", "help", "stats"}'
+          new_exclusion = 'COMMANDS_EXCLUDED_FROM_HELP = {"start", "help", "stats", "geminiversion"}'
+          if help_test.count(old_exclusion) != 1:
+              raise SystemExit(f"Expected one help exclusion set, found {help_test.count(old_exclusion)}")
+          help_test = help_test.replace(old_exclusion, new_exclusion, 1)
+          help_test = help_test.replace(
+              "# - stats is owner-only and must never appear in /help at all.",
+              "# - stats/geminiversion are owner-only and must never appear in /help at all.",
+              1,
+          )
+          help_test_path.write_text(help_test, encoding="utf-8")
 
       - name: Install test dependencies
         run: python -m pip install --quiet -r requirements-dev.txt
@@ -176,6 +189,6 @@ jobs:
           rm .github/workflows/update-human-gemini.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add bot.py .github/workflows/update-human-gemini.yml
+          git add bot.py tests/test_help_command.py .github/workflows/update-human-gemini.yml
           git commit -m "Update human Yayceslav to Gemini 3.6 Flash"
           git push origin HEAD:agent/human-gemini-3-6-version
