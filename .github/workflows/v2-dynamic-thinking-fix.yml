@@ -35,6 +35,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add bot.py thinking_engine.py .github/workflows/v2-ci.yml tests/test_thinking_engine.py tests/test_v2_dynamic_thinking_runtime.py
+          git add bot.py thinking_engine.py tests/test_thinking_engine.py tests/test_v2_dynamic_thinking_runtime.py
           git commit -m "Use dynamic Gemini thinking to reduce latency"
           git push origin HEAD:fix/v2-dynamic-thinking-latency
