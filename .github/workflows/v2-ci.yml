@@ -23,6 +23,6 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
       - name: Compile
-        run: python -m py_compile bot.py personality.py intent.py humor_engine.py vocabulary.py style_engine.py voice_packs.py voice_runtime.py historical_packs.py social_engine.py aggression_engine.py reaction_engine.py passive_engine.py daily_title_engine.py state_engine.py thinking_engine.py title_pools.py
+        run: python -m py_compile bot.py personality.py intent.py humor_engine.py vocabulary.py style_engine.py voice_packs.py voice_runtime.py verdict_engine.py historical_packs.py social_engine.py aggression_engine.py reaction_engine.py passive_engine.py daily_title_engine.py state_engine.py thinking_engine.py title_pools.py
       - name: Test
         run: pytest -q
