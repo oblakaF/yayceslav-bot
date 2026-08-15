@@ -39,6 +39,7 @@ from telegram.ext import (
     filters,
 )
 import aggression_engine
+import daily_title_engine
 import humor_engine
 import intent
 import passive_engine
@@ -400,6 +401,22 @@ def initialize_stats_database() -> None:
                 user_id INTEGER NOT NULL,
                 selected_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (chat_id, week_start, award_key)
+            )
+            """
+        )
+
+        # V2: один автоматический титул дня на чат и дату.
+        # PRIMARY KEY не позволяет рестарту/гонке выдать второй
+        # daily title в тот же календарный день.
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS daily_title_assignments (
+                chat_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (chat_id, date)
             )
             """
         )
@@ -1099,6 +1116,89 @@ async def set_member_title(
         user_id,
         title,
         chat_type,
+    )
+
+
+def get_daily_title_assignment_sync(
+    chat_id: int,
+    date: str,
+) -> dict[str, Any] | None:
+    with get_db_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT user_id, title, assigned_at
+            FROM daily_title_assignments
+            WHERE chat_id = ? AND date = ?
+            """,
+            (chat_id, date),
+        ).fetchone()
+
+    if row is None:
+        return None
+    return {
+        "user_id": int(row[0]),
+        "title": str(row[1]),
+        "assigned_at": str(row[2]),
+    }
+
+
+async def get_daily_title_assignment(
+    chat_id: int,
+    date: str,
+) -> dict[str, Any] | None:
+    return await asyncio.to_thread(
+        get_daily_title_assignment_sync,
+        chat_id,
+        date,
+    )
+
+
+def try_assign_daily_title_sync(
+    chat_id: int,
+    date: str,
+    user_id: int,
+    title: str,
+) -> bool:
+    """Атомарно фиксирует daily title и обновляет текущий титул участника."""
+
+    with get_db_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO daily_title_assignments (
+                chat_id, date, user_id, title
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (chat_id, date, user_id, title),
+        )
+
+        if cursor.rowcount != 1:
+            connection.commit()
+            return False
+
+        connection.execute(
+            """
+            UPDATE chat_member_profiles
+            SET current_title = ?, updated_at = datetime('now')
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (title, chat_id, user_id),
+        )
+        connection.commit()
+        return True
+
+
+async def try_assign_daily_title(
+    chat_id: int,
+    date: str,
+    user_id: int,
+    title: str,
+) -> bool:
+    return await asyncio.to_thread(
+        try_assign_daily_title_sync,
+        chat_id,
+        date,
+        user_id,
+        title,
     )
 
 
@@ -4537,6 +4637,57 @@ def pick_new_title(
     return random.choice(candidates)
 
 
+async def maybe_assign_daily_title(
+    update: Update,
+) -> bool:
+    """При первой подходящей вечерней активности выдаёт один титул дня."""
+
+    if (
+        not update.message
+        or not update.effective_chat
+        or str(update.effective_chat.type) not in ("group", "supergroup")
+    ):
+        return False
+
+    msk_now = current_msk_datetime()
+    if not daily_title_engine.is_assignment_window_open(msk_now):
+        return False
+
+    chat_id = update.effective_chat.id
+    date = msk_now.date().isoformat()
+
+    if await get_daily_title_assignment(chat_id, date):
+        return False
+
+    activity = await get_weekly_activity(chat_id, date, date)
+    if not activity:
+        return False
+
+    known_members = await list_chat_member_profiles(chat_id, limit=200)
+    candidates = daily_title_engine.build_candidates(activity, known_members)
+    candidate = daily_title_engine.choose_candidate(candidates)
+    if candidate is None:
+        return False
+
+    new_title = pick_new_title(candidate.previous_title)
+    created = await try_assign_daily_title(
+        chat_id,
+        date,
+        candidate.user_id,
+        new_title,
+    )
+    if not created:
+        return False
+
+    await update.message.reply_text(
+        daily_title_engine.format_daily_title_message(
+            candidate.display_name,
+            new_title,
+        )
+    )
+    return True
+
+
 async def title_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -6221,6 +6372,11 @@ async def hard_mode_listener(
     # Серьёзная тема ставит хард-мод на паузу целиком —
     # это не время для реакций, триггеров или случайных реплик.
     if is_serious_cooldown_active(chat_id, now):
+        return
+
+    # V2 daily title — отдельное единичное вмешательство. Если оно
+    # сработало, не наслаиваем reaction/random reply на то же сообщение.
+    if await maybe_assign_daily_title(update):
         return
 
     # --------------------------------------------------------
