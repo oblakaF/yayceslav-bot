@@ -88,8 +88,32 @@ class AggressionCooldown:
     def clear(self) -> None:
         self._last.clear()
 
+    def prune_stale(
+        self,
+        max_age_seconds: float,
+        *,
+        now: float | None = None,
+    ) -> int:
+        current = time.monotonic() if now is None else now
+        stale = [
+            key
+            for key, last in self._last.items()
+            if current - last > max_age_seconds
+        ]
+        for key in stale:
+            self._last.pop(key, None)
+        return len(stale)
+
 
 COOLDOWN = AggressionCooldown()
+
+
+def prune_stale_state(
+    max_age_seconds: float,
+    *,
+    now: float | None = None,
+) -> int:
+    return COOLDOWN.prune_stale(max_age_seconds, now=now)
 
 
 def _base_probability(ctx: AggressionContext) -> float:

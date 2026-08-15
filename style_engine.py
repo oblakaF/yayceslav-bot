@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import random
+import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Mapping, MutableMapping, Sequence
@@ -152,6 +153,7 @@ _LENGTH_RANGES = {
 _LENGTH_HISTORY: dict[int, deque[str]] = defaultdict(
     lambda: deque(maxlen=5)
 )
+_LENGTH_LAST_SEEN: dict[int, float] = {}
 
 _COMPLEX_MARKERS = (
     "почему",
@@ -398,6 +400,7 @@ def choose_response_length(
 
     if record:
         history.append(category)
+        _LENGTH_LAST_SEEN[chat_id] = time.monotonic()
 
     return ResponseLengthPlan(
         category=category,
@@ -458,5 +461,24 @@ def get_length_history(chat_id: int) -> tuple[str, ...]:
 def reset_length_history(chat_id: int | None = None) -> None:
     if chat_id is None:
         _LENGTH_HISTORY.clear()
+        _LENGTH_LAST_SEEN.clear()
     else:
         _LENGTH_HISTORY.pop(chat_id, None)
+        _LENGTH_LAST_SEEN.pop(chat_id, None)
+
+
+def prune_stale_state(
+    max_age_seconds: float,
+    *,
+    now: float | None = None,
+) -> int:
+    current = time.monotonic() if now is None else now
+    stale = [
+        chat_id
+        for chat_id, last_seen in _LENGTH_LAST_SEEN.items()
+        if current - last_seen > max_age_seconds
+    ]
+    for chat_id in stale:
+        _LENGTH_HISTORY.pop(chat_id, None)
+        _LENGTH_LAST_SEEN.pop(chat_id, None)
+    return len(stale)

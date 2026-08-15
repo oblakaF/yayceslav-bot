@@ -81,6 +81,7 @@ class FatigueDecision:
 
 
 _ACTIVITY_SINCE_DROP: dict[int, int] = defaultdict(int)
+_LAST_ACTIVITY_AT: dict[int, float] = {}
 _LAST_DROP_AT: dict[int, float] = {}
 _RECENT_DROPS: dict[int, deque[str]] = defaultdict(lambda: deque(maxlen=12))
 
@@ -91,6 +92,7 @@ _RECENT_FATIGUE: dict[int, deque[str]] = defaultdict(lambda: deque(maxlen=8))
 
 def reset_state() -> None:
     _ACTIVITY_SINCE_DROP.clear()
+    _LAST_ACTIVITY_AT.clear()
     _LAST_DROP_AT.clear()
     _RECENT_DROPS.clear()
     _BOT_CALLS.clear()
@@ -109,6 +111,7 @@ def note_group_activity(
         return _ACTIVITY_SINCE_DROP.get(chat_id, 0)
 
     _ACTIVITY_SINCE_DROP[chat_id] += 1
+    _LAST_ACTIVITY_AT[chat_id] = time.monotonic()
     return _ACTIVITY_SINCE_DROP[chat_id]
 
 
@@ -270,6 +273,37 @@ def note_bot_call_and_maybe_fatigue(
         call_count=call_count,
         reason="fatigue",
     )
+
+
+def prune_stale_state(
+    max_age_seconds: float,
+    *,
+    now: float | None = None,
+) -> int:
+    current = time.monotonic() if now is None else now
+    chat_ids = set(_ACTIVITY_SINCE_DROP) | set(_LAST_ACTIVITY_AT) | set(_LAST_DROP_AT) | set(_RECENT_DROPS) | set(_BOT_CALLS) | set(_LAST_FATIGUE_AT) | set(_RECENT_FATIGUE)
+    stale = []
+    for chat_id in chat_ids:
+        calls = _BOT_CALLS.get(chat_id)
+        latest_call = calls[-1] if calls else 0.0
+        latest = max(
+            _LAST_ACTIVITY_AT.get(chat_id, 0.0),
+            _LAST_DROP_AT.get(chat_id, 0.0),
+            _LAST_FATIGUE_AT.get(chat_id, 0.0),
+            latest_call,
+        )
+        if latest <= 0.0 or current - latest > max_age_seconds:
+            stale.append(chat_id)
+    for chat_id in stale:
+        _ACTIVITY_SINCE_DROP.pop(chat_id, None)
+        _LAST_ACTIVITY_AT.pop(chat_id, None)
+        _LAST_DROP_AT.pop(chat_id, None)
+        _RECENT_DROPS.pop(chat_id, None)
+        _BOT_CALLS.pop(chat_id, None)
+        _LAST_FATIGUE_AT.pop(chat_id, None)
+        _RECENT_FATIGUE.pop(chat_id, None)
+    return len(stale)
+
 
 
 def build_fatigue_instruction(decision: FatigueDecision) -> str:

@@ -135,6 +135,27 @@ def resolve_state(
     return state
 
 
+def prune_stale_state(
+    max_age_seconds: float,
+    *,
+    now: float | None = None,
+) -> int:
+    current = time.monotonic() if now is None else now
+    stale = []
+    for chat_id, entry in _CHAT_STATE.items():
+        latest = max(
+            entry.last_seen_at or 0.0,
+            entry.annoyed_marked_at,
+            entry.argumentative_marked_at,
+        )
+        if latest <= 0.0 or current - latest > max_age_seconds:
+            stale.append(chat_id)
+    for chat_id in stale:
+        _CHAT_STATE.pop(chat_id, None)
+    return len(stale)
+
+
+
 def aggression_probability_bonus(state: str) -> float:
     if state == STATE_ARGUMENTATIVE:
         return 0.10

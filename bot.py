@@ -167,6 +167,16 @@ DATA_DIR.mkdir(
 STATS_DB_PATH = DATA_DIR / "yayceslav_stats.db"
 
 
+class ClosingSQLiteConnection(sqlite3.Connection):
+    """sqlite3 context manager с обязательным close() после commit/rollback."""
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
+
+
 def get_db_connection(
     db_path: Path | None = None,
     timeout: float = 30,
@@ -191,6 +201,7 @@ def get_db_connection(
     connection = sqlite3.connect(
         db_path,
         timeout=timeout,
+        factory=ClosingSQLiteConnection,
     )
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA foreign_keys=ON")
@@ -2339,6 +2350,35 @@ def cleanup_in_memory_state(
     for key in stale_trigger_user_keys:
         TRIGGER_REPLY_LAST_BY_USER.pop(key, None)
 
+    stale_last_message_keys = [
+        key
+        for key, (recorded_at, _text) in LAST_USER_TEXT_MESSAGE.items()
+        if now - recorded_at > max_age_seconds
+    ]
+    for key in stale_last_message_keys:
+        LAST_USER_TEXT_MESSAGE.pop(key, None)
+
+    stale_duel_tokens = [
+        token
+        for token, duel in PENDING_DUELS.items()
+        if now - float(duel.get("created_at", 0.0)) > PENDING_DUEL_TTL_SECONDS
+    ]
+    for token in stale_duel_tokens:
+        PENDING_DUELS.pop(token, None)
+
+    stale_state_chats = state_engine.prune_stale_state(
+        max_age_seconds, now=now
+    )
+    stale_passive_chats = passive_engine.prune_stale_state(
+        max_age_seconds, now=now
+    )
+    stale_aggression_keys = aggression_engine.prune_stale_state(
+        max_age_seconds, now=now
+    )
+    stale_length_chats = style_engine.prune_stale_state(
+        max_age_seconds, now=now
+    )
+
     return {
         "request_time_keys": len(stale_request_keys),
         "warning_keys": len(stale_warning_keys),
@@ -2347,6 +2387,12 @@ def cleanup_in_memory_state(
         "random_reply_chats": len(stale_random_reply_chats),
         "serious_chats": len(stale_serious_chats),
         "trigger_user_keys": len(stale_trigger_user_keys),
+        "last_user_messages": len(stale_last_message_keys),
+        "pending_duels": len(stale_duel_tokens),
+        "state_chats": stale_state_chats,
+        "passive_chats": stale_passive_chats,
+        "aggression_keys": stale_aggression_keys,
+        "length_chats": stale_length_chats,
     }
 
 
@@ -5308,6 +5354,7 @@ async def translate_yayceslav_command(
 # ============================================================
 
 PENDING_DUELS: dict[str, dict[str, Any]] = {}
+PENDING_DUEL_TTL_SECONDS = 15 * 60
 
 
 async def duel_command(
@@ -5353,6 +5400,7 @@ async def duel_command(
     token = uuid.uuid4().hex[:12]
 
     PENDING_DUELS[token] = {
+        "created_at": time.monotonic(),
         "chat_id": update.effective_chat.id,
         "challenger_id": update.effective_user.id,
         "challenger_name": (
@@ -5406,6 +5454,16 @@ async def duel_accept_callback(
     if duel is None:
         await query.answer(
             "Эта дуэль уже неактуальна.",
+            show_alert=True,
+        )
+        return
+
+    if (
+        time.monotonic() - float(duel.get("created_at", 0.0))
+        > PENDING_DUEL_TTL_SECONDS
+    ):
+        await query.answer(
+            "Эта дуэль уже протухла. Вызови заново.",
             show_alert=True,
         )
         return
@@ -6285,7 +6343,7 @@ def register_group_engagement(
 ) -> None:
     """Сбрасывает счётчик игнора — кто-то ответил боту или обратился к нему."""
 
-    GROUP_IGNORED_STREAK[chat_id] = 0
+    GROUP_IGNORED_STREAK.pop(chat_id, None)
 
 
 async def hard_mode_listener(
@@ -6463,14 +6521,16 @@ async def hard_mode_listener(
         and now - last_trigger_reply_for_user
         >= TRIGGER_REPLY_PER_USER_COOLDOWN
     ):
-        await update.message.reply_text(
-            trigger_reply
-        )
-
+        # Резервируем cooldown ДО сетевого await: второй concurrent update
+        # уже увидит занятый слот и не отправит дубль.
         context.chat_data[
             "hard_last_trigger_reply"
         ] = now
         TRIGGER_REPLY_LAST_BY_USER[trigger_user_key] = now
+
+        await update.message.reply_text(
+            trigger_reply
+        )
 
         await increment_chat_hard_stat(
             chat_id,
@@ -6517,6 +6577,12 @@ async def hard_mode_listener(
             reaction_reason
         )
 
+        # Та же защита от concurrent_updates(8): резервируем
+        # реакционный cooldown до Telegram API await.
+        context.chat_data[
+            "hard_last_reaction"
+        ] = now
+
         try:
             await update.message.set_reaction(
                 reaction=[
@@ -6527,9 +6593,6 @@ async def hard_mode_listener(
                 is_big=False,
             )
 
-            context.chat_data[
-                "hard_last_reaction"
-            ] = now
             reacted_to_this_message = True
 
             await increment_chat_hard_stat(
@@ -6579,12 +6642,14 @@ async def hard_mode_listener(
             now=now,
         )
         if drop_decision.active and drop_decision.text:
-            await update.message.reply_text(drop_decision.text)
-
+            # Резервируем слот до await, иначе два апдейта могут пройти
+            # group_random_reply_allowed одновременно.
             context.chat_data[
                 "hard_last_random_reply"
             ] = now
             record_group_random_reply(chat_id, now)
+
+            await update.message.reply_text(drop_decision.text)
 
             await increment_chat_hard_stat(
                 chat_id,
@@ -8281,6 +8346,18 @@ async def answer_text_message(
                     f"{user_text}"
                 )
 
+            # Текущее сообщение фиксируем ДО ожидания Gemini. Тогда
+            # следующий concurrent update этого пользователя уже увидит его
+            # в контексте, даже если первый ответ ещё генерируется.
+            remember_message(
+                PRIVATE_MEMORY,
+                private_user_id,
+                "user",
+                user_text,
+                PRIVATE_MEMORY_SECONDS,
+                PRIVATE_MEMORY_MAX_MESSAGES,
+            )
+
         # Группа: память разговора за последние пять минут
         elif (
             update.effective_chat.type in (
@@ -8347,6 +8424,19 @@ async def answer_text_message(
                     f"{user_text}"
                 )
 
+            # Как и в личке: пользовательское сообщение входит в
+            # память до сетевого await. Это убирает потерю контекста при
+            # concurrent_updates(8).
+            remember_message(
+                GROUP_MEMORY,
+                group_chat_id,
+                "user",
+                user_text,
+                GROUP_MEMORY_SECONDS,
+                GROUP_MEMORY_MAX_MESSAGES,
+                group_author_name,
+            )
+
         answer = await ask_gemini(
             contents=request_for_gemini,
             max_output_tokens=get_response_token_limit(
@@ -8380,15 +8470,6 @@ async def answer_text_message(
             remember_message(
                 PRIVATE_MEMORY,
                 private_user_id,
-                "user",
-                user_text,
-                PRIVATE_MEMORY_SECONDS,
-                PRIVATE_MEMORY_MAX_MESSAGES,
-            )
-
-            remember_message(
-                PRIVATE_MEMORY,
-                private_user_id,
                 "assistant",
                 answer,
                 PRIVATE_MEMORY_SECONDS,
@@ -8397,16 +8478,6 @@ async def answer_text_message(
 
         # Сохраняем обращение и ответ в памяти группы
         if group_chat_id is not None:
-            remember_message(
-                GROUP_MEMORY,
-                group_chat_id,
-                "user",
-                user_text,
-                GROUP_MEMORY_SECONDS,
-                GROUP_MEMORY_MAX_MESSAGES,
-                group_author_name,
-            )
-
             remember_message(
                 GROUP_MEMORY,
                 group_chat_id,
