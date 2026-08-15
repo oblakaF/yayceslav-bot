@@ -1,0 +1,44 @@
+name: V2 audit runtime robustness
+
+on:
+  push:
+    branches:
+      - feature/human-yayceslav-v2-audit-fixes
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.head_commit.message == 'Run V2 runtime robustness repairs'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/human-yayceslav-v2-audit-fixes
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply runtime repairs
+        run: python tools/apply_runtime_robustness_fixes.py
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Compile
+        run: python -m py_compile bot.py state_engine.py aggression_engine.py passive_engine.py style_engine.py
+      - name: Test
+        run: pytest -q
+      - name: Commit tested repairs
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot.py state_engine.py aggression_engine.py passive_engine.py style_engine.py tests/test_v2_runtime_robustness.py
+          git commit -m "Fix V2 runtime robustness audit findings"
+          git push origin HEAD:feature/human-yayceslav-v2-audit-fixes
