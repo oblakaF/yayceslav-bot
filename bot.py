@@ -41,6 +41,7 @@ from telegram.ext import (
 import aggression_engine
 import humor_engine
 import intent
+import reaction_engine
 import social_engine
 import style_engine
 import voice_runtime
@@ -4005,13 +4006,21 @@ def detect_reaction_reason(
     ):
         return "good_question"
 
-    return None
+    return reaction_engine.detect_context_reason(
+        stripped,
+        resolved_intent=resolved_intent,
+        confidence=confidence,
+    )
 
 
 def pick_reaction_emoji(
     reason: str | None,
 ) -> str:
     """Выбирает эмодзи под причину реакции, иначе — случайное из общего пула."""
+
+    v2_emoji = reaction_engine.pick_v2_emoji(reason)
+    if v2_emoji:
+        return v2_emoji
 
     options = REACTION_REASON_EMOJIS.get(reason or "", HARD_REACTION_EMOJIS)
     return random.choice(options)
@@ -6258,12 +6267,12 @@ async def hard_mode_listener(
         previous_group_text=previous_group_text,
     )
 
-    # Контекстная причина — не механическая случайность,
-    # даём ей более высокий шанс сработать.
-    effective_reaction_chance = (
-        max(reaction_chance, 0.85)
-        if reaction_reason
-        else reaction_chance
+    # V2: контекстная причина всё ещё усиливает шанс, но ПОСЛЕ
+    # этого применяется -20% только к emoji-реакциям. Текстовый
+    # random_reply_chance ниже остаётся полностью без изменений.
+    effective_reaction_chance = reaction_engine.effective_emoji_reaction_chance(
+        reaction_chance,
+        has_context_reason=bool(reaction_reason),
     )
 
     reacted_to_this_message = False
