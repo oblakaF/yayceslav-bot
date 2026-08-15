@@ -40,10 +40,13 @@ from telegram.ext import (
 )
 import humor_engine
 import intent
+import style_engine
+import voice_runtime
 from personality import (
     DEFAULT_USER_SETTINGS,
     HOSTILE_RE,
     build_system_instruction,
+    build_v2_base_instruction,
     detect_conversation_mode,
     is_serious_text,
     VOICE_STYLE_INSTRUCTION,
@@ -2298,11 +2301,32 @@ async def on_application_shutdown(
 
 def _build_humor_instruction(
     decision: humor_engine.HumorDecision,
+    lexical_examples: bool = True,
 ) -> str:
     """Превращает решение HumorEngine в подсказку для Gemini."""
 
     if not decision.humor_allowed:
         return ""
+
+    if not lexical_examples:
+        lines = [
+            f"Дополнительная поведенческая подсказка (тип: {decision.humor_type}).",
+            "Не меняй и не дополняй уже выбранный V2 речевой пакет.",
+        ]
+        if decision.humor_type == "banter_hostile":
+            strategy = decision.comeback_strategy or "short_direct"
+            lines.append(
+                f"Стратегия ответа: {strategy}. Допустим короткий встречный стёб по смыслу сообщения, "
+                "но лексику бери только из выбранного voice pack."
+            )
+        if decision.should_be_self_ironic:
+            lines.append("Можно признать удачный подкол пользователя и ответить самоиронично.")
+        if decision.callback_reference:
+            lines.append(
+                "Можно сослаться на недавнюю реплику пользователя, если это реально уместно: "
+                + repr(decision.callback_reference)
+            )
+        return "\n".join(lines)
 
     lines = [
         f"Дополнительная подсказка юмора (тип: {decision.humor_type})."
@@ -2408,7 +2432,7 @@ def build_full_system_instruction(
     её можно было протестировать без сетевого вызова к Gemini.
     """
 
-    current_instruction = build_system_instruction(
+    current_instruction = build_v2_base_instruction(
         style_text,
         user_settings,
     )
@@ -2425,6 +2449,32 @@ def build_full_system_instruction(
         )
 
         emotional_tone = intent.detect_emotional_tone(style_text)
+
+        voice_pack = style_engine.choose_voice_pack(
+            style_engine.VoicePackContext(
+                conversation_mode=conversation_mode,
+                selected_character=str(settings.get("character", "classic")),
+                serious_topic=(conversation_mode == "serious"),
+            )
+        )
+        length_plan = style_engine.choose_response_length(
+            chat_id if chat_id is not None else 0,
+            style_engine.ResponseLengthContext(
+                user_text=style_text,
+                conversation_mode=conversation_mode,
+                message_intent=resolved_intent,
+                response_preference=str(settings.get("response_length", "normal")),
+                serious_topic=(conversation_mode == "serious"),
+            ),
+        )
+        voice_material = voice_runtime.choose_voice_material(
+            voice_pack,
+            conversation_mode=conversation_mode,
+            roughness=str(settings.get("roughness", "medium")),
+            serious_topic=(conversation_mode == "serious"),
+        )
+        current_instruction += style_engine.build_length_instruction(length_plan)
+        current_instruction += voice_runtime.build_voice_instruction(voice_material)
 
         humor_ctx = humor_engine.HumorContext(
             conversation_mode=conversation_mode,
@@ -2459,7 +2509,10 @@ def build_full_system_instruction(
                 humor_ctx, tracker_chat_id
             )
 
-        humor_instruction = _build_humor_instruction(humor_decision)
+        humor_instruction = _build_humor_instruction(
+            humor_decision,
+            lexical_examples=False,
+        )
 
         if humor_instruction:
             current_instruction += (
