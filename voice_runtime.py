@@ -16,6 +16,22 @@ import voice_packs
 
 CONFLICT_TAUNT_CHANCE = 0.20
 CONFLICT_SECOND_ELEMENT_CHANCE = 0.10
+LAYERED_JOKE_CHANCE_WITHIN_TAUNT = 0.25
+
+# Поведенческие СТРУКТУРЫ, а не отдельный словарь/voice pack.
+# Лексика всё равно берётся только из уже выбранного пакета.
+LAYERED_JOKE_PATTERNS = (
+    "бытовой вопрос -> короткая пауза -> грубая причина, связанная с собеседником",
+    "ложная забота о какой-то проблеме -> внезапный грубый диагноз/вывод",
+    "как будто принёс или подарил что-то -> во второй части переверни подарок в оскорбительный ярлык",
+    "почти нормальный комплимент -> резкий переворот смысла в последней фразе",
+    "короткая загадка или вопрос с очевидным ответом -> ответ оказывается оскорбительным панчем",
+    "нейтральное бытовое наблюдение -> неожиданный вывод, что причина в собеседнике",
+    "псевдоопределение слова/явления -> в конце подставь собеседника как пример",
+    "вежливое начало будто сейчас поможешь -> резко закончи одним грубым посылом",
+    "два безобидных варианта выбора -> оба сходятся в одном коротком панче",
+    "мини-история на одну фразу -> последняя короткая фраза переосмысляет её как оскорбление",
+)
 
 
 @dataclass(frozen=True)
@@ -26,6 +42,7 @@ class VoiceMaterial:
     category: str | None = None
     verdict: str | None = None
     suppress_extra_taunt: bool = False
+    layered_joke_pattern: str | None = None
 
 
 def _pick(pool: tuple[str, ...], *, rng=random) -> str | None:
@@ -86,6 +103,7 @@ def choose_voice_material(
     category: str | None = None
     verdict: str | None = None
     suppress_extra_taunt = False
+    layered_joke_pattern: str | None = None
 
     if conversation_mode == "greeting":
         primary = _pick(pack.greetings or pack.slang, rng=rng)
@@ -97,19 +115,38 @@ def choose_voice_material(
         taunt_selected = rng.random() < CONFLICT_TAUNT_CHANCE
 
         if taunt_selected:
-            if conversation_mode == "hostile":
-                primary = _pick(pack.comebacks or pack.taunts, rng=rng)
-                category = "comeback"
-            else:
-                primary = _pick(pack.taunts or pack.comebacks, rng=rng)
-                category = "taunt"
+            # Многослойный setup→punchline — редкий ПОДТИП уже разрешённого
+            # taunt, а не ещё один независимый генератор. 20% * 25% = ~5%
+            # всех конфликтных ответов. Проверка через верхнюю четверть
+            # сохраняет старые deterministic ZeroRng-тесты обычного taunt.
+            layered_selected = (
+                rng.random() >= (1.0 - LAYERED_JOKE_CHANCE_WITHIN_TAUNT)
+            )
 
-            # Даже когда taunt разрешён, не устраиваем двойной панч почти всегда.
-            if (
-                roughness == "high"
-                and rng.random() < CONFLICT_SECOND_ELEMENT_CHANCE
-            ):
-                secondary = _pick_distinct(primary, pack.rough, rng=rng)
+            if layered_selected:
+                category = "layered_taunt"
+                layered_joke_pattern = _pick(
+                    LAYERED_JOKE_PATTERNS,
+                    rng=rng,
+                )
+                # Для многослойного панча даём только лексический оттенок
+                # текущего пакета. Второй элемент запрещён.
+                primary = _pick(pack.rough or pack.slang, rng=rng)
+                secondary = None
+            else:
+                if conversation_mode == "hostile":
+                    primary = _pick(pack.comebacks or pack.taunts, rng=rng)
+                    category = "comeback"
+                else:
+                    primary = _pick(pack.taunts or pack.comebacks, rng=rng)
+                    category = "taunt"
+
+                # Даже когда taunt разрешён, не устраиваем двойной панч почти всегда.
+                if (
+                    roughness == "high"
+                    and rng.random() < CONFLICT_SECOND_ELEMENT_CHANCE
+                ):
+                    secondary = _pick_distinct(primary, pack.rough, rng=rng)
         else:
             primary, category = _pick_non_taunt_conflict_material(
                 pack,
@@ -159,6 +196,7 @@ def choose_voice_material(
         category=category,
         verdict=verdict,
         suppress_extra_taunt=suppress_extra_taunt,
+        layered_joke_pattern=layered_joke_pattern,
     )
 
 
@@ -192,10 +230,19 @@ def build_voice_instruction(material: VoiceMaterial) -> str:
             + "."
         )
 
-    if material.suppress_extra_taunt:
+    if material.layered_joke_pattern:
+        lines.append(
+            "МНОГОСЛОЙНАЯ ШУТКА: это ОДИН панч, построенный в два-три коротких хода. "
+            "Сначала дай почти нормальный setup, затем короткую паузу/поворот и только в конце грубую развязку. "
+            "Структура на этот раз: " + repr(material.layered_joke_pattern) + ". "
+            "Не копируй готовые известные шутки и не повторяй одну формулу дословно. "
+            "После развязки СТОП: никакого второго taunt, verdict, пояснения шутки или дополнительного добивания."
+        )
+    elif material.suppress_extra_taunt:
         lines.append(
             "В ЭТОМ ответе не добавляй отдельную насмешку, taunt или второй добивающий панч. "
-            "Можно быть грубым, матерным и резким по смыслу, но после основного ответа остановись."
+            "Если пользователь прямо оскорбил тебя, естественный вариант — просто коротко и матерно его отбрить/послать "
+            "одной фразой без шутки. Можно быть грубым, матерным и резким по смыслу, но после основного ответа остановись."
         )
     elif material.category in {"taunt", "comeback"}:
         lines.append(

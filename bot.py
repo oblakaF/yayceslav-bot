@@ -2734,10 +2734,11 @@ def build_full_system_instruction(
             remember_humor_type = True
 
         if conversation_mode == "hostile":
-            humor_decision = humor_engine.decide_banter(
-                humor_ctx,
-                tracker_chat_id,
-                tracker=humor_tracker,
+            # В V2 конфликтный юмор централизован в voice_runtime: там один
+            # общий 20%-й шлюз. Не запускаем второй независимый banter-layer,
+            # иначе фактическая частота насмешек снова становится выше 20%.
+            humor_decision = humor_engine.HumorDecision(
+                humor_allowed=False
             )
         else:
             humor_decision = humor_engine.decide_humor(
