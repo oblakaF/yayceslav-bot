@@ -63,9 +63,7 @@ from vocabulary import (
     BASE_REPLIES,
     CRINGE_REPLIES,
     GOY_REPLIES,
-    HARD_RANDOM_REPLIES,
     HARD_REACTION_EMOJIS,
-    JOKE_TITLES,
     MOODS,
     NISHIY_REPLIES,
     PROPHECIES,
@@ -2365,6 +2363,15 @@ def cleanup_in_memory_state(
     for token in stale_duel_tokens:
         PENDING_DUELS.pop(token, None)
 
+    stale_story_chats = [
+        chat_id
+        for chat_id, last_updated in STORY_LAST_UPDATED.items()
+        if now - last_updated > max_age_seconds
+    ]
+    for chat_id in stale_story_chats:
+        STORY_STATE.pop(chat_id, None)
+        STORY_LAST_UPDATED.pop(chat_id, None)
+
     stale_state_chats = state_engine.prune_stale_state(
         max_age_seconds, now=now
     )
@@ -2388,6 +2395,7 @@ def cleanup_in_memory_state(
         "trigger_user_keys": len(stale_trigger_user_keys),
         "last_user_messages": len(stale_last_message_keys),
         "pending_duels": len(stale_duel_tokens),
+        "story_chats": len(stale_story_chats),
         "state_chats": stale_state_chats,
         "passive_chats": stale_passive_chats,
         "aggression_keys": stale_aggression_keys,
@@ -5569,6 +5577,7 @@ async def duel_accept_callback(
 # ============================================================
 
 STORY_STATE: dict[int, list[str]] = defaultdict(list)
+STORY_LAST_UPDATED: dict[int, float] = {}
 STORY_MAX_PARAGRAPHS = 12
 STORY_CONTEXT_PARAGRAPHS = 6
 
@@ -5590,6 +5599,7 @@ async def story_command(
 
     chat_id = update.effective_chat.id
     paragraphs = STORY_STATE[chat_id]
+    STORY_LAST_UPDATED[chat_id] = time.monotonic()
 
     story_so_far = (
         "\n".join(paragraphs[-STORY_CONTEXT_PARAGRAPHS:])
