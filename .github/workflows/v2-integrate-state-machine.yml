@@ -1,0 +1,140 @@
+name: Integrate V2 character state machine
+
+on:
+  push:
+    branches:
+      - feature/human-yayceslav-v2
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.event.head_commit.message == 'Integrate V2 character state machine'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/human-yayceslav-v2
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch state runtime
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 match, got {count}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "style_engine.py",
+              '''import random\nfrom collections import defaultdict, deque\nfrom dataclasses import dataclass\nfrom typing import Mapping, MutableMapping, Sequence\n''',
+              '''import random\nfrom collections import defaultdict, deque\nfrom dataclasses import dataclass\nfrom typing import Mapping, MutableMapping, Sequence\n\nimport state_engine\n''',
+              "style imports state",
+          )
+
+          replace_once(
+              "style_engine.py",
+              '''class ResponseLengthContext:\n    user_text: str = ""\n    conversation_mode: str = "normal"\n    message_intent: str = "unknown"\n    response_preference: str = "normal"\n    serious_topic: bool = False\n''',
+              '''class ResponseLengthContext:\n    user_text: str = ""\n    conversation_mode: str = "normal"\n    message_intent: str = "unknown"\n    response_preference: str = "normal"\n    serious_topic: bool = False\n    character_state: str = "normal"\n''',
+              "length context state",
+          )
+
+          replace_once(
+              "style_engine.py",
+              '''    weights = _base_length_weights(ctx)\n    _apply_preference_bias(weights, ctx.response_preference)\n\n    history = _LENGTH_HISTORY[chat_id]\n''',
+              '''    weights = _base_length_weights(ctx)\n    _apply_preference_bias(weights, ctx.response_preference)\n\n    for category, multiplier in state_engine.length_weight_multipliers(\n        ctx.character_state\n    ).items():\n        if category in weights:\n            weights[category] *= multiplier\n\n    history = _LENGTH_HISTORY[chat_id]\n''',
+              "state length multipliers",
+          )
+
+          replace_once(
+              "aggression_engine.py",
+              '''import random\nimport re\nimport time\nfrom dataclasses import dataclass\n''',
+              '''import random\nimport re\nimport time\nfrom dataclasses import dataclass\n\nimport state_engine\n''',
+              "aggression imports state",
+          )
+
+          replace_once(
+              "aggression_engine.py",
+              '''    recent_messages: tuple[str, ...] = ()\n    chat_id: int = 0\n    user_id: int = 0\n''',
+              '''    recent_messages: tuple[str, ...] = ()\n    chat_id: int = 0\n    user_id: int = 0\n    character_state: str = "normal"\n''',
+              "aggression context state",
+          )
+
+          replace_once(
+              "aggression_engine.py",
+              '''    if ctx.relationship_level >= 4:\n        chance += 0.04\n\n    return min(chance, 0.48)\n''',
+              '''    if ctx.relationship_level >= 4:\n        chance += 0.04\n\n    chance += state_engine.aggression_probability_bonus(ctx.character_state)\n\n    return min(chance, 0.55)\n''',
+              "state aggression bonus",
+          )
+
+          replace_once(
+              "bot.py",
+              "import social_engine\nimport style_engine\n",
+              "import social_engine\nimport state_engine\nimport style_engine\n",
+              "bot imports state",
+          )
+
+          replace_once(
+              "bot.py",
+              '''        voice_pack = style_engine.choose_voice_pack(\n            style_engine.VoicePackContext(\n''',
+              '''        character_state = state_engine.resolve_state(\n            chat_id if chat_id is not None else 0,\n            conversation_mode=conversation_mode,\n        )\n        current_instruction += state_engine.build_state_instruction(\n            character_state\n        )\n\n        voice_pack = style_engine.choose_voice_pack(\n            style_engine.VoicePackContext(\n''',
+              "resolve character state",
+          )
+
+          replace_once(
+              "bot.py",
+              '''                response_preference=str(settings.get("response_length", "normal")),\n                serious_topic=(conversation_mode == "serious"),\n            ),\n''',
+              '''                response_preference=str(settings.get("response_length", "normal")),\n                serious_topic=(conversation_mode == "serious"),\n                character_state=character_state,\n            ),\n''',
+              "state into length",
+          )
+
+          replace_once(
+              "bot.py",
+              '''            if fatigue_instruction:\n                current_instruction += fatigue_instruction\n\n        humor_ctx = humor_engine.HumorContext(\n''',
+              '''            if fatigue_instruction:\n                current_instruction += fatigue_instruction\n                state_engine.mark_annoyed(chat_id)\n\n        humor_ctx = humor_engine.HumorContext(\n''',
+              "fatigue marks annoyed",
+          )
+
+          replace_once(
+              "bot.py",
+              '''                chat_id=tracker_chat_id,\n                user_id=user_id or 0,\n            )\n        )\n''',
+              '''                chat_id=tracker_chat_id,\n                user_id=user_id or 0,\n                character_state=character_state,\n            )\n        )\n''',
+              "state into aggression",
+          )
+
+          replace_once(
+              "bot.py",
+              '''        if aggression_instruction:\n            current_instruction += aggression_instruction\n\n    if voice_style:\n''',
+              '''        if aggression_instruction:\n            current_instruction += aggression_instruction\n            state_engine.mark_argumentative(tracker_chat_id)\n\n    if voice_style:\n''',
+              "aggression marks argumentative",
+          )
+
+          Path("tests/test_v2_state_runtime.py").write_text(
+              '''import aggression_engine\nimport bot\nimport passive_engine\nimport state_engine\nimport style_engine\n\n\ndef setup_function():\n    state_engine.reset_state()\n    style_engine.reset_length_history()\n    passive_engine.reset_state()\n\n\ndef test_build_instruction_contains_one_state_and_one_voice_pack(monkeypatch):\n    monkeypatch.setattr(\n        bot.aggression_engine, "decide_aggression",\n        lambda ctx: aggression_engine.AggressionDecision(),\n    )\n    instruction = bot.build_full_system_instruction(\n        "обычная реплика", chat_id=9201, chat_type="group", user_id=1\n    )\n    assert instruction.count("V2 character state:") == 1\n    assert instruction.count("Речевой пакет этого ответа:") == 1\n    assert "не разрешение смешивать voice packs" in instruction\n\n\ndef test_fatigue_marks_following_state_annoyed(monkeypatch):\n    monkeypatch.setattr(bot.style_engine, "choose_voice_pack", lambda ctx: "blat")\n    monkeypatch.setattr(\n        bot.passive_engine, "note_bot_call_and_maybe_fatigue",\n        lambda *args, **kwargs: passive_engine.FatigueDecision(\n            active=True, pack_name="blat", text="Опять весь этот кипиш мне разгребать.",\n            call_count=8, reason="fatigue"\n        ),\n    )\n    monkeypatch.setattr(\n        bot.aggression_engine, "decide_aggression",\n        lambda ctx: aggression_engine.AggressionDecision(),\n    )\n    bot.build_full_system_instruction(\n        "эй", chat_id=9202, chat_type="group", user_id=2, bot_was_mentioned=True\n    )\n    assert state_engine.resolve_state(\n        9202, conversation_mode="normal", record=False\n    ) == "annoyed"\n\n\ndef test_dokop_marks_following_state_argumentative(monkeypatch):\n    monkeypatch.setattr(\n        bot.aggression_engine, "decide_aggression",\n        lambda ctx: aggression_engine.AggressionDecision(\n            active=True, mode="nitpick", reason="test"\n        ),\n    )\n    bot.build_full_system_instruction(\n        "это точно факт", chat_id=9203, chat_type="group", user_id=3\n    )\n    assert state_engine.resolve_state(\n        9203, conversation_mode="normal", record=False\n    ) == "argumentative"\n\n\ndef test_annoyed_state_biases_real_length_selection_shorter(monkeypatch):\n    state_engine.resolve_state(9204, conversation_mode="normal", now=1000.0)\n    state_engine.mark_annoyed(9204, now=1001.0)\n    ctx = style_engine.ResponseLengthContext(\n        user_text="обычный вопрос",\n        conversation_mode="normal",\n        response_preference="normal",\n        character_state="annoyed",\n    )\n    weights = style_engine._base_length_weights(ctx)\n    multipliers = state_engine.length_weight_multipliers("annoyed")\n    assert multipliers["short"] > 1.0\n    assert multipliers["long"] < 1.0\n    assert weights["short"] * multipliers["short"] > weights["short"]\n\n\ndef test_argumentative_state_increases_aggression_base_probability():\n    base = aggression_engine.AggressionContext(\n        user_text="это точно факт", intent="group_banter", chat_type="group",\n        roughness="high", chat_id=1, user_id=1, character_state="normal"\n    )\n    argumentative = aggression_engine.AggressionContext(\n        user_text="это точно факт", intent="group_banter", chat_type="group",\n        roughness="high", chat_id=1, user_id=1, character_state="argumentative"\n    )\n    assert aggression_engine._base_probability(argumentative) > aggression_engine._base_probability(base)\n''',
+              encoding="utf-8",
+          )
+          PY
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Validate
+        run: |
+          python -m py_compile bot.py style_engine.py aggression_engine.py state_engine.py
+          pytest -q
+      - name: Commit tested code
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot.py style_engine.py aggression_engine.py tests/test_v2_state_runtime.py
+          git commit -m "Wire V2 character state machine"
+          git push origin HEAD:feature/human-yayceslav-v2
