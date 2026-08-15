@@ -22,6 +22,13 @@ SUPPORTED_LEVELS = {
     "high",
 }
 
+_INITIAL_TOKEN_FLOOR = {
+    THINKING_MINIMAL: 384,
+    THINKING_LOW: 512,
+    THINKING_MEDIUM: 768,
+    "high": 1024,
+}
+
 
 _COMPLEX_RE = re.compile(
     r"\b(?:"
@@ -125,3 +132,13 @@ def choose_thinking_level(
         return THINKING_MINIMAL
 
     return THINKING_LOW
+
+
+def initial_token_budget(requested: int, thinking_level: str) -> int:
+    """Keep visible-length instructions, but avoid tiny reasoning budgets."""
+
+    if thinking_level not in SUPPORTED_LEVELS:
+        raise ValueError(f"Unsupported thinking level: {thinking_level}")
+
+    requested = max(1, int(requested))
+    return max(requested, _INITIAL_TOKEN_FLOOR[thinking_level])
