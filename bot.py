@@ -47,6 +47,7 @@ import reaction_engine
 import social_engine
 import state_engine
 import style_engine
+import thinking_engine
 import title_pools
 import voice_runtime
 from personality import (
@@ -2822,6 +2823,7 @@ async def ask_gemini(
     recent_messages: list[str] | None = None,
     bot_was_mentioned: bool = True,
     user_id: int | None = None,
+    thinking_level: str | None = None,
 ) -> str:
     """Отправляет запрос Gemini с тремя попытками."""
 
@@ -2855,10 +2857,19 @@ async def ask_gemini(
         user_id=user_id,
     )
 
+    resolved_thinking_level = thinking_engine.choose_thinking_level(
+        contents,
+        explicit=thinking_level,
+    )
     last_error: Exception | None = None
-    request_token_budget = max_output_tokens
+    request_token_budget = thinking_engine.initial_token_budget(
+        max_output_tokens,
+        resolved_thinking_level,
+    )
+    request_started_at = time.monotonic()
 
     for attempt in range(1, 4):
+        attempt_started_at = time.monotonic()
         try:
             # Одновременно выполняются не более трёх
             # запросов к Gemini. Остальные ждут очередь.
@@ -2871,12 +2882,26 @@ async def ask_gemini(
                             system_instruction=current_instruction,
                             max_output_tokens=request_token_budget,
                             thinking_config=types.ThinkingConfig(
-                                thinking_level="medium",
+                                thinking_level=resolved_thinking_level,
                             ),
                         ),
                     ),
                     timeout=90,
                 )
+
+            attempt_elapsed = time.monotonic() - attempt_started_at
+            finish_reason_name = (
+                _gemini_finish_reason_name(response)
+                or "UNKNOWN"
+            )
+            logging.info(
+                "Gemini attempt %s/3: %.2fs thinking=%s budget=%s finish=%s",
+                attempt,
+                attempt_elapsed,
+                resolved_thinking_level,
+                request_token_budget,
+                finish_reason_name,
+            )
 
             answer = (
                 response.text
@@ -2901,8 +2926,20 @@ async def ask_gemini(
                 continue
 
             if answer:
+                logging.info(
+                    "Gemini total: %.2fs thinking=%s attempts=%s",
+                    time.monotonic() - request_started_at,
+                    resolved_thinking_level,
+                    attempt,
+                )
                 return answer
 
+            logging.info(
+                "Gemini total: %.2fs thinking=%s attempts=%s empty_response=true",
+                time.monotonic() - request_started_at,
+                resolved_thinking_level,
+                attempt,
+            )
             return (
                 "Нейронка ничего не выдала. "
                 "Переформулируй вопрос, гений."
@@ -2912,9 +2949,11 @@ async def ask_gemini(
             last_error = error
 
             logging.warning(
-                "Попытка Gemini %s из 3 "
-                "завершилась ошибкой: %s",
+                "Gemini attempt %s/3 failed after %.2fs thinking=%s budget=%s: %s",
                 attempt,
+                time.monotonic() - attempt_started_at,
+                resolved_thinking_level,
+                request_token_budget,
                 error,
             )
 
@@ -3498,6 +3537,7 @@ async def perform_web_search(
             ),
             voice_style=use_voice_style,
             user_settings=user_settings,
+            thinking_level="medium",
             chat_id=(
                 update.effective_chat.id
                 if update.effective_chat
@@ -5277,6 +5317,7 @@ async def fact_or_bayan_command(
         verdict = await ask_gemini(
             contents=prompt,
             max_output_tokens=320,
+            thinking_level="medium",
             chat_id=chat_id,
             chat_type=chat_type,
             user_id=(
@@ -5318,6 +5359,7 @@ async def fact_or_bayan_command(
                 verdict = await ask_gemini(
                     contents=follow_up_prompt,
                     max_output_tokens=380,
+                    thinking_level="medium",
                     chat_id=chat_id,
                     chat_type=chat_type,
                     user_id=(
@@ -8511,6 +8553,9 @@ async def answer_text_message(
             user_name=request_user_name,
             recent_messages=recent_messages_list,
             bot_was_mentioned=True,
+            thinking_level=thinking_engine.choose_thinking_level(
+                user_text
+            ),
             user_id=(
                 update.effective_user.id
                 if update.effective_user
