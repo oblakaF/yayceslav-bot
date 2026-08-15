@@ -347,6 +347,8 @@ def decide_humor(
     ctx: HumorContext,
     chat_id: int,
     tracker: RepetitionTracker = REPETITION_TRACKER,
+    *,
+    remember_type: bool = True,
 ) -> HumorDecision:
     """
     Решает, нужна ли обычная шутка в этом ответе, и какая именно.
@@ -384,13 +386,18 @@ def decide_humor(
         return HumorDecision(humor_allowed=False)
 
     candidates = _eligible_humor_types(ctx)
-    last_type = LAST_HUMOR_TYPE.get(chat_id)
+    last_type = (
+        LAST_HUMOR_TYPE.get(chat_id)
+        if remember_type
+        else None
+    )
 
     if last_type and last_type in candidates and len(candidates) > 1:
         candidates = [t for t in candidates if t != last_type]
 
     humor_type = random.choice(candidates)
-    LAST_HUMOR_TYPE[chat_id] = humor_type
+    if remember_type:
+        LAST_HUMOR_TYPE[chat_id] = humor_type
 
     decision = HumorDecision(
         humor_allowed=True,

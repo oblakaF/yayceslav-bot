@@ -380,7 +380,11 @@ def choose_response_length(
         if category in weights:
             weights[category] *= multiplier
 
-    history = _LENGTH_HISTORY[chat_id]
+    history = (
+        _LENGTH_HISTORY[chat_id]
+        if record
+        else deque(maxlen=5)
+    )
     _apply_history_bias(weights, tuple(history))
 
     category = _weighted_choice(weights, rng=rng)

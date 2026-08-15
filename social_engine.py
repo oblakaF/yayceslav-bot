@@ -44,18 +44,6 @@ def familiarity_label(level: int) -> str:
     return "почти незнакомый участник"
 
 
-def familiarity_humor_bonus(level: int) -> float:
-    """Небольшой бонус к фамильярности, не приказ обязательно шутить."""
-    if level >= 4:
-        return 0.10
-    if level >= 3:
-        return 0.07
-    if level >= 2:
-        return 0.04
-    if level >= 1:
-        return 0.02
-    return 0.0
-
 
 def build_social_instruction(
     ctx: SocialContext,

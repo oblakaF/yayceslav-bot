@@ -52,7 +52,6 @@ import voice_runtime
 from personality import (
     DEFAULT_USER_SETTINGS,
     HOSTILE_RE,
-    build_system_instruction,
     build_v2_base_instruction,
     detect_conversation_mode,
     is_serious_text,
@@ -2663,6 +2662,7 @@ def build_full_system_instruction(
                 serious_topic=(conversation_mode == "serious"),
                 character_state=character_state,
             ),
+            record=(chat_id is not None),
         )
         voice_material = voice_runtime.choose_voice_material(
             voice_pack,
@@ -2713,15 +2713,29 @@ def build_full_system_instruction(
             relationship_level=social_ctx.relationship_level,
         )
 
-        tracker_chat_id = chat_id if chat_id is not None else 0
+        if chat_id is None:
+            # Stateless path: never reuse synthetic key 0 between unrelated
+            # commands/users. Local tracker dies with this request.
+            humor_tracker = humor_engine.RepetitionTracker(maxlen=20)
+            tracker_chat_id = 0
+            remember_humor_type = False
+        else:
+            humor_tracker = humor_engine.REPETITION_TRACKER
+            tracker_chat_id = chat_id
+            remember_humor_type = True
 
         if conversation_mode == "hostile":
             humor_decision = humor_engine.decide_banter(
-                humor_ctx, tracker_chat_id
+                humor_ctx,
+                tracker_chat_id,
+                tracker=humor_tracker,
             )
         else:
             humor_decision = humor_engine.decide_humor(
-                humor_ctx, tracker_chat_id
+                humor_ctx,
+                tracker_chat_id,
+                tracker=humor_tracker,
+                remember_type=remember_humor_type,
             )
 
         humor_instruction = _build_humor_instruction(
@@ -2766,6 +2780,27 @@ def build_full_system_instruction(
         )
 
     return current_instruction
+
+
+def _gemini_finish_reason_name(response: Any) -> str:
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        return ""
+    reason = getattr(candidates[0], "finish_reason", None)
+    if reason is None:
+        return ""
+    name = getattr(reason, "name", None)
+    return str(name or reason).upper()
+
+
+def _gemini_hit_max_tokens(response: Any) -> bool:
+    return "MAX_TOKENS" in _gemini_finish_reason_name(response)
+
+
+def _next_gemini_token_budget(current: int) -> int:
+    # Не раздуваем первый запрос. Увеличиваем только после реального
+    # finish_reason=MAX_TOKENS, максимум до 2048 для чатовых команд.
+    return min(2048, max(512, current * 2))
 
 
 async def ask_gemini(
@@ -2813,6 +2848,7 @@ async def ask_gemini(
     )
 
     last_error: Exception | None = None
+    request_token_budget = max_output_tokens
 
     for attempt in range(1, 4):
         try:
@@ -2825,7 +2861,7 @@ async def ask_gemini(
                         contents=contents,
                         config=types.GenerateContentConfig(
                             system_instruction=current_instruction,
-                            max_output_tokens=max_output_tokens,
+                            max_output_tokens=request_token_budget,
                             thinking_config=types.ThinkingConfig(
                                 thinking_level="medium",
                             ),
@@ -2838,6 +2874,23 @@ async def ask_gemini(
                 response.text
                 or ""
             ).strip()
+
+            hit_max_tokens = _gemini_hit_max_tokens(response)
+            if (
+                hit_max_tokens
+                and attempt < 3
+                and request_token_budget < 2048
+            ):
+                next_budget = _next_gemini_token_budget(
+                    request_token_budget
+                )
+                logging.info(
+                    "Gemini упёрся в MAX_TOKENS (%s); повтор с бюджетом %s",
+                    request_token_budget,
+                    next_budget,
+                )
+                request_token_budget = next_budget
+                continue
 
             if answer:
                 return answer
