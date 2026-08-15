@@ -1,3 +1,5 @@
+import daily_title_engine  # activates V2 title compatibility bridge
+import title_pools
 import vocabulary
 
 
@@ -142,22 +144,53 @@ def test_award_templates_have_name_placeholder_and_no_duplicates():
             assert "{name}" in template, (key, template)
 
 
-def test_joke_titles_reach_at_least_sixty_and_have_no_duplicates():
-    assert len(vocabulary.JOKE_TITLES) >= 60
+def test_joke_title_pool_is_exactly_130_unique_titles():
+    assert len(vocabulary.JOKE_TITLES) == 130
     assert len(vocabulary.JOKE_TITLES) == len(set(vocabulary.JOKE_TITLES))
+    assert vocabulary.JOKE_TITLES == title_pools.ALL_TITLES
 
 
-def test_joke_title_categories_have_ten_each_for_the_new_tone_set():
-    tone_categories = (
+def test_joke_title_categories_are_v2_personalities_with_ten_each():
+    expected_categories = {
+        "classic",
+        "youth",
+        "skoof",
+        "old_russian",
+        "blat",
+        "operative",
+        "battle_2017",
+        "post_irony",
+        "runet_2007",
+        "runet_2012_2016",
+        "lan_2000s",
+        "runet_classic",
+        "street_memes",
+    }
+    assert set(vocabulary.JOKE_TITLE_CATEGORIES) == expected_categories
+    assert vocabulary.JOKE_TITLE_CATEGORIES is title_pools.TITLE_POOLS
+    for category, titles in vocabulary.JOKE_TITLE_CATEGORIES.items():
+        assert len(titles) == 10, category
+        assert len(titles) == len(set(titles)), category
+
+
+def test_requested_title_examples_are_in_correct_personality_pools():
+    assert "Поц районный" in title_pools.TITLE_POOLS["blat"]
+    assert "Товарищ майор" in title_pools.TITLE_POOLS["operative"]
+    street = title_pools.TITLE_POOLS["street_memes"]
+    for title in ("Скуф", "Шлюшка", "Танкист", "Задрот", "Алкашик"):
+        assert title in street
+
+
+def test_old_tone_title_categories_are_not_active_in_v2():
+    old_categories = {
         "harsh",
         "friendly",
         "neutral",
         "toxic",
         "insulting",
         "sycophantic",
-    )
-    for category in tone_categories:
-        assert len(vocabulary.JOKE_TITLE_CATEGORIES[category]) == 10, category
+    }
+    assert old_categories.isdisjoint(vocabulary.JOKE_TITLE_CATEGORIES)
 
 
 def test_meme_era_packs_are_nonempty_and_distinct():
