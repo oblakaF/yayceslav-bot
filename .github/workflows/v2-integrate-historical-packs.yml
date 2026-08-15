@@ -1,0 +1,110 @@
+name: Integrate isolated historical voice packs
+
+on:
+  push:
+    branches:
+      - feature/human-yayceslav-v2
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.event.head_commit.message == 'Integrate isolated historical voice packs'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/human-yayceslav-v2
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch historical packs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 match, got {count}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "style_engine.py",
+              '''VOICE_PACK_BATTLE_2017 = "battle_2017"\nVOICE_PACK_POST_IRONY = "post_irony"\n\nVOICE_PACKS = (\n''',
+              '''VOICE_PACK_BATTLE_2017 = "battle_2017"\nVOICE_PACK_POST_IRONY = "post_irony"\nVOICE_PACK_RUNET_2007 = "runet_2007"\nVOICE_PACK_RUNET_2012_2016 = "runet_2012_2016"\nVOICE_PACK_LAN_2000S = "lan_2000s"\n\nVOICE_PACKS = (\n''',
+              "historical constants",
+          )
+
+          replace_once(
+              "style_engine.py",
+              '''    VOICE_PACK_BATTLE_2017,\n    VOICE_PACK_POST_IRONY,\n)\n''',
+              '''    VOICE_PACK_BATTLE_2017,\n    VOICE_PACK_POST_IRONY,\n    VOICE_PACK_RUNET_2007,\n    VOICE_PACK_RUNET_2012_2016,\n    VOICE_PACK_LAN_2000S,\n)\n''',
+              "historical pack tuple",
+          )
+
+          # Add low but real probabilities to each non-serious mode.
+          for mode, anchor, extra in (
+              ("normal", '        VOICE_PACK_POST_IRONY: 0.06,\n', '        VOICE_PACK_POST_IRONY: 0.06,\n        VOICE_PACK_RUNET_2007: 0.025,\n        VOICE_PACK_RUNET_2012_2016: 0.035,\n        VOICE_PACK_LAN_2000S: 0.04,\n'),
+              ("greeting", '        VOICE_PACK_POST_IRONY: 0.05,\n', '        VOICE_PACK_POST_IRONY: 0.05,\n        VOICE_PACK_RUNET_2007: 0.03,\n        VOICE_PACK_RUNET_2012_2016: 0.04,\n        VOICE_PACK_LAN_2000S: 0.05,\n'),
+              ("challenge", '        VOICE_PACK_POST_IRONY: 0.10,\n', '        VOICE_PACK_POST_IRONY: 0.10,\n        VOICE_PACK_RUNET_2007: 0.025,\n        VOICE_PACK_RUNET_2012_2016: 0.04,\n        VOICE_PACK_LAN_2000S: 0.06,\n'),
+              ("hostile", '        VOICE_PACK_POST_IRONY: 0.10,\n', '        VOICE_PACK_POST_IRONY: 0.10,\n        VOICE_PACK_RUNET_2007: 0.02,\n        VOICE_PACK_RUNET_2012_2016: 0.03,\n        VOICE_PACK_LAN_2000S: 0.06,\n'),
+          ):
+              p = Path("style_engine.py")
+              text = p.read_text(encoding="utf-8")
+              section_start = text.index(f'    "{mode}": {{')
+              section_end = text.index('    },', section_start) + 7
+              section = text[section_start:section_end]
+              if section.count(anchor) != 1:
+                  raise SystemExit(f"{mode}: expected historical weight anchor once")
+              section = section.replace(anchor, extra, 1)
+              p.write_text(text[:section_start] + section + text[section_end:], encoding="utf-8")
+
+          replace_once(
+              "voice_packs.py",
+              '''from dataclasses import dataclass\n\nimport vocabulary\n''',
+              '''from dataclasses import dataclass\n\nimport historical_packs\nimport vocabulary\n''',
+              "historical import",
+          )
+
+          insert = '''\n\ndef _historical_pack(name: str, data: dict[str, tuple[str, ...]]) -> VoicePack:\n    return VoicePack(\n        name=name,\n        slang=tuple(data.get("slang", ())),\n        addresses=tuple(data.get("addresses", ())),\n        greetings=tuple(data.get("greetings", ())),\n        taunts=tuple(data.get("taunts", ())),\n        rough=tuple(data.get("rough", ())),\n        flex=tuple(data.get("flex", ())),\n        comebacks=tuple(data.get("comebacks", ())),\n        wisdoms=tuple(data.get("wisdoms", ())),\n        grumbling=tuple(data.get("grumbling", ())),\n        praise=tuple(data.get("praise", ())),\n        comparisons=tuple(data.get("comparisons", ())),\n        drops=tuple(data.get("drops", ())),\n    )\n\n\nRUNET_2007 = _historical_pack("runet_2007", historical_packs.RUNET_2007)\nRUNET_2012_2016 = _historical_pack("runet_2012_2016", historical_packs.RUNET_2012_2016)\nLAN_2000S = _historical_pack("lan_2000s", historical_packs.LAN_2000S)\n'''
+
+          replace_once(
+              "voice_packs.py",
+              '''\n\nVOICE_PACKS = {\n''',
+              insert + '''\n\nVOICE_PACKS = {\n''',
+              "historical pack objects",
+          )
+
+          replace_once(
+              "voice_packs.py",
+              '''        BATTLE_2017,\n        POST_IRONY,\n    )\n}\n''',
+              '''        BATTLE_2017,\n        POST_IRONY,\n        RUNET_2007,\n        RUNET_2012_2016,\n        LAN_2000S,\n    )\n}\n''',
+              "historical registry",
+          )
+
+          Path("tests/test_historical_voice_packs.py").write_text(
+              '''import random\n\nimport style_engine\nimport voice_packs\nimport voice_runtime\n\n\ndef test_historical_packs_are_registered_as_separate_styles():\n    expected = {"runet_2007", "runet_2012_2016", "lan_2000s"}\n    assert expected <= set(style_engine.VOICE_PACKS)\n    assert expected <= set(voice_packs.VOICE_PACKS)\n\n\ndef test_runet_2007_material_never_comes_from_lan_pack():\n    rng = random.Random(404)\n    runet = voice_packs.RUNET_2007\n    lan = voice_packs.LAN_2000S\n    runet_allowed = set(\n        runet.slang + runet.addresses + runet.greetings + runet.taunts + runet.rough\n        + runet.flex + runet.comebacks + runet.wisdoms + runet.grumbling + runet.praise + runet.comparisons\n    )\n    lan_only = set(lan.slang + lan.taunts) - runet_allowed\n    assert lan_only\n    for _ in range(60):\n        material = voice_runtime.choose_voice_material(\n            "runet_2007", conversation_mode="normal", roughness="high", rng=rng\n        )\n        if material.primary:\n            assert material.primary in runet_allowed\n            assert material.primary not in lan_only\n        if material.secondary:\n            assert material.secondary in runet_allowed\n\n\ndef test_serious_mode_still_forces_classic_after_historical_addition():\n    ctx = style_engine.VoicePackContext(\n        conversation_mode="serious", selected_character="chaos", serious_topic=True\n    )\n    assert style_engine.choose_voice_pack(ctx, rng=random.Random(1)) == "classic"\n\n\ndef test_historical_weights_exist_only_as_independent_choices():\n    normal = style_engine._VOICE_PACK_WEIGHTS_BY_MODE["normal"]\n    assert normal["runet_2007"] > 0\n    assert normal["runet_2012_2016"] > 0\n    assert normal["lan_2000s"] > 0\n''',
+              encoding="utf-8",
+          )
+          PY
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Validate
+        run: |
+          python -m py_compile style_engine.py voice_packs.py voice_runtime.py historical_packs.py
+          pytest -q
+      - name: Commit tested code
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add style_engine.py voice_packs.py tests/test_historical_voice_packs.py
+          git commit -m "Wire isolated historical meme voice packs"
+          git push origin HEAD:feature/human-yayceslav-v2
