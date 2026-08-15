@@ -41,6 +41,7 @@ from telegram.ext import (
 import aggression_engine
 import humor_engine
 import intent
+import passive_engine
 import reaction_engine
 import social_engine
 import style_engine
@@ -2503,6 +2504,22 @@ def build_full_system_instruction(
         )
         current_instruction += style_engine.build_length_instruction(length_plan)
         current_instruction += voice_runtime.build_voice_instruction(voice_material)
+
+        if (
+            bot_was_mentioned
+            and chat_type in ("group", "supergroup")
+            and chat_id is not None
+        ):
+            fatigue_decision = passive_engine.note_bot_call_and_maybe_fatigue(
+                chat_id,
+                pack_name=voice_pack,
+                serious_topic=(conversation_mode == "serious"),
+            )
+            fatigue_instruction = passive_engine.build_fatigue_instruction(
+                fatigue_decision
+            )
+            if fatigue_instruction:
+                current_instruction += fatigue_instruction
 
         humor_ctx = humor_engine.HumorContext(
             conversation_mode=conversation_mode,
@@ -6321,7 +6338,11 @@ async def hard_mode_listener(
     #
     # Реакция и текстовая реплика на одно и то же сообщение —
     # это уже два вмешательства сразу, чего быть не должно.
+    # V2 random drop не создаёт новый слот: он может только заменить
+    # содержимое уже разрешённой ниже random reply.
     # --------------------------------------------------------
+
+    passive_engine.note_group_activity(chat_id)
 
     last_random_reply = float(
         context.chat_data.get(
@@ -6336,11 +6357,17 @@ async def hard_mode_listener(
         and random.random() < random_reply_chance
         and group_random_reply_allowed(chat_id, now)
     ):
-        await update.message.reply_text(
-            random.choice(
-                HARD_RANDOM_REPLIES
-            )
+        drop_decision = passive_engine.maybe_random_drop(
+            chat_id,
+            existing_random_reply_slot_open=True,
+            now=now,
         )
+        random_reply_text = (
+            drop_decision.text
+            if drop_decision.active and drop_decision.text
+            else random.choice(HARD_RANDOM_REPLIES)
+        )
+        await update.message.reply_text(random_reply_text)
 
         context.chat_data[
             "hard_last_random_reply"
