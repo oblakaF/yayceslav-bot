@@ -1,0 +1,83 @@
+name: V2 audit Gemini context call sites
+
+on:
+  push:
+    branches:
+      - feature/human-yayceslav-v2-audit-fixes
+
+jobs:
+  scan:
+    if: github.event.head_commit.message == 'Audit all Gemini context call sites'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/human-yayceslav-v2-audit-fixes
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Scan ask_gemini call sites
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          source = Path('bot.py').read_text(encoding='utf-8')
+          tree = ast.parse(source)
+
+          rows = []
+
+          class Visitor(ast.NodeVisitor):
+              def __init__(self):
+                  self.stack = []
+
+              def visit_FunctionDef(self, node):
+                  self.stack.append(node)
+                  self.generic_visit(node)
+                  self.stack.pop()
+
+              def visit_AsyncFunctionDef(self, node):
+                  self.stack.append(node)
+                  self.generic_visit(node)
+                  self.stack.pop()
+
+              def visit_Call(self, node):
+                  name = None
+                  if isinstance(node.func, ast.Name):
+                      name = node.func.id
+                  elif isinstance(node.func, ast.Attribute):
+                      name = node.func.attr
+                  if name == 'ask_gemini':
+                      fn = self.stack[-1] if self.stack else None
+                      fn_name = fn.name if fn else '<module>'
+                      fn_args = {
+                          arg.arg
+                          for arg in (
+                              list(fn.args.posonlyargs) + list(fn.args.args) + list(fn.args.kwonlyargs)
+                          )
+                      } if fn else set()
+                      kws = {kw.arg for kw in node.keywords if kw.arg}
+                      rows.append((node.lineno, fn_name, fn_args, kws))
+                  self.generic_visit(node)
+
+          Visitor().visit(tree)
+
+          print('ALL ask_gemini CALLS:', len(rows))
+          print('-' * 88)
+          for lineno, fn_name, fn_args, kws in rows:
+              has_update = 'update' in fn_args
+              missing = [k for k in ('chat_id', 'chat_type', 'user_id') if k not in kws]
+              print(f'{lineno:5d}  {fn_name:36s} update={has_update!s:5s} missing={missing}')
+          print('-' * 88)
+
+          handler_missing = [
+              (lineno, fn_name, missing)
+              for lineno, fn_name, fn_args, kws in rows
+              if 'update' in fn_args
+              for missing in [[k for k in ('chat_id', 'chat_type', 'user_id') if k not in kws]]
+              if missing
+          ]
+          print('UPDATE-BASED CALLS WITH MISSING CONTEXT:', len(handler_missing))
+          for row in handler_missing:
+              print(row)
+          PY
