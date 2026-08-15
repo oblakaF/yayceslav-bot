@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: v2-audit-runtime-repair
+  cancel-in-progress: false
+
 jobs:
   repair:
     if: github.event.head_commit.message == 'Run V2 runtime robustness repairs'
