@@ -38,8 +38,10 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+import aggression_engine
 import humor_engine
 import intent
+import social_engine
 import style_engine
 import voice_runtime
 from personality import (
@@ -2319,6 +2321,20 @@ def _build_humor_instruction(
                 f"Стратегия ответа: {strategy}. Допустим короткий встречный стёб по смыслу сообщения, "
                 "но лексику бери только из выбранного voice pack."
             )
+        behavior_hints = {
+            "irony": "Допустима сухая ирония по смыслу сообщения, без нового словаря.",
+            "hyperbole": "Можно один раз намеренно преувеличить ситуацию, коротко.",
+            "gaming_terminology": (
+                "Допустима игровая аналогия только если уже выбранный voice pack сам содержит игровой материал; "
+                "иначе передай идею без игровых слов."
+            ),
+            "deadpan_official": "Ответь нарочито сухо и официально, не переключаясь в operative-пакет.",
+            "anti_joke": "Можно дать намеренно приземлённый анти-панч вместо обычной шутки.",
+            "comic_refusal": "Можно комически поворчать, но реальный полезный ответ всё равно дай.",
+        }
+        behavior_hint = behavior_hints.get(decision.humor_type or "")
+        if behavior_hint:
+            lines.append(behavior_hint)
         if decision.should_be_self_ironic:
             lines.append("Можно признать удачный подкол пользователя и ответить самоиронично.")
         if decision.callback_reference:
@@ -2423,6 +2439,8 @@ def build_full_system_instruction(
     user_name: str = "",
     recent_messages: list[str] | None = None,
     bot_was_mentioned: bool = True,
+    member_profile: dict[str, Any] | None = None,
+    user_id: int | None = None,
 ) -> str:
     """
     Собирает системную инструкцию для Gemini целиком:
@@ -2449,6 +2467,15 @@ def build_full_system_instruction(
         )
 
         emotional_tone = intent.detect_emotional_tone(style_text)
+
+        social_ctx = social_engine.from_profile(member_profile)
+        if member_profile is not None:
+            social_instruction = social_engine.build_social_instruction(
+                social_ctx,
+                serious_topic=(conversation_mode == "serious"),
+            )
+            if social_instruction:
+                current_instruction += "\n\n" + social_instruction
 
         voice_pack = style_engine.choose_voice_pack(
             style_engine.VoicePackContext(
@@ -2496,6 +2523,7 @@ def build_full_system_instruction(
             message_intent=resolved_intent,
             intent_confidence=intent_confidence,
             emotional_tone=emotional_tone,
+            relationship_level=social_ctx.relationship_level,
         )
 
         tracker_chat_id = chat_id if chat_id is not None else 0
@@ -2520,6 +2548,27 @@ def build_full_system_instruction(
                 + humor_instruction
             )
 
+        aggression_decision = aggression_engine.decide_aggression(
+            aggression_engine.AggressionContext(
+                user_text=style_text,
+                intent=resolved_intent,
+                confidence=intent_confidence,
+                chat_type=chat_type,
+                roughness=str(settings.get("roughness", "medium")),
+                relationship_level=social_ctx.relationship_level,
+                serious_topic=(conversation_mode == "serious"),
+                emotional_tone=emotional_tone,
+                recent_messages=tuple(recent_messages or ()),
+                chat_id=tracker_chat_id,
+                user_id=user_id or 0,
+            )
+        )
+        aggression_instruction = aggression_engine.build_aggression_instruction(
+            aggression_decision
+        )
+        if aggression_instruction:
+            current_instruction += aggression_instruction
+
     if voice_style:
         current_instruction += (
             "\n\n"
@@ -2539,6 +2588,7 @@ async def ask_gemini(
     user_name: str = "",
     recent_messages: list[str] | None = None,
     bot_was_mentioned: bool = True,
+    user_id: int | None = None,
 ) -> str:
     """Отправляет запрос Gemini с тремя попытками."""
 
@@ -2546,6 +2596,18 @@ async def ask_gemini(
         style_text = contents
     else:
         style_text = ""
+
+    member_profile = None
+    if chat_id is not None and user_id is not None:
+        try:
+            member_profile = await get_member_profile(chat_id, user_id)
+        except Exception as profile_error:
+            logging.debug(
+                "Не удалось прочитать V2-профиль участника %s/%s: %s",
+                chat_id,
+                user_id,
+                profile_error,
+            )
 
     current_instruction = build_full_system_instruction(
         style_text,
@@ -2556,6 +2618,8 @@ async def ask_gemini(
         user_name=user_name,
         recent_messages=recent_messages,
         bot_was_mentioned=bot_was_mentioned,
+        member_profile=member_profile,
+        user_id=user_id,
     )
 
     last_error: Exception | None = None
@@ -8033,6 +8097,11 @@ async def answer_text_message(
             user_name=request_user_name,
             recent_messages=recent_messages_list,
             bot_was_mentioned=True,
+            user_id=(
+                update.effective_user.id
+                if update.effective_user
+                else None
+            ),
         )
 
         # Сохраняем вопрос и ответ в памяти лички
