@@ -1,0 +1,368 @@
+name: Fix critical V2 audit findings
+
+on:
+  push:
+    branches:
+      - feature/human-yayceslav-v2-audit-fixes
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.head_commit.message == 'Fix critical V2 audit findings'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/human-yayceslav-v2-audit-fixes
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply critical fixes
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str, label: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, got {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          # --------------------------------------------------
+          # 1. ask_gemini: every update-based call gets chat/user context.
+          # --------------------------------------------------
+          bot_path = Path('bot.py')
+          source = bot_path.read_text(encoding='utf-8')
+          tree = ast.parse(source)
+          lines = source.splitlines(keepends=True)
+          edits = []
+
+          class Visitor(ast.NodeVisitor):
+              def __init__(self):
+                  self.stack = []
+
+              def visit_FunctionDef(self, node):
+                  self.stack.append(node)
+                  self.generic_visit(node)
+                  self.stack.pop()
+
+              def visit_AsyncFunctionDef(self, node):
+                  self.stack.append(node)
+                  self.generic_visit(node)
+                  self.stack.pop()
+
+              def visit_Call(self, node):
+                  name = None
+                  if isinstance(node.func, ast.Name):
+                      name = node.func.id
+                  elif isinstance(node.func, ast.Attribute):
+                      name = node.func.attr
+                  if name == 'ask_gemini':
+                      fn = self.stack[-1] if self.stack else None
+                      fn_args = {
+                          arg.arg
+                          for arg in (
+                              list(fn.args.posonlyargs)
+                              + list(fn.args.args)
+                              + list(fn.args.kwonlyargs)
+                          )
+                      } if fn else set()
+                      if 'update' in fn_args:
+                          kws = {kw.arg for kw in node.keywords if kw.arg}
+                          missing = [k for k in ('chat_id', 'chat_type', 'user_id') if k not in kws]
+                          if missing:
+                              close_index = node.end_lineno - 1
+                              close_line = lines[close_index]
+                              indent = close_line[:len(close_line) - len(close_line.lstrip())]
+                              inner = indent + '    '
+                              add = []
+                              if 'chat_id' in missing:
+                                  add.extend([
+                                      inner + 'chat_id=(\n',
+                                      inner + '    update.effective_chat.id\n',
+                                      inner + '    if update.effective_chat\n',
+                                      inner + '    else None\n',
+                                      inner + '),\n',
+                                  ])
+                              if 'chat_type' in missing:
+                                  add.extend([
+                                      inner + 'chat_type=(\n',
+                                      inner + '    str(update.effective_chat.type)\n',
+                                      inner + '    if update.effective_chat\n',
+                                      inner + '    else "private"\n',
+                                      inner + '),\n',
+                                  ])
+                              if 'user_id' in missing:
+                                  add.extend([
+                                      inner + 'user_id=(\n',
+                                      inner + '    update.effective_user.id\n',
+                                      inner + '    if update.effective_user\n',
+                                      inner + '    else None\n',
+                                      inner + '),\n',
+                                  ])
+                              edits.append((close_index, add, fn.name, node.lineno, missing))
+                  self.generic_visit(node)
+
+          Visitor().visit(tree)
+          if len(edits) != 15:
+              raise SystemExit(f'Expected 15 update-based context fixes, got {len(edits)}: {edits}')
+
+          for close_index, add, fn_name, lineno, missing in sorted(edits, reverse=True):
+              lines[close_index:close_index] = add
+
+          bot_path.write_text(''.join(lines), encoding='utf-8')
+          print('Patched ask_gemini call sites:')
+          for _, _, fn_name, lineno, missing in sorted(edits, key=lambda x: x[3]):
+              print(f'  {lineno}: {fn_name}: {missing}')
+
+          # --------------------------------------------------
+          # 2. Defensive fallback: no persistent mood/aggression on None chat.
+          # --------------------------------------------------
+          replace_once(
+              'bot.py',
+              '''        character_state = state_engine.resolve_state(\n            chat_id if chat_id is not None else 0,\n            conversation_mode=conversation_mode,\n        )\n''',
+              '''        if chat_id is None:\n            if conversation_mode == "serious":\n                character_state = state_engine.STATE_SERIOUS\n            elif conversation_mode == "hostile":\n                character_state = state_engine.STATE_HOSTILE_RESPONSE\n            else:\n                character_state = state_engine.STATE_NORMAL\n        else:\n            character_state = state_engine.resolve_state(\n                chat_id,\n                conversation_mode=conversation_mode,\n            )\n''',
+              'stateless fallback for missing chat',
+          )
+
+          replace_once(
+              'bot.py',
+              '''        aggression_decision = aggression_engine.decide_aggression(\n            aggression_engine.AggressionContext(\n                user_text=style_text,\n                intent=resolved_intent,\n                confidence=intent_confidence,\n                chat_type=chat_type,\n                roughness=str(settings.get("roughness", "medium")),\n                relationship_level=social_ctx.relationship_level,\n                serious_topic=(conversation_mode == "serious"),\n                emotional_tone=emotional_tone,\n                recent_messages=tuple(recent_messages or ()),\n                chat_id=tracker_chat_id,\n                user_id=user_id or 0,\n                character_state=character_state,\n            )\n        )\n        aggression_instruction = aggression_engine.build_aggression_instruction(\n            aggression_decision\n        )\n        if aggression_instruction:\n            current_instruction += aggression_instruction\n            state_engine.mark_argumentative(tracker_chat_id)\n''',
+              '''        if chat_id is not None and user_id is not None:\n            aggression_decision = aggression_engine.decide_aggression(\n                aggression_engine.AggressionContext(\n                    user_text=style_text,\n                    intent=resolved_intent,\n                    confidence=intent_confidence,\n                    chat_type=chat_type,\n                    roughness=str(settings.get("roughness", "medium")),\n                    relationship_level=social_ctx.relationship_level,\n                    serious_topic=(conversation_mode == "serious"),\n                    emotional_tone=emotional_tone,\n                    recent_messages=tuple(recent_messages or ()),\n                    chat_id=chat_id,\n                    user_id=user_id,\n                    character_state=character_state,\n                )\n            )\n            aggression_instruction = aggression_engine.build_aggression_instruction(\n                aggression_decision\n            )\n            if aggression_instruction:\n                current_instruction += aggression_instruction\n                state_engine.mark_argumentative(chat_id)\n''',
+              'skip stateful aggression without identity',
+          )
+
+          # --------------------------------------------------
+          # 3. Daily title: do not announce unless member title was saved.
+          # --------------------------------------------------
+          replace_once(
+              'bot.py',
+              '''        connection.execute(\n            """\n            UPDATE chat_member_profiles\n            SET current_title = ?, updated_at = datetime('now')\n            WHERE chat_id = ? AND user_id = ?\n            """,\n            (title, chat_id, user_id),\n        )\n        connection.commit()\n        return True\n''',
+              '''        update_cursor = connection.execute(\n            """\n            UPDATE chat_member_profiles\n            SET current_title = ?, updated_at = datetime('now')\n            WHERE chat_id = ? AND user_id = ?\n            """,\n            (title, chat_id, user_id),\n        )\n        if update_cursor.rowcount != 1:\n            connection.rollback()\n            return False\n        connection.commit()\n        return True\n''',
+              'daily title profile update verification',
+          )
+
+          # --------------------------------------------------
+          # 4. Use the actual two-stage V2 title picker.
+          # --------------------------------------------------
+          replace_once(
+              'bot.py',
+              'import style_engine\nimport voice_runtime\n',
+              'import style_engine\nimport title_pools\nimport voice_runtime\n',
+              'title_pools import',
+          )
+          replace_once(
+              'bot.py',
+              '''def pick_new_title(\n    previous_title: str | None,\n) -> str:\n    """Выбирает новый титул, исключая предыдущий, если это возможно."""\n\n    candidates = [\n        title\n        for title in JOKE_TITLES\n        if title != previous_title\n    ]\n\n    if not candidates:\n        candidates = list(JOKE_TITLES)\n\n    return random.choice(candidates)\n''',
+              '''def pick_new_title(\n    previous_title: str | None,\n) -> str:\n    """Выбирает личность V2, затем один из её 10 титулов."""\n\n    return title_pools.pick_title(previous_title)\n''',
+              'wire two-stage title picker',
+          )
+
+          # --------------------------------------------------
+          # 5. Regex fixes verified by natural Russian phrases.
+          # --------------------------------------------------
+          replace_once(
+              'reaction_engine.py',
+              r'''    r"судьб\w*|карм\w*|зв[её]зд\w*\s+(?:говор|шепч|сошл)|"''',
+              r'''    r"судьб\w*|карм\w*|зв[её]зд\w*\s+(?:говор\w*|шепч\w*|сошл\w*)|"''',
+              'mysticism endings',
+          )
+          replace_once(
+              'reaction_engine.py',
+              r'''    r"\b(?:аргумент\w*\s+(?:умер|сдох|развал)|"''',
+              r'''    r"\b(?:аргумент\w*\s+(?:умер\w*|сдох\w*|развал\w*)|"''',
+              'dead argument endings',
+          )
+          replace_once(
+              'reaction_engine.py',
+              r'''    r"\b(?:подстав\w*|крыса\b|срач\w*|интриг\w*|"\n    r"стучит\b|настучал\w*|слил\w*\s+(?:переписк|инф))\b",''',
+              r'''    r"\b(?:подстав\w*|крыс\w*|срач\w*|интриг\w*|"\n    r"стуч\w*|настуч\w*|слил\w*\s+(?:переписк\w*|инф\w*))\b",''',
+              'drama endings',
+          )
+          replace_once(
+              'intent.py',
+              r'''    r"\b(?:это\s+не\s+так|чушь|бред полный)\b",''',
+              r'''    r"\b(?:это\s+не\s+так|чушь|бред\s+полный|полный\s+бред)\b",''',
+              'full nonsense order',
+          )
+
+          # --------------------------------------------------
+          # 6. State precedence: the later event wins if both are active.
+          # --------------------------------------------------
+          replace_once(
+              'state_engine.py',
+              '''class _ChatState:\n    message_count: int = 0\n    last_seen_at: float | None = None\n    annoyed_until: float = 0.0\n    argumentative_until: float = 0.0\n''',
+              '''class _ChatState:\n    message_count: int = 0\n    last_seen_at: float | None = None\n    annoyed_until: float = 0.0\n    argumentative_until: float = 0.0\n    annoyed_set_at: float = 0.0\n    argumentative_set_at: float = 0.0\n''',
+              'state timestamps fields',
+          )
+          replace_once(
+              'state_engine.py',
+              '''    entry.annoyed_until = max(\n        entry.annoyed_until,\n        current + ANNOYED_DURATION_SECONDS,\n    )\n''',
+              '''    entry.annoyed_until = max(\n        entry.annoyed_until,\n        current + ANNOYED_DURATION_SECONDS,\n    )\n    entry.annoyed_set_at = current\n''',
+              'annoyed timestamp',
+          )
+          replace_once(
+              'state_engine.py',
+              '''    entry.argumentative_until = max(\n        entry.argumentative_until,\n        current + ARGUMENTATIVE_DURATION_SECONDS,\n    )\n''',
+              '''    entry.argumentative_until = max(\n        entry.argumentative_until,\n        current + ARGUMENTATIVE_DURATION_SECONDS,\n    )\n    entry.argumentative_set_at = current\n''',
+              'argumentative timestamp',
+          )
+          replace_once(
+              'state_engine.py',
+              '''    elif current < entry.annoyed_until:\n        state = STATE_ANNOYED\n    elif current < entry.argumentative_until:\n        state = STATE_ARGUMENTATIVE\n''',
+              '''    elif (\n        current < entry.annoyed_until\n        and current < entry.argumentative_until\n    ):\n        state = (\n            STATE_ARGUMENTATIVE\n            if entry.argumentative_set_at > entry.annoyed_set_at\n            else STATE_ANNOYED\n        )\n    elif current < entry.annoyed_until:\n        state = STATE_ANNOYED\n    elif current < entry.argumentative_until:\n        state = STATE_ARGUMENTATIVE\n''',
+              'latest state wins',
+          )
+
+          # --------------------------------------------------
+          # 7. README model name.
+          # --------------------------------------------------
+          replace_once(
+              'README.md',
+              'Модель Gemini — одна, `gemini-3.1-flash-lite` (Free Tier), задаётся через `MODEL_NAME` в `bot.py`.',
+              'Модель Gemini — одна, `gemini-3.6-flash`, задаётся через `MODEL_NAME` в `bot.py`.',
+              'README model',
+          )
+
+          # --------------------------------------------------
+          # 8. Regression tests.
+          # --------------------------------------------------
+          Path('tests/test_v2_audit_critical.py').write_text(r'''import ast
+from pathlib import Path
+
+import bot
+import intent
+import reaction_engine
+import state_engine
+import title_pools
+
+
+def _ask_gemini_calls():
+    source = Path(bot.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    rows = []
+
+    class Visitor(ast.NodeVisitor):
+        def __init__(self):
+            self.stack = []
+
+        def visit_FunctionDef(self, node):
+            self.stack.append(node)
+            self.generic_visit(node)
+            self.stack.pop()
+
+        def visit_AsyncFunctionDef(self, node):
+            self.stack.append(node)
+            self.generic_visit(node)
+            self.stack.pop()
+
+        def visit_Call(self, node):
+            name = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", None)
+            if name == "ask_gemini":
+                fn = self.stack[-1] if self.stack else None
+                fn_args = {
+                    arg.arg
+                    for arg in (
+                        list(fn.args.posonlyargs)
+                        + list(fn.args.args)
+                        + list(fn.args.kwonlyargs)
+                    )
+                } if fn else set()
+                kws = {kw.arg for kw in node.keywords if kw.arg}
+                rows.append((node.lineno, fn.name if fn else "<module>", fn_args, kws))
+            self.generic_visit(node)
+
+    Visitor().visit(tree)
+    return rows
+
+
+def test_every_gemini_call_has_chat_scope():
+    missing = []
+    for lineno, fn_name, _fn_args, kws in _ask_gemini_calls():
+        absent = [key for key in ("chat_id", "chat_type") if key not in kws]
+        if absent:
+            missing.append((lineno, fn_name, absent))
+    assert not missing, missing
+
+
+def test_every_update_based_gemini_call_has_user_scope():
+    missing = []
+    for lineno, fn_name, fn_args, kws in _ask_gemini_calls():
+        if "update" in fn_args and "user_id" not in kws:
+            missing.append((lineno, fn_name))
+    assert not missing, missing
+
+
+def test_missing_chat_context_does_not_create_shared_state_zero():
+    state_engine.reset_state()
+    bot.build_full_system_instruction(
+        "обычная реплика",
+        chat_id=None,
+        chat_type="private",
+        user_id=None,
+    )
+    assert 0 not in state_engine._CHAT_STATE
+
+
+def test_daily_title_fails_atomically_if_profile_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(bot, "STATS_DB_PATH", tmp_path / "audit-title.db")
+    bot.initialize_stats_database()
+    with bot.get_db_connection() as connection:
+        connection.execute("INSERT INTO chats (chat_id, chat_type) VALUES (?, ?)", (-500, "group"))
+        connection.execute("INSERT INTO users (user_id) VALUES (?)", (77,))
+        connection.commit()
+
+    assert not bot.try_assign_daily_title_sync(-500, "2026-08-15", 77, "Товарищ майор")
+    assert bot.get_daily_title_assignment_sync(-500, "2026-08-15") is None
+
+
+def test_natural_reaction_phrases_match():
+    assert reaction_engine.detect_context_reason("звезды говорят, что всё получится") == "mysticism"
+    assert reaction_engine.detect_context_reason("аргумент развалился окончательно") == "dead_argument"
+    assert reaction_engine.detect_context_reason("эта крыса стучала на всех") == "suspicious_drama"
+    assert reaction_engine.detect_context_reason("он слил переписку") == "suspicious_drama"
+
+
+def test_full_bred_is_disagreement_in_natural_order():
+    assert intent.classify_intent("это полный бред")[0] == "disagreement"
+
+
+def test_later_character_state_wins_when_both_active():
+    state_engine.reset_state()
+    state_engine.mark_annoyed(1, now=100.0)
+    state_engine.mark_argumentative(1, now=101.0)
+    assert state_engine.resolve_state(1, conversation_mode="normal", now=102.0, record=False) == "argumentative"
+
+    state_engine.reset_state()
+    state_engine.mark_argumentative(2, now=100.0)
+    state_engine.mark_annoyed(2, now=101.0)
+    assert state_engine.resolve_state(2, conversation_mode="normal", now=102.0, record=False) == "annoyed"
+
+
+def test_bot_uses_two_stage_title_picker(monkeypatch):
+    monkeypatch.setattr(title_pools, "pick_title", lambda previous_title=None: "Товарищ майор")
+    assert bot.pick_new_title("Скуф") == "Товарищ майор"
+''', encoding='utf-8')
+          PY
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Compile
+        run: python -m py_compile bot.py intent.py reaction_engine.py state_engine.py title_pools.py
+      - name: Test
+        run: pytest -q
+      - name: Commit tested fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot.py intent.py reaction_engine.py state_engine.py README.md tests/test_v2_audit_critical.py
+          git commit -m "Fix critical V2 audit findings"
+          git push origin HEAD:feature/human-yayceslav-v2-audit-fixes
