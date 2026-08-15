@@ -88,7 +88,7 @@ BOT_OWNER_ID = (
     else 0
 )
 
-MODEL_NAME = "gemini-3.1-flash-lite"
+MODEL_NAME = "gemini-3.6-flash"
 # ============================================================
 # ЗАЩИТА ОТ СПАМА И ЛИМИТЫ
 # ============================================================
@@ -2519,7 +2519,9 @@ async def ask_gemini(
                         config=types.GenerateContentConfig(
                             system_instruction=current_instruction,
                             max_output_tokens=max_output_tokens,
-                            temperature=0.9,
+                            thinking_config=types.ThinkingConfig(
+                                thinking_level="medium",
+                            ),
                         ),
                     ),
                     timeout=90,
@@ -8879,6 +8881,66 @@ async def answer_voice_or_audio(
         )
 
 
+async def gemini_version_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Проверяет реальную модель Gemini через Google API."""
+
+    del context
+
+    message = update.effective_message
+    user = update.effective_user
+
+    if not message or not user:
+        return
+
+    # Как и /stats: посторонним ничего не раскрываем.
+    if (
+        BOT_OWNER_ID == 0
+        or user.id != BOT_OWNER_ID
+    ):
+        return
+
+    try:
+        model_info = await asyncio.wait_for(
+            gemini_client.aio.models.get(
+                model=MODEL_NAME,
+            ),
+            timeout=20,
+        )
+
+        api_name = getattr(model_info, "name", None) or "—"
+        display_name = getattr(model_info, "display_name", None) or "—"
+        version = getattr(model_info, "version", None) or "—"
+        thinking = getattr(model_info, "thinking", None)
+        input_limit = getattr(model_info, "input_token_limit", None)
+        output_limit = getattr(model_info, "output_token_limit", None)
+
+        await message.reply_text(
+            "Gemini API: OK\n"
+            f"Configured model: {MODEL_NAME}\n"
+            f"API model: {api_name}\n"
+            f"Display name: {display_name}\n"
+            f"Version: {version}\n"
+            f"Thinking supported: {thinking}\n"
+            f"Input token limit: {input_limit}\n"
+            f"Output token limit: {output_limit}"
+        )
+
+    except Exception as error:
+        logging.exception(
+            "Ошибка проверки версии Gemini: %s",
+            error,
+        )
+
+        await message.reply_text(
+            "Gemini API: ERROR\n"
+            f"Configured model: {MODEL_NAME}\n"
+            f"{type(error).__name__}: {error}"
+        )
+
+
 # ============================================================
 # ЗАПУСК БОТА
 # ============================================================
@@ -8937,6 +8999,12 @@ def main() -> None:
         CommandHandler(
             "stats",
             stats_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "geminiversion",
+            gemini_version_command,
         )
     )
     application.add_handler(
