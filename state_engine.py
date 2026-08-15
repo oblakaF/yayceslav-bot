@@ -41,6 +41,8 @@ class _ChatState:
     last_seen_at: float | None = None
     annoyed_until: float = 0.0
     argumentative_until: float = 0.0
+    annoyed_marked_at: float = 0.0
+    argumentative_marked_at: float = 0.0
 
 
 _CHAT_STATE: dict[int, _ChatState] = {}
@@ -61,6 +63,7 @@ def mark_annoyed(chat_id: int, *, now: float | None = None) -> None:
         entry.annoyed_until,
         current + ANNOYED_DURATION_SECONDS,
     )
+    entry.annoyed_marked_at = current
 
 
 def mark_argumentative(chat_id: int, *, now: float | None = None) -> None:
@@ -70,6 +73,7 @@ def mark_argumentative(chat_id: int, *, now: float | None = None) -> None:
         entry.argumentative_until,
         current + ARGUMENTATIVE_DURATION_SECONDS,
     )
+    entry.argumentative_marked_at = current
 
 
 def resolve_state(
@@ -84,13 +88,22 @@ def resolve_state(
     current = time.monotonic() if now is None else now
     entry = _entry(chat_id)
 
+    annoyed_active = current < entry.annoyed_until
+    argumentative_active = current < entry.argumentative_until
+
     if conversation_mode == "serious":
         state = STATE_SERIOUS
     elif conversation_mode == "hostile":
         state = STATE_HOSTILE_RESPONSE
-    elif current < entry.annoyed_until:
+    elif annoyed_active and argumentative_active:
+        state = (
+            STATE_ARGUMENTATIVE
+            if entry.argumentative_marked_at >= entry.annoyed_marked_at
+            else STATE_ANNOYED
+        )
+    elif annoyed_active:
         state = STATE_ANNOYED
-    elif current < entry.argumentative_until:
+    elif argumentative_active:
         state = STATE_ARGUMENTATIVE
     elif entry.last_seen_at is None or current - entry.last_seen_at >= COLD_AFTER_SECONDS:
         state = STATE_COLD_START

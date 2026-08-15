@@ -76,7 +76,7 @@ AGREEMENT_RE = re.compile(
 
 DISAGREEMENT_RE = re.compile(
     r"^\s*(?:нет|не\s+согласен|не\s+согласна|неверно)\b|"
-    r"\b(?:это\s+не\s+так|чушь|бред полный)\b",
+    r"\b(?:это\s+не\s+так|чуш\w*|бред\w*\s+полн\w*|полн\w*\s+бред\w*)\b",
     re.IGNORECASE,
 )
 

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import random
+import re
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -25,6 +26,41 @@ FATIGUE_WINDOW_SECONDS = 10 * 60
 FATIGUE_CALL_THRESHOLD = 8
 FATIGUE_COOLDOWN_SECONDS = 12 * 60
 FATIGUE_TRIGGER_CHANCE = 0.72
+
+
+SHORT_ACK_RE = re.compile(
+    r"^\s*(?:100\s*%|да|нет|ага|угу|точно|верно|согласен|согласна|"
+    r"ок|окей|ладно|понял|поняла|ясно|\+1|[👍👎👌🤝🔥😂🤣🙂]+)[.!?,\s]*$",
+    re.IGNORECASE,
+)
+
+CONTEXTUAL_TEXT_REASONS = frozenset(
+    {
+        "provocation",
+        "contradiction",
+        "absurdity",
+        "dead_argument",
+        "suspicious_drama",
+        "mysticism",
+        "direct_insult",
+        "insult",
+        "joke",
+        "sarcasm",
+        "cringe",
+    }
+)
+
+
+def random_text_intervention_allowed(
+    text: str,
+    reaction_reason: str | None,
+) -> bool:
+    """Не позволяет hard-mode отвечать случайным текстом без смыслового повода."""
+
+    stripped = text.strip()
+    if not stripped or SHORT_ACK_RE.fullmatch(stripped):
+        return False
+    return bool(reaction_reason and reaction_reason in CONTEXTUAL_TEXT_REASONS)
 
 
 @dataclass(frozen=True)

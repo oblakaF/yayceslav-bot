@@ -47,6 +47,7 @@ import reaction_engine
 import social_engine
 import state_engine
 import style_engine
+import title_pools
 import voice_runtime
 from personality import (
     DEFAULT_USER_SETTINGS,
@@ -1176,7 +1177,7 @@ def try_assign_daily_title_sync(
             connection.commit()
             return False
 
-        connection.execute(
+        update_cursor = connection.execute(
             """
             UPDATE chat_member_profiles
             SET current_title = ?, updated_at = datetime('now')
@@ -1184,6 +1185,9 @@ def try_assign_daily_title_sync(
             """,
             (title, chat_id, user_id),
         )
+        if update_cursor.rowcount != 1:
+            connection.rollback()
+            return False
         connection.commit()
         return True
 
@@ -2580,10 +2584,18 @@ def build_full_system_instruction(
             if social_instruction:
                 current_instruction += "\n\n" + social_instruction
 
-        character_state = state_engine.resolve_state(
-            chat_id if chat_id is not None else 0,
-            conversation_mode=conversation_mode,
-        )
+        if chat_id is None:
+            if conversation_mode == "serious":
+                character_state = state_engine.STATE_SERIOUS
+            elif conversation_mode == "hostile":
+                character_state = state_engine.STATE_HOSTILE_RESPONSE
+            else:
+                character_state = state_engine.STATE_NORMAL
+        else:
+            character_state = state_engine.resolve_state(
+                chat_id,
+                conversation_mode=conversation_mode,
+            )
         current_instruction += state_engine.build_state_instruction(
             character_state
         )
@@ -2677,28 +2689,29 @@ def build_full_system_instruction(
                 + humor_instruction
             )
 
-        aggression_decision = aggression_engine.decide_aggression(
-            aggression_engine.AggressionContext(
-                user_text=style_text,
-                intent=resolved_intent,
-                confidence=intent_confidence,
-                chat_type=chat_type,
-                roughness=str(settings.get("roughness", "medium")),
-                relationship_level=social_ctx.relationship_level,
-                serious_topic=(conversation_mode == "serious"),
-                emotional_tone=emotional_tone,
-                recent_messages=tuple(recent_messages or ()),
-                chat_id=tracker_chat_id,
-                user_id=user_id or 0,
-                character_state=character_state,
+        if chat_id is not None and user_id is not None:
+            aggression_decision = aggression_engine.decide_aggression(
+                aggression_engine.AggressionContext(
+                    user_text=style_text,
+                    intent=resolved_intent,
+                    confidence=intent_confidence,
+                    chat_type=chat_type,
+                    roughness=str(settings.get("roughness", "medium")),
+                    relationship_level=social_ctx.relationship_level,
+                    serious_topic=(conversation_mode == "serious"),
+                    emotional_tone=emotional_tone,
+                    recent_messages=tuple(recent_messages or ()),
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    character_state=character_state,
+                )
             )
-        )
-        aggression_instruction = aggression_engine.build_aggression_instruction(
-            aggression_decision
-        )
-        if aggression_instruction:
-            current_instruction += aggression_instruction
-            state_engine.mark_argumentative(tracker_chat_id)
+            aggression_instruction = aggression_engine.build_aggression_instruction(
+                aggression_decision
+            )
+            if aggression_instruction:
+                current_instruction += aggression_instruction
+                state_engine.mark_argumentative(chat_id)
 
     if voice_style:
         current_instruction += (
@@ -3380,6 +3393,21 @@ async def perform_web_search(
             ),
             voice_style=use_voice_style,
             user_settings=user_settings,
+            chat_id=(
+                update.effective_chat.id
+                if update.effective_chat
+                else None
+            ),
+            chat_type=(
+                str(update.effective_chat.type)
+                if update.effective_chat
+                else "private"
+            ),
+            user_id=(
+                update.effective_user.id
+                if update.effective_user
+                else None
+            ),
         )
 
         # В голосовом ответе дополнительно удаляем
@@ -4636,18 +4664,9 @@ async def prophecy_command(
 def pick_new_title(
     previous_title: str | None,
 ) -> str:
-    """Выбирает новый титул, исключая предыдущий, если это возможно."""
+    """V2: сначала выбирает личность, затем один из её десяти титулов."""
 
-    candidates = [
-        title
-        for title in JOKE_TITLES
-        if title != previous_title
-    ]
-
-    if not candidates:
-        candidates = list(JOKE_TITLES)
-
-    return random.choice(candidates)
+    return title_pools.pick_title(previous_title)
 
 
 async def maybe_assign_daily_title(
@@ -4781,6 +4800,11 @@ async def _reply_with_gemini_feature(
             max_output_tokens=max_output_tokens,
             chat_id=update.effective_chat.id,
             chat_type=str(update.effective_chat.type),
+            user_id=(
+                update.effective_user.id
+                if update.effective_user
+                else None
+            ),
         )
     except Exception as error:
         logging.exception(
@@ -5150,6 +5174,11 @@ async def fact_or_bayan_command(
             max_output_tokens=320,
             chat_id=chat_id,
             chat_type=chat_type,
+            user_id=(
+                update.effective_user.id
+                if update.effective_user
+                else None
+            ),
         )
     except Exception as error:
         logging.exception(
@@ -5186,6 +5215,11 @@ async def fact_or_bayan_command(
                     max_output_tokens=380,
                     chat_id=chat_id,
                     chat_type=chat_type,
+                    user_id=(
+                        update.effective_user.id
+                        if update.effective_user
+                        else None
+                    ),
                 )
             except Exception as error:
                 logging.exception(
@@ -5397,6 +5431,11 @@ async def duel_accept_callback(
             max_output_tokens=320,
             chat_id=duel["chat_id"],
             chat_type="group",
+            user_id=(
+                update.effective_user.id
+                if update.effective_user
+                else None
+            ),
         )
     except Exception as error:
         logging.exception(
@@ -5488,6 +5527,11 @@ async def story_command(
             max_output_tokens=220,
             chat_id=chat_id,
             chat_type=str(update.effective_chat.type),
+            user_id=(
+                update.effective_user.id
+                if update.effective_user
+                else None
+            ),
         )
     except Exception as error:
         logging.exception(
@@ -6522,6 +6566,9 @@ async def hard_mode_listener(
 
     if (
         not reacted_to_this_message
+        and passive_engine.random_text_intervention_allowed(
+            text, reaction_reason
+        )
         and now - last_random_reply >= HARD_RANDOM_REPLY_COOLDOWN
         and random.random() < random_reply_chance
         and group_random_reply_allowed(chat_id, now)
@@ -6531,23 +6578,19 @@ async def hard_mode_listener(
             existing_random_reply_slot_open=True,
             now=now,
         )
-        random_reply_text = (
-            drop_decision.text
-            if drop_decision.active and drop_decision.text
-            else random.choice(HARD_RANDOM_REPLIES)
-        )
-        await update.message.reply_text(random_reply_text)
+        if drop_decision.active and drop_decision.text:
+            await update.message.reply_text(drop_decision.text)
 
-        context.chat_data[
-            "hard_last_random_reply"
-        ] = now
-        record_group_random_reply(chat_id, now)
+            context.chat_data[
+                "hard_last_random_reply"
+            ] = now
+            record_group_random_reply(chat_id, now)
 
-        await increment_chat_hard_stat(
-            chat_id,
-            "random_replies_count",
-            chat_type,
-        )
+            await increment_chat_hard_stat(
+                chat_id,
+                "random_replies_count",
+                chat_type,
+            )
 async def enforce_rate_limit(
     update: Update,
     bucket: str,
@@ -8003,6 +8046,21 @@ async def answer_button_callback(
             contents=prompt,
             max_output_tokens=max_tokens,
             user_settings=user_settings,
+            chat_id=(
+                update.effective_chat.id
+                if update.effective_chat
+                else None
+            ),
+            chat_type=(
+                str(update.effective_chat.type)
+                if update.effective_chat
+                else "private"
+            ),
+            user_id=(
+                update.effective_user.id
+                if update.effective_user
+                else None
+            ),
         )
 
         context.user_data[
@@ -8498,6 +8556,21 @@ async def answer_photo(
             ),
             voice_style=use_voice_style,
             user_settings=user_settings,
+            chat_id=(
+                update.effective_chat.id
+                if update.effective_chat
+                else None
+            ),
+            chat_type=(
+                str(update.effective_chat.type)
+                if update.effective_chat
+                else "private"
+            ),
+            user_id=(
+                update.effective_user.id
+                if update.effective_user
+                else None
+            ),
         )
 
         # Запоминаем обсуждение фотографии
@@ -8742,6 +8815,21 @@ async def answer_document(
                 ),
                 voice_style=use_voice_style,
                 user_settings=user_settings,
+                chat_id=(
+                    update.effective_chat.id
+                    if update.effective_chat
+                    else None
+                ),
+                chat_type=(
+                    str(update.effective_chat.type)
+                    if update.effective_chat
+                    else "private"
+                ),
+                user_id=(
+                    update.effective_user.id
+                    if update.effective_user
+                    else None
+                ),
             )
 
         # Изображение, отправленное как документ
@@ -8779,6 +8867,21 @@ async def answer_document(
                 ),
                 voice_style=use_voice_style,
                 user_settings=user_settings,
+                chat_id=(
+                    update.effective_chat.id
+                    if update.effective_chat
+                    else None
+                ),
+                chat_type=(
+                    str(update.effective_chat.type)
+                    if update.effective_chat
+                    else "private"
+                ),
+                user_id=(
+                    update.effective_user.id
+                    if update.effective_user
+                    else None
+                ),
             )
 
         # Word
@@ -8807,6 +8910,21 @@ async def answer_document(
                 ),
                 voice_style=use_voice_style,
                 user_settings=user_settings,
+                chat_id=(
+                    update.effective_chat.id
+                    if update.effective_chat
+                    else None
+                ),
+                chat_type=(
+                    str(update.effective_chat.type)
+                    if update.effective_chat
+                    else "private"
+                ),
+                user_id=(
+                    update.effective_user.id
+                    if update.effective_user
+                    else None
+                ),
             )
 
         # Excel
@@ -8835,6 +8953,21 @@ async def answer_document(
                 ),
                 voice_style=use_voice_style,
                 user_settings=user_settings,
+                chat_id=(
+                    update.effective_chat.id
+                    if update.effective_chat
+                    else None
+                ),
+                chat_type=(
+                    str(update.effective_chat.type)
+                    if update.effective_chat
+                    else "private"
+                ),
+                user_id=(
+                    update.effective_user.id
+                    if update.effective_user
+                    else None
+                ),
             )
 
         # CSV
@@ -8858,6 +8991,21 @@ async def answer_document(
                 ),
                 voice_style=use_voice_style,
                 user_settings=user_settings,
+                chat_id=(
+                    update.effective_chat.id
+                    if update.effective_chat
+                    else None
+                ),
+                chat_type=(
+                    str(update.effective_chat.type)
+                    if update.effective_chat
+                    else "private"
+                ),
+                user_id=(
+                    update.effective_user.id
+                    if update.effective_user
+                    else None
+                ),
             )
 
         # Текстовые файлы
@@ -8890,6 +9038,21 @@ async def answer_document(
                 ),
                 voice_style=use_voice_style,
                 user_settings=user_settings,
+                chat_id=(
+                    update.effective_chat.id
+                    if update.effective_chat
+                    else None
+                ),
+                chat_type=(
+                    str(update.effective_chat.type)
+                    if update.effective_chat
+                    else "private"
+                ),
+                user_id=(
+                    update.effective_user.id
+                    if update.effective_user
+                    else None
+                ),
             )
 
         else:
@@ -9123,6 +9286,21 @@ async def answer_voice_or_audio(
             ),
             voice_style=True,
             user_settings=user_settings,
+            chat_id=(
+                update.effective_chat.id
+                if update.effective_chat
+                else None
+            ),
+            chat_type=(
+                str(update.effective_chat.type)
+                if update.effective_chat
+                else "private"
+            ),
+            user_id=(
+                update.effective_user.id
+                if update.effective_user
+                else None
+            ),
         )
         # Запоминаем обсуждение голосового сообщения
         if update.effective_user:

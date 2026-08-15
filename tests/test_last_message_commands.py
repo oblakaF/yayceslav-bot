@@ -124,9 +124,13 @@ def test_pick_new_title_excludes_previous_when_possible():
     assert "Скуф" not in seen
 
 
-def test_pick_new_title_falls_back_when_only_one_option(monkeypatch):
-    monkeypatch.setattr(bot, "JOKE_TITLES", ["Единственный титул"])
-    assert bot.pick_new_title("Единственный титул") == "Единственный титул"
+def test_pick_new_title_delegates_to_v2_title_pools(monkeypatch):
+    monkeypatch.setattr(
+        bot.title_pools,
+        "pick_title",
+        lambda previous_title=None: "Единственный титул",
+    )
+    assert bot.pick_new_title("Старый титул") == "Единственный титул"
 
 
 def test_set_member_title_persists_and_replaces(tmp_path, monkeypatch):
