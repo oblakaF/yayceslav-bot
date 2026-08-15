@@ -7,8 +7,8 @@ import bot
 
 # Commands intentionally excluded from /help:
 # - start/help are meta, not features to list;
-# - stats is owner-only and must never appear in /help at all.
-COMMANDS_EXCLUDED_FROM_HELP = {"start", "help", "stats"}
+# - stats/geminiversion are owner-only and must never appear in /help at all.
+COMMANDS_EXCLUDED_FROM_HELP = {"start", "help", "stats", "geminiversion"}
 
 ADMIN_ONLY_COMMANDS = {
     "hard_on",
