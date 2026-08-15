@@ -10,7 +10,12 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
+import verdict_engine
 import voice_packs
+
+
+CONFLICT_TAUNT_CHANCE = 0.20
+CONFLICT_SECOND_ELEMENT_CHANCE = 0.10
 
 
 @dataclass(frozen=True)
@@ -19,6 +24,8 @@ class VoiceMaterial:
     primary: str | None = None
     secondary: str | None = None
     category: str | None = None
+    verdict: str | None = None
+    suppress_extra_taunt: bool = False
 
 
 def _pick(pool: tuple[str, ...], *, rng=random) -> str | None:
@@ -41,6 +48,26 @@ def _pick_distinct(
     return rng.choice(candidates)
 
 
+def _pick_non_taunt_conflict_material(
+    pack: voice_packs.VoicePack,
+    *,
+    roughness: str,
+    rng=random,
+) -> tuple[str | None, str | None]:
+    """Даёт грубость/характер без обязательной насмешки."""
+
+    if roughness == "high" and pack.rough:
+        return _pick(pack.rough, rng=rng), "rough"
+
+    if pack.slang:
+        return _pick(pack.slang, rng=rng), "slang"
+
+    if pack.comparisons:
+        return _pick(pack.comparisons, rng=rng), "comparison"
+
+    return None, None
+
+
 def choose_voice_material(
     pack_name: str,
     *,
@@ -57,6 +84,8 @@ def choose_voice_material(
     primary: str | None = None
     secondary: str | None = None
     category: str | None = None
+    verdict: str | None = None
+    suppress_extra_taunt = False
 
     if conversation_mode == "greeting":
         primary = _pick(pack.greetings or pack.slang, rng=rng)
@@ -64,17 +93,36 @@ def choose_voice_material(
         if rng.random() < 0.28:
             secondary = _pick_distinct(primary, pack.addresses, rng=rng)
 
-    elif conversation_mode == "hostile":
-        primary = _pick(pack.comebacks or pack.taunts, rng=rng)
-        category = "comeback"
-        if roughness == "high" and rng.random() < 0.62:
-            secondary = _pick_distinct(primary, pack.rough, rng=rng)
+    elif conversation_mode in {"hostile", "challenge"}:
+        taunt_selected = rng.random() < CONFLICT_TAUNT_CHANCE
 
-    elif conversation_mode == "challenge":
-        primary = _pick(pack.taunts or pack.comebacks, rng=rng)
-        category = "taunt"
-        if roughness == "high" and rng.random() < 0.48:
-            secondary = _pick_distinct(primary, pack.rough, rng=rng)
+        if taunt_selected:
+            if conversation_mode == "hostile":
+                primary = _pick(pack.comebacks or pack.taunts, rng=rng)
+                category = "comeback"
+            else:
+                primary = _pick(pack.taunts or pack.comebacks, rng=rng)
+                category = "taunt"
+
+            # Даже когда taunt разрешён, не устраиваем двойной панч почти всегда.
+            if (
+                roughness == "high"
+                and rng.random() < CONFLICT_SECOND_ELEMENT_CHANCE
+            ):
+                secondary = _pick_distinct(primary, pack.rough, rng=rng)
+        else:
+            primary, category = _pick_non_taunt_conflict_material(
+                pack,
+                roughness=roughness,
+                rng=rng,
+            )
+            suppress_extra_taunt = True
+
+        verdict = verdict_engine.choose_verdict(
+            conversation_mode,
+            taunt_already_selected=taunt_selected,
+            rng=rng,
+        )
 
     else:
         category_pools = [
@@ -109,6 +157,8 @@ def choose_voice_material(
         primary=primary,
         secondary=secondary,
         category=category,
+        verdict=verdict,
+        suppress_extra_taunt=suppress_extra_taunt,
     )
 
 
@@ -140,6 +190,23 @@ def build_voice_instruction(material: VoiceMaterial) -> str:
             "Допустимый второй элемент ТОГО ЖЕ пакета: "
             + repr(material.secondary)
             + "."
+        )
+
+    if material.suppress_extra_taunt:
+        lines.append(
+            "В ЭТОМ ответе не добавляй отдельную насмешку, taunt или второй добивающий панч. "
+            "Можно быть грубым, матерным и резким по смыслу, но после основного ответа остановись."
+        )
+    elif material.category in {"taunt", "comeback"}:
+        lines.append(
+            "В этом ответе разрешён максимум ОДИН короткий подкол. После него не дожимай человека второй насмешкой."
+        )
+
+    if material.verdict:
+        lines.append(
+            "В самом конце добавь ОДИН короткий человеческий хвост-вердикт: "
+            + repr(material.verdict)
+            + ". Не объясняй его и ничего не добавляй после него. Это не второй taunt."
         )
 
     lines.append(
