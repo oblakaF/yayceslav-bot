@@ -3377,8 +3377,6 @@ async def perform_web_search(
 
     message = update.effective_message
 
-    message = update.effective_message
-
     if (
         not message
         or not update.effective_chat
