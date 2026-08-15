@@ -36,8 +36,20 @@ _COMPLEX_RE = re.compile(
     re.IGNORECASE,
 )
 
-_EXPLAIN_RE = re.compile(
-    r"\b(?:объясни\w*|почему|каким\s+образом|как\s+работает|что\s+такое)\b",
+_EXPLICIT_EXPLAIN_RE = re.compile(
+    r"\b(?:объясни\w*|разъясни\w*|растолкуй\w*|разбери\w*)\b",
+    re.IGNORECASE,
+)
+
+_SUBSTANTIVE_QUESTION_RE = re.compile(
+    r"\b(?:почему|каким\s+образом|как\s+работает|что\s+такое|"
+    r"что\s+думаешь|как\s+считаешь|зачем|стоит\s+ли)\b",
+    re.IGNORECASE,
+)
+
+_FAST_STYLE_RE = re.compile(
+    r"\b(?:прожарь\w*|мемн\w*\s+подпис|коротк\w*\s+подкол|"
+    r"плохой\s+совет|одна[-–— ]две\s+строк)\b",
     re.IGNORECASE,
 )
 
@@ -76,8 +88,8 @@ def choose_thinking_level(
 
     Rules:
     - explicit validated level always wins;
-    - search/analysis/debate/deep explanation => medium;
-    - short casual/banter/simple messages => minimal;
+    - search/analysis/debate/explicit explanation => medium;
+    - short casual/banter/simple style tasks => minimal;
     - ordinary substantive chat => low.
     """
 
@@ -91,14 +103,16 @@ def choose_thinking_level(
     if not text:
         return THINKING_LOW
 
-    if _COMPLEX_RE.search(text):
+    if _COMPLEX_RE.search(text) or _EXPLICIT_EXPLAIN_RE.search(text):
         return THINKING_MEDIUM
 
-    # Short explanatory questions still benefit from a little reasoning.
-    if _EXPLAIN_RE.search(text):
+    if _FAST_STYLE_RE.search(text):
+        return THINKING_MINIMAL
+
+    if _SUBSTANTIVE_QUESTION_RE.search(text):
         return (
             THINKING_MEDIUM
-            if len(text) >= 260
+            if len(text) >= 320
             else THINKING_LOW
         )
 
