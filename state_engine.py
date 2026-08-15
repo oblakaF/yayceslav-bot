@@ -47,6 +47,8 @@ class _ChatState:
     argumentative_marked_at: float = 0.0
     annoyed_marked_at: float = 0.0
     argumentative_marked_at: float = 0.0
+    annoyed_marked_at: float = 0.0
+    argumentative_marked_at: float = 0.0
 
 
 _CHAT_STATE: dict[int, _ChatState] = {}
@@ -70,6 +72,7 @@ def mark_annoyed(chat_id: int, *, now: float | None = None) -> None:
     entry.annoyed_marked_at = current
     entry.annoyed_marked_at = current
     entry.annoyed_marked_at = current
+    entry.annoyed_marked_at = current
 
 
 def mark_argumentative(chat_id: int, *, now: float | None = None) -> None:
@@ -79,6 +82,7 @@ def mark_argumentative(chat_id: int, *, now: float | None = None) -> None:
         entry.argumentative_until,
         current + ARGUMENTATIVE_DURATION_SECONDS,
     )
+    entry.argumentative_marked_at = current
     entry.argumentative_marked_at = current
     entry.argumentative_marked_at = current
     entry.argumentative_marked_at = current
