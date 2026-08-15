@@ -3,6 +3,12 @@
 #
 # Выбор кандидата отдельно от SQLite/Telegram, чтобы алгоритм был
 # тестируемым. Персистентность и отправка находятся в bot.py.
+#
+# V2 compatibility bridge:
+# bot.py исторически импортирует JOKE_TITLES из vocabulary.py.
+# Этот модуль загружается РАНЬШЕ этого импорта, поэтому здесь мы
+# заменяем активный legacy-пул на чистые V2-пулы из title_pools.py.
+# Старые уже сохранённые current_title в SQLite не меняются.
 # ============================================================
 
 from __future__ import annotations
@@ -12,8 +18,20 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable, Mapping
 
+import title_pools
+import vocabulary as _legacy_vocabulary
+
 
 DAILY_TITLE_START_HOUR_MSK = 18
+
+# Единственный активный источник титулов в V2.
+TITLE_POOLS = title_pools.TITLE_POOLS
+ALL_TITLES = title_pools.ALL_TITLES
+
+# Подменяем только активные экспортируемые пулы. Старые именованные
+# константы V1 внутри vocabulary.py больше не участвуют в выдаче V2.
+_legacy_vocabulary.JOKE_TITLE_CATEGORIES = TITLE_POOLS
+_legacy_vocabulary.JOKE_TITLES = ALL_TITLES
 
 
 @dataclass(frozen=True)
@@ -77,6 +95,19 @@ def choose_candidate(
     # Не превращаем титул в награду «кто больше всех пишет»:
     # активность только даёт право участвовать, затем выбор равновероятный.
     return rng.choice(candidates)
+
+
+def pick_title(
+    previous_title: str | None = None,
+    *,
+    rng=random,
+) -> str:
+    """Публичный V2-picker: личность -> один из её 10 титулов."""
+
+    return title_pools.pick_title(
+        previous_title,
+        rng=rng,
+    )
 
 
 def format_daily_title_message(
