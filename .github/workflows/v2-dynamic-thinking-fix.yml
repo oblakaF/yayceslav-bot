@@ -1,0 +1,40 @@
+name: V2 dynamic thinking latency fix
+
+on:
+  push:
+    branches:
+      - fix/v2-dynamic-thinking-latency
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    if: github.event.head_commit.message == 'Run dynamic thinking latency fix'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v2-dynamic-thinking-latency
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply runtime patch
+        run: python tools/apply_dynamic_thinking_runtime.py
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Compile
+        run: python -m py_compile bot.py thinking_engine.py personality.py intent.py humor_engine.py vocabulary.py style_engine.py voice_packs.py voice_runtime.py historical_packs.py social_engine.py aggression_engine.py reaction_engine.py passive_engine.py daily_title_engine.py state_engine.py title_pools.py
+      - name: Test
+        run: pytest -q
+      - name: Commit tested runtime
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot.py thinking_engine.py .github/workflows/v2-ci.yml tests/test_thinking_engine.py tests/test_v2_dynamic_thinking_runtime.py
+          git commit -m "Use dynamic Gemini thinking to reduce latency"
+          git push origin HEAD:fix/v2-dynamic-thinking-latency
