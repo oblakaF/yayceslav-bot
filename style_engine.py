@@ -21,6 +21,9 @@ VOICE_PACK_BLAT = "blat"
 VOICE_PACK_OPERATIVE = "operative"
 VOICE_PACK_BATTLE_2017 = "battle_2017"
 VOICE_PACK_POST_IRONY = "post_irony"
+VOICE_PACK_RUNET_2007 = "runet_2007"
+VOICE_PACK_RUNET_2012_2016 = "runet_2012_2016"
+VOICE_PACK_LAN_2000S = "lan_2000s"
 
 VOICE_PACKS = (
     VOICE_PACK_CLASSIC,
@@ -31,6 +34,9 @@ VOICE_PACKS = (
     VOICE_PACK_OPERATIVE,
     VOICE_PACK_BATTLE_2017,
     VOICE_PACK_POST_IRONY,
+    VOICE_PACK_RUNET_2007,
+    VOICE_PACK_RUNET_2012_2016,
+    VOICE_PACK_LAN_2000S,
 )
 
 # Пользовательские character-настройки, которые должны жёстко
@@ -54,6 +60,9 @@ _VOICE_PACK_WEIGHTS_BY_MODE: dict[str, dict[str, float]] = {
         VOICE_PACK_OPERATIVE: 0.03,
         VOICE_PACK_BATTLE_2017: 0.06,
         VOICE_PACK_POST_IRONY: 0.06,
+        VOICE_PACK_RUNET_2007: 0.025,
+        VOICE_PACK_RUNET_2012_2016: 0.035,
+        VOICE_PACK_LAN_2000S: 0.04,
     },
     "greeting": {
         VOICE_PACK_CLASSIC: 0.20,
@@ -64,6 +73,9 @@ _VOICE_PACK_WEIGHTS_BY_MODE: dict[str, dict[str, float]] = {
         VOICE_PACK_OPERATIVE: 0.03,
         VOICE_PACK_BATTLE_2017: 0.05,
         VOICE_PACK_POST_IRONY: 0.05,
+        VOICE_PACK_RUNET_2007: 0.03,
+        VOICE_PACK_RUNET_2012_2016: 0.04,
+        VOICE_PACK_LAN_2000S: 0.05,
     },
     "challenge": {
         VOICE_PACK_CLASSIC: 0.08,
@@ -74,6 +86,9 @@ _VOICE_PACK_WEIGHTS_BY_MODE: dict[str, dict[str, float]] = {
         VOICE_PACK_OPERATIVE: 0.05,
         VOICE_PACK_BATTLE_2017: 0.11,
         VOICE_PACK_POST_IRONY: 0.10,
+        VOICE_PACK_RUNET_2007: 0.025,
+        VOICE_PACK_RUNET_2012_2016: 0.04,
+        VOICE_PACK_LAN_2000S: 0.06,
     },
     "hostile": {
         VOICE_PACK_CLASSIC: 0.04,
@@ -84,6 +99,9 @@ _VOICE_PACK_WEIGHTS_BY_MODE: dict[str, dict[str, float]] = {
         VOICE_PACK_OPERATIVE: 0.07,
         VOICE_PACK_BATTLE_2017: 0.14,
         VOICE_PACK_POST_IRONY: 0.10,
+        VOICE_PACK_RUNET_2007: 0.02,
+        VOICE_PACK_RUNET_2012_2016: 0.03,
+        VOICE_PACK_LAN_2000S: 0.06,
     },
     "serious": {
         VOICE_PACK_CLASSIC: 1.0,

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import historical_packs
 import vocabulary
 
 
@@ -577,6 +578,29 @@ POST_IRONY = VoicePack(
 )
 
 
+def _historical_pack(name: str, data: dict[str, tuple[str, ...]]) -> VoicePack:
+    return VoicePack(
+        name=name,
+        slang=tuple(data.get("slang", ())),
+        addresses=tuple(data.get("addresses", ())),
+        greetings=tuple(data.get("greetings", ())),
+        taunts=tuple(data.get("taunts", ())),
+        rough=tuple(data.get("rough", ())),
+        flex=tuple(data.get("flex", ())),
+        comebacks=tuple(data.get("comebacks", ())),
+        wisdoms=tuple(data.get("wisdoms", ())),
+        grumbling=tuple(data.get("grumbling", ())),
+        praise=tuple(data.get("praise", ())),
+        comparisons=tuple(data.get("comparisons", ())),
+        drops=tuple(data.get("drops", ())),
+    )
+
+
+RUNET_2007 = _historical_pack("runet_2007", historical_packs.RUNET_2007)
+RUNET_2012_2016 = _historical_pack("runet_2012_2016", historical_packs.RUNET_2012_2016)
+LAN_2000S = _historical_pack("lan_2000s", historical_packs.LAN_2000S)
+
+
 VOICE_PACKS = {
     pack.name: pack
     for pack in (
@@ -588,6 +612,9 @@ VOICE_PACKS = {
         OPERATIVE,
         BATTLE_2017,
         POST_IRONY,
+        RUNET_2007,
+        RUNET_2012_2016,
+        LAN_2000S,
     )
 }
 
