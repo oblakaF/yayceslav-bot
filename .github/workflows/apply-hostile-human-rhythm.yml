@@ -1,0 +1,40 @@
+name: Apply hostile human rhythm
+
+on:
+  push:
+    branches:
+      - fix/human-simple-hostile-replies
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message == 'Run hostile human rhythm patch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/human-simple-hostile-replies
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply patch
+        run: python tools/apply_hostile_human_rhythm.py
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Compile
+        run: python -m py_compile bot.py voice_runtime.py humor_engine.py verdict_engine.py
+      - name: Test
+        run: pytest -q
+      - name: Commit tested runtime
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot.py voice_runtime.py tests/test_hostile_human_rhythm.py
+          git commit -m "Make hostile replies more human and layered"
+          git push origin HEAD:fix/human-simple-hostile-replies
