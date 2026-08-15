@@ -56,7 +56,7 @@ BOT_OWNER_ID = (
     else 0
 )
 
-MODEL_NAME = "gemini-3.1-flash-lite"
+MODEL_NAME = "gemini-3.6-flash"
 # ============================================================
 # ЗАЩИТА ОТ СПАМА И ЛИМИТЫ
 # ============================================================
@@ -1865,7 +1865,9 @@ async def ask_gemini(
                         config=types.GenerateContentConfig(
                             system_instruction=current_instruction,
                             max_output_tokens=max_output_tokens,
-                            temperature=0.9,
+                            thinking_config=types.ThinkingConfig(
+                                thinking_level="medium",
+                            ),
                         ),
                     ),
                     timeout=90,
