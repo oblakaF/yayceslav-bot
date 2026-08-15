@@ -12,6 +12,8 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Mapping, MutableMapping, Sequence
 
+import state_engine
+
 
 VOICE_PACK_CLASSIC = "classic"
 VOICE_PACK_YOUTH = "youth"
@@ -123,6 +125,7 @@ class ResponseLengthContext:
     message_intent: str = "unknown"
     response_preference: str = "normal"
     serious_topic: bool = False
+    character_state: str = "normal"
 
 
 @dataclass(frozen=True)
@@ -361,6 +364,12 @@ def choose_response_length(
 
     weights = _base_length_weights(ctx)
     _apply_preference_bias(weights, ctx.response_preference)
+
+    for category, multiplier in state_engine.length_weight_multipliers(
+        ctx.character_state
+    ).items():
+        if category in weights:
+            weights[category] *= multiplier
 
     history = _LENGTH_HISTORY[chat_id]
     _apply_history_bias(weights, tuple(history))

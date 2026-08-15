@@ -12,6 +12,8 @@ import re
 import time
 from dataclasses import dataclass
 
+import state_engine
+
 
 _STRONG_CLAIM_RE = re.compile(
     r"\b(?:точно|очевидно|сто\s*процентов|100\s*%|без\s+вариантов|"
@@ -59,6 +61,7 @@ class AggressionContext:
     recent_messages: tuple[str, ...] = ()
     chat_id: int = 0
     user_id: int = 0
+    character_state: str = "normal"
 
 
 @dataclass(frozen=True)
@@ -118,7 +121,9 @@ def _base_probability(ctx: AggressionContext) -> float:
     if ctx.relationship_level >= 4:
         chance += 0.04
 
-    return min(chance, 0.48)
+    chance += state_engine.aggression_probability_bonus(ctx.character_state)
+
+    return min(chance, 0.55)
 
 
 def decide_aggression(

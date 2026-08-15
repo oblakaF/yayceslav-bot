@@ -45,6 +45,7 @@ import intent
 import passive_engine
 import reaction_engine
 import social_engine
+import state_engine
 import style_engine
 import voice_runtime
 from personality import (
@@ -2579,6 +2580,14 @@ def build_full_system_instruction(
             if social_instruction:
                 current_instruction += "\n\n" + social_instruction
 
+        character_state = state_engine.resolve_state(
+            chat_id if chat_id is not None else 0,
+            conversation_mode=conversation_mode,
+        )
+        current_instruction += state_engine.build_state_instruction(
+            character_state
+        )
+
         voice_pack = style_engine.choose_voice_pack(
             style_engine.VoicePackContext(
                 conversation_mode=conversation_mode,
@@ -2594,6 +2603,7 @@ def build_full_system_instruction(
                 message_intent=resolved_intent,
                 response_preference=str(settings.get("response_length", "normal")),
                 serious_topic=(conversation_mode == "serious"),
+                character_state=character_state,
             ),
         )
         voice_material = voice_runtime.choose_voice_material(
@@ -2620,6 +2630,7 @@ def build_full_system_instruction(
             )
             if fatigue_instruction:
                 current_instruction += fatigue_instruction
+                state_engine.mark_annoyed(chat_id)
 
         humor_ctx = humor_engine.HumorContext(
             conversation_mode=conversation_mode,
@@ -2679,6 +2690,7 @@ def build_full_system_instruction(
                 recent_messages=tuple(recent_messages or ()),
                 chat_id=tracker_chat_id,
                 user_id=user_id or 0,
+                character_state=character_state,
             )
         )
         aggression_instruction = aggression_engine.build_aggression_instruction(
@@ -2686,6 +2698,7 @@ def build_full_system_instruction(
         )
         if aggression_instruction:
             current_instruction += aggression_instruction
+            state_engine.mark_argumentative(tracker_chat_id)
 
     if voice_style:
         current_instruction += (
