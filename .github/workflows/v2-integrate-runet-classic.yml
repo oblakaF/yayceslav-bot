@@ -1,0 +1,108 @@
+name: Integrate classic Runet as isolated V2 pack
+
+on:
+  push:
+    branches:
+      - feature/human-yayceslav-v2
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.event.head_commit.message == 'Integrate classic Runet as isolated V2 pack'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/human-yayceslav-v2
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch isolated Runet classic pack
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 match, got {count}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          hp = Path("historical_packs.py")
+          text = hp.read_text(encoding="utf-8")
+          addition = '''\n\nRUNET_CLASSIC = {\n    "slang": tuple(vocabulary.RUSSIAN_INTERNET_CLASSICS),\n    "addresses": (\n        "старожил форума",\n        "юзер",\n        "модератор мыслей",\n        "олдфаг",\n        "форумчанин",\n    ),\n    "greetings": (\n        "Тема поднята из архива. Что обсуждаем?",\n        "Плюс в карму за появление. Теперь по делу.",\n        "Старожил на месте. Выкладывай тему.",\n        "Форум жив, модератор условно трезв. Говори.",\n    ),\n    "taunts": (\n        "Баян нашли, а аргумент всё ещё ищем.",\n        "Тема достойна отдельной ветки, но мысль пока на модерации.",\n        "Плюс в карму за уверенность, минус за проверку фактов.",\n        "Такое дно пробивали ещё во времена диалапа.",\n        "Оффтопа много, ответа мало.",\n        "Старый форум за такое отправил бы перечитать первый пост.",\n    ),\n    "rough": (\n        "баян",\n        "оффтоп",\n        "зашквар",\n        "фейл",\n        "херня",\n        "дичь",\n    ),\n    "flex": (\n        "Плюс в карму Яйцеславу, тема закрыта.",\n        "Модерация здравого смысла завершена успешно.",\n        "Старожилы одобряют. Источник — я и здравый смысл.",\n        "Форум может расходиться, ответ уже дан.",\n    ),\n    "comebacks": (\n        "Оффтоп принят, аргумент отклонён.",\n        "Баян оскорблений. Версия без нового контента.",\n        "Садись, два по форумной дискуссии. Давай факты.",\n        "Модератор уже в пути, а смысл всё ещё нет.",\n        "Ты ветку перепутал: тут аргументы, не крики.",\n    ),\n    "wisdoms": (\n        "Плюс в карму не исправляет минус в логике.",\n        "Не всякая старая тема баян, но всякий баян когда-то был новой темой.",\n        "Сначала прочитай первый пост, потом спасай интернет.",\n        "Старожил молчит не потому, что согласен, а потому что уже видел этот спор.",\n    ),\n    "grumbling": (\n        "Опять ветку разнесло в оффтоп.",\n        "Модератор мыслей устал переносить сообщения вручную.",\n        "Форум стареет, споры остаются те же.",\n        "Диалап бы уже оборвал соединение из жалости.",\n    ),\n    "praise": (\n        "Плюс в карму без сарказма. Хорошо сказано.",\n        "Годный пост, старожилы одобряют.",\n        "Вот это по теме, без оффтопа.",\n        "Редкий небаянный аргумент. Засчитано.",\n    ),\n    "drops": (\n        "Тема поднята. Причина не установлена.",\n        "Плюс в карму всем, кто сейчас молчит по делу.",\n        "Модератор наблюдает. Формально это я.",\n        "Оффтоп пока в пределах исторической нормы.",\n    ),\n}\n'''
+          if "RUNET_CLASSIC = {" not in text:
+              hp.write_text(text + addition, encoding="utf-8")
+
+          replace_once(
+              "style_engine.py",
+              'VOICE_PACK_LAN_2000S = "lan_2000s"\n',
+              'VOICE_PACK_LAN_2000S = "lan_2000s"\nVOICE_PACK_RUNET_CLASSIC = "runet_classic"\n',
+              "runet classic constant",
+          )
+          replace_once(
+              "style_engine.py",
+              '''    VOICE_PACK_LAN_2000S,\n)\n''',
+              '''    VOICE_PACK_LAN_2000S,\n    VOICE_PACK_RUNET_CLASSIC,\n)\n''',
+              "runet classic tuple",
+          )
+
+          # Add a small weight independently in all non-serious modes.
+          p = Path("style_engine.py")
+          text = p.read_text(encoding="utf-8")
+          anchors = [
+              ('"normal"', '        VOICE_PACK_LAN_2000S: 0.04,\n', '        VOICE_PACK_LAN_2000S: 0.04,\n        VOICE_PACK_RUNET_CLASSIC: 0.025,\n'),
+              ('"greeting"', '        VOICE_PACK_LAN_2000S: 0.05,\n', '        VOICE_PACK_LAN_2000S: 0.05,\n        VOICE_PACK_RUNET_CLASSIC: 0.03,\n'),
+              ('"challenge"', '        VOICE_PACK_LAN_2000S: 0.06,\n', '        VOICE_PACK_LAN_2000S: 0.06,\n        VOICE_PACK_RUNET_CLASSIC: 0.025,\n'),
+              ('"hostile"', '        VOICE_PACK_LAN_2000S: 0.06,\n', '        VOICE_PACK_LAN_2000S: 0.06,\n        VOICE_PACK_RUNET_CLASSIC: 0.02,\n'),
+          ]
+          for mode, anchor, replacement in anchors:
+              start = text.index(f"    {mode}: {{")
+              end = text.index("    },", start) + 7
+              section = text[start:end]
+              if section.count(anchor) != 1:
+                  raise SystemExit(f"{mode}: runet classic weight anchor mismatch")
+              section = section.replace(anchor, replacement, 1)
+              text = text[:start] + section + text[end:]
+          p.write_text(text, encoding="utf-8")
+
+          replace_once(
+              "voice_packs.py",
+              '''LAN_2000S = _historical_pack("lan_2000s", historical_packs.LAN_2000S)\n''',
+              '''LAN_2000S = _historical_pack("lan_2000s", historical_packs.LAN_2000S)\nRUNET_CLASSIC = _historical_pack("runet_classic", historical_packs.RUNET_CLASSIC)\n''',
+              "runet classic object",
+          )
+          replace_once(
+              "voice_packs.py",
+              '''        LAN_2000S,\n    )\n}\n''',
+              '''        LAN_2000S,\n        RUNET_CLASSIC,\n    )\n}\n''',
+              "runet classic registry",
+          )
+
+          test = Path("tests/test_historical_voice_packs.py")
+          t = test.read_text(encoding="utf-8")
+          addition = '''\n\ndef test_russian_internet_classics_are_wired_as_own_pack():\n    assert "runet_classic" in style_engine.VOICE_PACKS\n    pack = voice_packs.VOICE_PACKS["runet_classic"]\n    assert pack.slang\n    assert any("карму" in item or "форум" in item or "баян" in item for item in pack.slang)\n\n\ndef test_runet_classic_is_not_merged_into_runet_2007():\n    classic = voice_packs.VOICE_PACKS["runet_classic"]\n    era_2007 = voice_packs.VOICE_PACKS["runet_2007"]\n    assert classic is not era_2007\n    assert classic.name != era_2007.name\n'''
+          if "test_russian_internet_classics_are_wired_as_own_pack" not in t:
+              test.write_text(t + addition, encoding="utf-8")
+          PY
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Validate
+        run: |
+          python -m py_compile historical_packs.py style_engine.py voice_packs.py
+          pytest -q
+      - name: Commit tested code
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add historical_packs.py style_engine.py voice_packs.py tests/test_historical_voice_packs.py
+          git commit -m "Wire classic Runet as isolated V2 voice pack"
+          git push origin HEAD:feature/human-yayceslav-v2
