@@ -15,9 +15,12 @@ def test_member_profile_reaches_social_instruction():
 
 def test_relationship_level_is_passed_to_humor_context(monkeypatch):
     captured = {}
-    def fake_decide(ctx, chat_id):
+
+    def fake_decide(ctx, chat_id, **kwargs):
+        del chat_id, kwargs
         captured["relationship_level"] = ctx.relationship_level
         return humor_engine.HumorDecision(humor_allowed=False)
+
     monkeypatch.setattr(bot.humor_engine, "decide_humor", fake_decide)
     monkeypatch.setattr(bot.aggression_engine, "decide_aggression", lambda ctx: aggression_engine.AggressionDecision())
     bot.build_full_system_instruction(
