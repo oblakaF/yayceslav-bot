@@ -28,12 +28,12 @@ jobs:
           if b"async def gemini_version_command(" in data:
               raise SystemExit("gemini_version_command already exists")
 
-          crlf = b"\r\n" if b"\r\n" in data else b"\n"
+          nl = b"\r\n" if b"\r\n" in data else b"\n"
 
           startup_marker = (
-              b"# ============================================================" + crlf
-              + "# ЗАПУСК БОТА".encode("utf-8") + crlf
-              + b"# ============================================================" + crlf
+              b"# ============================================================" + nl
+              + "# ЗАПУСК БОТА".encode("utf-8") + nl
+              + b"# ============================================================" + nl
           )
           if data.count(startup_marker) != 1:
               raise SystemExit(f"Expected one startup marker, found {data.count(startup_marker)}")
@@ -66,36 +66,12 @@ jobs:
                       timeout=20,
                   )
 
-                  api_name = getattr(
-                      model_info,
-                      \"name\",
-                      None,
-                  ) or \"—\"
-                  display_name = getattr(
-                      model_info,
-                      \"display_name\",
-                      None,
-                  ) or \"—\"
-                  version = getattr(
-                      model_info,
-                      \"version\",
-                      None,
-                  ) or \"—\"
-                  thinking = getattr(
-                      model_info,
-                      \"thinking\",
-                      None,
-                  )
-                  input_limit = getattr(
-                      model_info,
-                      \"input_token_limit\",
-                      None,
-                  )
-                  output_limit = getattr(
-                      model_info,
-                      \"output_token_limit\",
-                      None,
-                  )
+                  api_name = getattr(model_info, \"name\", None) or \"—\"
+                  display_name = getattr(model_info, \"display_name\", None) or \"—\"
+                  version = getattr(model_info, \"version\", None) or \"—\"
+                  thinking = getattr(model_info, \"thinking\", None)
+                  input_limit = getattr(model_info, \"input_token_limit\", None)
+                  output_limit = getattr(model_info, \"output_token_limit\", None)
 
                   await message.reply_text(
                       \"Gemini API: OK\\n\"
@@ -122,41 +98,29 @@ jobs:
 
 
           """
-          function_bytes = function_text.replace("\n", crlf.decode()).encode("utf-8")
+          function_bytes = function_text.replace("\n", nl.decode()).encode("utf-8")
           data = data.replace(startup_marker, function_bytes + startup_marker, 1)
 
-          old_handler = """    application.add_handler(
-              CommandHandler(
-                  \"stats\",
-                  stats_command,
-              )
+          settings_handler = (
+              b"    application.add_handler(" + nl
+              + b"        CommandHandler(" + nl
+              + b"            \"settings\"," + nl
+              + b"            settings_command," + nl
+              + b"        )" + nl
+              + b"    )" + nl
           )
-          """.replace("\n", crlf.decode()).encode("utf-8")
+          if data.count(settings_handler) != 1:
+              raise SystemExit(f"Expected one settings handler, found {data.count(settings_handler)}")
 
-          new_handler = """    application.add_handler(
-              CommandHandler(
-                  \"stats\",
-                  stats_command,
-              )
+          version_handler = (
+              b"    application.add_handler(" + nl
+              + b"        CommandHandler(" + nl
+              + b"            \"geminiversion\"," + nl
+              + b"            gemini_version_command," + nl
+              + b"        )" + nl
+              + b"    )" + nl
           )
-              application.add_handler(
-              CommandHandler(
-                  \"geminiversion\",
-                  gemini_version_command,
-              )
-          )
-          """.replace("\n", crlf.decode()).encode("utf-8")
-
-          # Correct accidental indentation in the new handler block before insertion.
-          new_handler = new_handler.replace(
-              (crlf + b"        application.add_handler("),
-              (crlf + b"    application.add_handler("),
-              1,
-          )
-
-          if data.count(old_handler) != 1:
-              raise SystemExit(f"Expected one stats handler, found {data.count(old_handler)}")
-          data = data.replace(old_handler, new_handler, 1)
+          data = data.replace(settings_handler, version_handler + settings_handler, 1)
 
           path.write_bytes(data)
 
