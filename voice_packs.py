@@ -599,6 +599,7 @@ def _historical_pack(name: str, data: dict[str, tuple[str, ...]]) -> VoicePack:
 RUNET_2007 = _historical_pack("runet_2007", historical_packs.RUNET_2007)
 RUNET_2012_2016 = _historical_pack("runet_2012_2016", historical_packs.RUNET_2012_2016)
 LAN_2000S = _historical_pack("lan_2000s", historical_packs.LAN_2000S)
+RUNET_CLASSIC = _historical_pack("runet_classic", historical_packs.RUNET_CLASSIC)
 
 
 VOICE_PACKS = {
@@ -615,6 +616,7 @@ VOICE_PACKS = {
         RUNET_2007,
         RUNET_2012_2016,
         LAN_2000S,
+        RUNET_CLASSIC,
     )
 }
 

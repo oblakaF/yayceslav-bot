@@ -44,3 +44,17 @@ def test_historical_weights_exist_only_as_independent_choices():
     assert normal["runet_2007"] > 0
     assert normal["runet_2012_2016"] > 0
     assert normal["lan_2000s"] > 0
+
+
+def test_russian_internet_classics_are_wired_as_own_pack():
+    assert "runet_classic" in style_engine.VOICE_PACKS
+    pack = voice_packs.VOICE_PACKS["runet_classic"]
+    assert pack.slang
+    assert any("карму" in item or "форум" in item or "баян" in item for item in pack.slang)
+
+
+def test_runet_classic_is_not_merged_into_runet_2007():
+    classic = voice_packs.VOICE_PACKS["runet_classic"]
+    era_2007 = voice_packs.VOICE_PACKS["runet_2007"]
+    assert classic is not era_2007
+    assert classic.name != era_2007.name

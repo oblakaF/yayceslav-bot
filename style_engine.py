@@ -26,6 +26,7 @@ VOICE_PACK_POST_IRONY = "post_irony"
 VOICE_PACK_RUNET_2007 = "runet_2007"
 VOICE_PACK_RUNET_2012_2016 = "runet_2012_2016"
 VOICE_PACK_LAN_2000S = "lan_2000s"
+VOICE_PACK_RUNET_CLASSIC = "runet_classic"
 
 VOICE_PACKS = (
     VOICE_PACK_CLASSIC,
@@ -39,6 +40,7 @@ VOICE_PACKS = (
     VOICE_PACK_RUNET_2007,
     VOICE_PACK_RUNET_2012_2016,
     VOICE_PACK_LAN_2000S,
+    VOICE_PACK_RUNET_CLASSIC,
 )
 
 # Пользовательские character-настройки, которые должны жёстко
@@ -65,6 +67,7 @@ _VOICE_PACK_WEIGHTS_BY_MODE: dict[str, dict[str, float]] = {
         VOICE_PACK_RUNET_2007: 0.025,
         VOICE_PACK_RUNET_2012_2016: 0.035,
         VOICE_PACK_LAN_2000S: 0.04,
+        VOICE_PACK_RUNET_CLASSIC: 0.025,
     },
     "greeting": {
         VOICE_PACK_CLASSIC: 0.20,
@@ -78,6 +81,7 @@ _VOICE_PACK_WEIGHTS_BY_MODE: dict[str, dict[str, float]] = {
         VOICE_PACK_RUNET_2007: 0.03,
         VOICE_PACK_RUNET_2012_2016: 0.04,
         VOICE_PACK_LAN_2000S: 0.05,
+        VOICE_PACK_RUNET_CLASSIC: 0.03,
     },
     "challenge": {
         VOICE_PACK_CLASSIC: 0.08,
@@ -91,6 +95,7 @@ _VOICE_PACK_WEIGHTS_BY_MODE: dict[str, dict[str, float]] = {
         VOICE_PACK_RUNET_2007: 0.025,
         VOICE_PACK_RUNET_2012_2016: 0.04,
         VOICE_PACK_LAN_2000S: 0.06,
+        VOICE_PACK_RUNET_CLASSIC: 0.025,
     },
     "hostile": {
         VOICE_PACK_CLASSIC: 0.04,
@@ -104,6 +109,7 @@ _VOICE_PACK_WEIGHTS_BY_MODE: dict[str, dict[str, float]] = {
         VOICE_PACK_RUNET_2007: 0.02,
         VOICE_PACK_RUNET_2012_2016: 0.03,
         VOICE_PACK_LAN_2000S: 0.06,
+        VOICE_PACK_RUNET_CLASSIC: 0.02,
     },
     "serious": {
         VOICE_PACK_CLASSIC: 1.0,
