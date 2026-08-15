@@ -10,15 +10,16 @@ def test_serious_topic_gets_no_humor_instruction():
     assert "Дополнительная подсказка юмора" not in instruction
 
 
-def test_hostile_message_gets_banter_instruction(monkeypatch):
+def test_hostile_message_does_not_force_second_banter_layer(monkeypatch):
     monkeypatch.setattr(humor_engine.random, "random", lambda: 0.99)
     instruction = bot.build_full_system_instruction(
         "ты мудак",
         chat_id=5002,
         chat_type="group",
     )
-    assert "banter_hostile" in instruction
-    assert "Стратегия ответа" in instruction
+    assert "V2 character state: hostile_response" in instruction
+    assert "banter_hostile" not in instruction
+    assert "Дополнительная поведенческая подсказка (тип: banter_hostile)" not in instruction
 
 
 def test_third_party_insult_does_not_get_banter_instruction():
