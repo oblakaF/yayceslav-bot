@@ -1,0 +1,417 @@
+# ============================================================
+# YAICESLAV V2 STYLE ENGINE
+#
+# Один ответ = один voice pack. Здесь же выбирается динамическая
+# длина ответа, чтобы бот не выдавал одинаковую стену текста.
+# ============================================================
+
+from __future__ import annotations
+
+import random
+from collections import defaultdict, deque
+from dataclasses import dataclass
+from typing import Mapping, MutableMapping, Sequence
+
+
+VOICE_PACK_CLASSIC = "classic"
+VOICE_PACK_YOUTH = "youth"
+VOICE_PACK_SKOOF = "skoof"
+VOICE_PACK_OLD_RUSSIAN = "old_russian"
+VOICE_PACK_BLAT = "blat"
+VOICE_PACK_OPERATIVE = "operative"
+VOICE_PACK_BATTLE_2017 = "battle_2017"
+VOICE_PACK_POST_IRONY = "post_irony"
+
+VOICE_PACKS = (
+    VOICE_PACK_CLASSIC,
+    VOICE_PACK_YOUTH,
+    VOICE_PACK_SKOOF,
+    VOICE_PACK_OLD_RUSSIAN,
+    VOICE_PACK_BLAT,
+    VOICE_PACK_OPERATIVE,
+    VOICE_PACK_BATTLE_2017,
+    VOICE_PACK_POST_IRONY,
+)
+
+# Пользовательские character-настройки, которые должны жёстко
+# фиксировать стиль. Скрытые пакеты (operative/battle/post-irony/blat)
+# сюда намеренно не входят: они являются редкими внутренними голосами.
+_FORCED_PACK_BY_CHARACTER = {
+    "rus": VOICE_PACK_OLD_RUSSIAN,
+    "professor": VOICE_PACK_CLASSIC,
+    "calm": VOICE_PACK_CLASSIC,
+}
+
+# Веса намеренно различаются по режимам. Они не являются вероятностью
+# вмешательства бота — только распределением стиля, когда ответ уже есть.
+_VOICE_PACK_WEIGHTS_BY_MODE: dict[str, dict[str, float]] = {
+    "normal": {
+        VOICE_PACK_CLASSIC: 0.28,
+        VOICE_PACK_YOUTH: 0.22,
+        VOICE_PACK_SKOOF: 0.18,
+        VOICE_PACK_OLD_RUSSIAN: 0.07,
+        VOICE_PACK_BLAT: 0.10,
+        VOICE_PACK_OPERATIVE: 0.03,
+        VOICE_PACK_BATTLE_2017: 0.06,
+        VOICE_PACK_POST_IRONY: 0.06,
+    },
+    "greeting": {
+        VOICE_PACK_CLASSIC: 0.20,
+        VOICE_PACK_YOUTH: 0.23,
+        VOICE_PACK_SKOOF: 0.20,
+        VOICE_PACK_OLD_RUSSIAN: 0.09,
+        VOICE_PACK_BLAT: 0.15,
+        VOICE_PACK_OPERATIVE: 0.03,
+        VOICE_PACK_BATTLE_2017: 0.05,
+        VOICE_PACK_POST_IRONY: 0.05,
+    },
+    "challenge": {
+        VOICE_PACK_CLASSIC: 0.08,
+        VOICE_PACK_YOUTH: 0.22,
+        VOICE_PACK_SKOOF: 0.16,
+        VOICE_PACK_OLD_RUSSIAN: 0.06,
+        VOICE_PACK_BLAT: 0.22,
+        VOICE_PACK_OPERATIVE: 0.05,
+        VOICE_PACK_BATTLE_2017: 0.11,
+        VOICE_PACK_POST_IRONY: 0.10,
+    },
+    "hostile": {
+        VOICE_PACK_CLASSIC: 0.04,
+        VOICE_PACK_YOUTH: 0.18,
+        VOICE_PACK_SKOOF: 0.15,
+        VOICE_PACK_OLD_RUSSIAN: 0.05,
+        VOICE_PACK_BLAT: 0.27,
+        VOICE_PACK_OPERATIVE: 0.07,
+        VOICE_PACK_BATTLE_2017: 0.14,
+        VOICE_PACK_POST_IRONY: 0.10,
+    },
+    "serious": {
+        VOICE_PACK_CLASSIC: 1.0,
+    },
+}
+
+
+@dataclass(frozen=True)
+class VoicePackContext:
+    conversation_mode: str = "normal"
+    selected_character: str = "classic"
+    serious_topic: bool = False
+
+
+@dataclass(frozen=True)
+class ResponseLengthContext:
+    user_text: str = ""
+    conversation_mode: str = "normal"
+    message_intent: str = "unknown"
+    response_preference: str = "normal"
+    serious_topic: bool = False
+
+
+@dataclass(frozen=True)
+class ResponseLengthPlan:
+    category: str
+    min_chars: int
+    max_chars: int
+    target_chars: int
+
+
+_LENGTH_RANGES = {
+    "micro": (45, 170),
+    "short": (120, 320),
+    "normal": (260, 600),
+    "long": (520, 950),
+}
+
+_LENGTH_HISTORY: dict[int, deque[str]] = defaultdict(
+    lambda: deque(maxlen=5)
+)
+
+_COMPLEX_MARKERS = (
+    "почему",
+    "объясни",
+    "разбери",
+    "сравни",
+    "проанализируй",
+    "подробно",
+    "пошагово",
+    "причины",
+    "варианты",
+    "как устроен",
+    "как работает",
+    "what is the difference",
+    "explain",
+    "compare",
+    "analyze",
+    "step by step",
+)
+
+_SIMPLE_MARKERS = (
+    "да или нет",
+    "кто это",
+    "что это",
+    "сколько",
+    "где",
+    "когда",
+    "норм?",
+    "нормально?",
+)
+
+
+def _weighted_choice(
+    weights: Mapping[str, float],
+    *,
+    rng=random,
+) -> str:
+    positive = [(key, max(0.0, float(value))) for key, value in weights.items()]
+    total = sum(weight for _, weight in positive)
+
+    if total <= 0:
+        return next(iter(weights))
+
+    marker = rng.random() * total
+    cumulative = 0.0
+
+    for key, weight in positive:
+        cumulative += weight
+        if marker <= cumulative:
+            return key
+
+    return positive[-1][0]
+
+
+def choose_voice_pack(
+    ctx: VoicePackContext,
+    *,
+    rng=random,
+) -> str:
+    """Выбирает ровно один взаимоисключающий речевой пакет."""
+
+    if ctx.serious_topic or ctx.conversation_mode == "serious":
+        return VOICE_PACK_CLASSIC
+
+    forced = _FORCED_PACK_BY_CHARACTER.get(ctx.selected_character)
+    if forced:
+        return forced
+
+    mode = ctx.conversation_mode
+    weights = dict(
+        _VOICE_PACK_WEIGHTS_BY_MODE.get(
+            mode,
+            _VOICE_PACK_WEIGHTS_BY_MODE["normal"],
+        )
+    )
+
+    # Chaos не создаёт новый стиль и не смешивает существующие — просто
+    # уменьшает шанс нейтрального classic в пользу характерных пакетов.
+    if ctx.selected_character == "chaos":
+        weights[VOICE_PACK_CLASSIC] = weights.get(VOICE_PACK_CLASSIC, 0.0) * 0.35
+        weights[VOICE_PACK_POST_IRONY] = weights.get(VOICE_PACK_POST_IRONY, 0.0) * 1.5
+        weights[VOICE_PACK_BATTLE_2017] = weights.get(VOICE_PACK_BATTLE_2017, 0.0) * 1.35
+        weights[VOICE_PACK_BLAT] = weights.get(VOICE_PACK_BLAT, 0.0) * 1.25
+
+    selected = _weighted_choice(weights, rng=rng)
+    if selected not in VOICE_PACKS:
+        return VOICE_PACK_CLASSIC
+    return selected
+
+
+def _looks_complex(text: str) -> bool:
+    lowered = text.lower().strip()
+    if len(lowered) >= 260:
+        return True
+    return any(marker in lowered for marker in _COMPLEX_MARKERS)
+
+
+def _looks_simple(text: str) -> bool:
+    lowered = text.lower().strip()
+    if not lowered:
+        return True
+    if len(lowered) <= 45:
+        return True
+    return any(marker in lowered for marker in _SIMPLE_MARKERS)
+
+
+def _base_length_weights(ctx: ResponseLengthContext) -> dict[str, float]:
+    if ctx.serious_topic or ctx.conversation_mode == "serious":
+        return {
+            "micro": 0.02,
+            "short": 0.13,
+            "normal": 0.52,
+            "long": 0.33,
+        }
+
+    if ctx.conversation_mode == "greeting":
+        return {
+            "micro": 0.62,
+            "short": 0.31,
+            "normal": 0.07,
+            "long": 0.00,
+        }
+
+    if ctx.conversation_mode in ("challenge", "hostile"):
+        return {
+            "micro": 0.34,
+            "short": 0.44,
+            "normal": 0.19,
+            "long": 0.03,
+        }
+
+    if ctx.message_intent in ("joke", "reaction", "small_talk"):
+        return {
+            "micro": 0.42,
+            "short": 0.42,
+            "normal": 0.14,
+            "long": 0.02,
+        }
+
+    if _looks_complex(ctx.user_text):
+        return {
+            "micro": 0.01,
+            "short": 0.10,
+            "normal": 0.43,
+            "long": 0.46,
+        }
+
+    if _looks_simple(ctx.user_text):
+        return {
+            "micro": 0.28,
+            "short": 0.47,
+            "normal": 0.22,
+            "long": 0.03,
+        }
+
+    return {
+        "micro": 0.09,
+        "short": 0.34,
+        "normal": 0.46,
+        "long": 0.11,
+    }
+
+
+def _apply_preference_bias(
+    weights: MutableMapping[str, float],
+    preference: str,
+) -> None:
+    if preference == "short":
+        weights["micro"] *= 1.6
+        weights["short"] *= 1.45
+        weights["normal"] *= 0.72
+        weights["long"] *= 0.35
+    elif preference == "detailed":
+        # detailed — это склонность, а не приказ писать стену текста.
+        weights["micro"] *= 0.55
+        weights["short"] *= 0.75
+        weights["normal"] *= 1.20
+        weights["long"] *= 1.55
+
+
+def _apply_history_bias(
+    weights: MutableMapping[str, float],
+    history: Sequence[str],
+) -> None:
+    if not history:
+        return
+
+    last = history[-1]
+
+    # Verbosity fatigue: после длинного ответа следующий без нужды
+    # заметно тянется к короткому ритму.
+    if last == "long":
+        weights["micro"] *= 1.70
+        weights["short"] *= 1.65
+        weights["normal"] *= 0.80
+        weights["long"] *= 0.35
+
+    # Два одинаковых класса подряд — третий становится маловероятным.
+    if len(history) >= 2 and history[-1] == history[-2]:
+        repeated = history[-1]
+        weights[repeated] *= 0.12
+
+    # Не запрещаем повтор полностью, но слегка меняем ритм даже после
+    # одного совпадения.
+    weights[last] *= 0.72
+
+
+def choose_response_length(
+    chat_id: int,
+    ctx: ResponseLengthContext,
+    *,
+    rng=random,
+    record: bool = True,
+) -> ResponseLengthPlan:
+    """Выбирает контекстную, но непредсказуемую длину ответа."""
+
+    weights = _base_length_weights(ctx)
+    _apply_preference_bias(weights, ctx.response_preference)
+
+    history = _LENGTH_HISTORY[chat_id]
+    _apply_history_bias(weights, tuple(history))
+
+    category = _weighted_choice(weights, rng=rng)
+    min_chars, max_chars = _LENGTH_RANGES[category]
+    target_chars = rng.randint(min_chars, max_chars)
+
+    if record:
+        history.append(category)
+
+    return ResponseLengthPlan(
+        category=category,
+        min_chars=min_chars,
+        max_chars=max_chars,
+        target_chars=target_chars,
+    )
+
+
+def build_length_instruction(plan: ResponseLengthPlan) -> str:
+    """Переводит план длины в короткое указание модели."""
+
+    rules = {
+        "micro": (
+            "Ответь очень коротко: одна-две естественные реплики. "
+            "Не объясняй очевидное и не добавляй итоговый абзац."
+        ),
+        "short": (
+            "Ответь компактно: обычно 2–4 коротких предложения. "
+            "После ответа по сути остановись, если пояснения не нужны."
+        ),
+        "normal": (
+            "Ответь со средней подробностью, но без лекционного тона. "
+            "Разъясняй только то, что реально помогает вопросу."
+        ),
+        "long": (
+            "Можно ответить развёрнуто, потому что контекст это оправдывает. "
+            "Не раздувай очевидные места и не повторяй один вывод разными словами."
+        ),
+    }
+
+    return (
+        "\n\nДинамическая длина этого конкретного ответа:\n"
+        f"Класс: {plan.category}; ориентир около {plan.target_chars} символов.\n"
+        f"{rules[plan.category]}\n"
+        "Это ориентир, а не обязанность добивать текст до числа символов."
+    )
+
+
+def build_voice_pack_guard(pack: str) -> str:
+    """Жёстко запрещает смешивание речевых пакетов в одном ответе."""
+
+    if pack not in VOICE_PACKS:
+        pack = VOICE_PACK_CLASSIC
+
+    return (
+        "\n\nРечевой пакет этого ответа: "
+        f"{pack}.\n"
+        "Используй только этот речевой пакет. Не смешивай его с другими "
+        "пакетами Яйцеслава даже ради одной шутки, обращения или слова."
+    )
+
+
+def get_length_history(chat_id: int) -> tuple[str, ...]:
+    return tuple(_LENGTH_HISTORY.get(chat_id, ()))
+
+
+def reset_length_history(chat_id: int | None = None) -> None:
+    if chat_id is None:
+        _LENGTH_HISTORY.clear()
+    else:
+        _LENGTH_HISTORY.pop(chat_id, None)
