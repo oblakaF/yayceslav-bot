@@ -4,7 +4,7 @@ path = Path("vocabulary.py")
 text = path.read_text(encoding="utf-8")
 
 start_marker = "# ============================================================\n# ШУТОЧНЫЕ ТИТУЛЫ (/title)"
-end_marker = "# ============================================================\n# ШУТОЧНЫЕ НАГРАДЫ НЕДЕЛИ (/awards)"
+end_marker = "# ============================================================\n# ТОСТЫ (/toast)"
 
 start = text.index(start_marker)
 end = text.index(end_marker, start)
