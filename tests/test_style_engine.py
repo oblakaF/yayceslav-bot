@@ -110,3 +110,28 @@ def test_voice_pack_guard_forbids_mixing():
     instruction = style_engine.build_voice_pack_guard("blat")
     assert "blat" in instruction
     assert "Не смешивай" in instruction
+
+
+def test_consecutive_answers_never_use_same_length_class():
+    style_engine.reset_length_history()
+    ctx = style_engine.ResponseLengthContext(
+        user_text="обычный короткий вопрос",
+        conversation_mode="normal",
+    )
+    rng = random.Random(20260815)
+    categories = [
+        style_engine.choose_response_length(777, ctx, rng=rng).category
+        for _ in range(30)
+    ]
+    assert all(a != b for a, b in zip(categories, categories[1:]))
+
+
+def test_target_length_still_varies_inside_classes():
+    style_engine.reset_length_history()
+    ctx = style_engine.ResponseLengthContext(
+        user_text="объясни обычную вещь",
+        conversation_mode="normal",
+    )
+    rng = random.Random(99)
+    plans = [style_engine.choose_response_length(778, ctx, rng=rng) for _ in range(20)]
+    assert len({plan.target_chars for plan in plans}) > 5

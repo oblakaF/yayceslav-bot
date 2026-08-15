@@ -348,8 +348,9 @@ def _apply_history_bias(
         repeated = history[-1]
         weights[repeated] *= 0.12
 
-    # Не запрещаем повтор полностью, но слегка меняем ритм даже после
-    # одного совпадения.
+    # Уже на этапе весов слегка отталкиваемся от предыдущей длины.
+    # Жёсткий запрет двух одинаковых классов подряд применяется ниже
+    # после первого случайного выбора.
     weights[last] *= 0.72
 
 
@@ -375,6 +376,17 @@ def choose_response_length(
     _apply_history_bias(weights, tuple(history))
 
     category = _weighted_choice(weights, rng=rng)
+
+    # Пользователь просил, чтобы длина реально менялась, а не просто
+    # имела немного другой шанс. Поэтому два соседних ответа одного
+    # чата не получают один и тот же класс длины, пока существует
+    # хотя бы одна допустимая альтернатива с ненулевым весом.
+    if history and category == history[-1]:
+        alternatives = dict(weights)
+        alternatives[history[-1]] = 0.0
+        if any(weight > 0 for weight in alternatives.values()):
+            category = _weighted_choice(alternatives, rng=rng)
+
     min_chars, max_chars = _LENGTH_RANGES[category]
     target_chars = rng.randint(min_chars, max_chars)
 
