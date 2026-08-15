@@ -5750,6 +5750,65 @@ async def answer_voice_or_audio(
         )
 
 
+async def gemini_version_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Проверяет реальную модель Gemini через Google API."""
+
+    del context
+
+    message = update.effective_message
+    user = update.effective_user
+
+    if not message or not user:
+        return
+
+    if not BOT_OWNER_ID or user.id != BOT_OWNER_ID:
+        await message.reply_text(
+            "Команда доступна только владельцу бота."
+        )
+        return
+
+    try:
+        model_info = await asyncio.wait_for(
+            gemini_client.aio.models.get(
+                model=MODEL_NAME,
+            ),
+            timeout=20,
+        )
+
+        api_name = getattr(model_info, "name", None) or "—"
+        display_name = getattr(model_info, "display_name", None) or "—"
+        version = getattr(model_info, "version", None) or "—"
+        thinking = getattr(model_info, "thinking", None)
+        input_limit = getattr(model_info, "input_token_limit", None)
+        output_limit = getattr(model_info, "output_token_limit", None)
+
+        await message.reply_text(
+            "Gemini API: OK\n"
+            f"Configured model: {MODEL_NAME}\n"
+            f"API model: {api_name}\n"
+            f"Display name: {display_name}\n"
+            f"Version: {version}\n"
+            f"Thinking supported: {thinking}\n"
+            f"Input token limit: {input_limit}\n"
+            f"Output token limit: {output_limit}"
+        )
+
+    except Exception as error:
+        logging.exception(
+            "Ошибка проверки версии Gemini: %s",
+            error,
+        )
+
+        await message.reply_text(
+            "Gemini API: ERROR\n"
+            f"Configured model: {MODEL_NAME}\n"
+            f"{type(error).__name__}: {error}"
+        )
+
+
 # ============================================================
 # ЗАПУСК БОТА
 # ============================================================
@@ -5806,6 +5865,12 @@ def main() -> None:
         CommandHandler(
             "stats",
             stats_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "geminiversion",
+            gemini_version_command,
         )
     )
     application.add_handler(
