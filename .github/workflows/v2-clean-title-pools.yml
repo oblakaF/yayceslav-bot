@@ -1,0 +1,291 @@
+name: Clean V2 title pools by personality
+
+on:
+  push:
+    branches:
+      - feature/human-yayceslav-v2
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'Clean V2 title pools by personality'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/human-yayceslav-v2
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Replace title pools
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          vocabulary = Path("vocabulary.py")
+          text = vocabulary.read_text(encoding="utf-8")
+
+          start_marker = "# ============================================================\n# ШУТОЧНЫЕ ТИТУЛЫ (/title)"
+          end_marker = "# ============================================================\n# ШУТОЧНЫЕ НАГРАДЫ НЕДЕЛИ (/awards)"
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+
+          new_section = '''# ============================================================
+# ШУТОЧНЫЕ ТИТУЛЫ (/title) — V2
+#
+# Старые технические категории harsh/friendly/neutral/toxic/
+# insulting/sycophantic удалены. Теперь титулы организованы ровно
+# по речевым личностям V2: по 10 на каждый voice pack + отдельные
+# 10 бытовых/мемных титулов. /title и daily title выбирают сначала
+# личность, затем титул из её пула.
+# ============================================================
+
+JOKE_TITLES_CLASSIC = [
+    "Повелитель очевидного",
+    "Лорд комментариев",
+    "Гений без инструкции",
+    "Магистр лишних вопросов",
+    "Хранитель забытых вкладок",
+    "Чемпион здравого смысла",
+    "Директор случайных решений",
+    "Король последнего слова",
+    "Главный специалист по всему",
+    "Почётный эксперт чата",
+]
+
+JOKE_TITLES_YOUTH = [
+    "Сигма на минималках",
+    "NPC районного масштаба",
+    "Тюбик в прайме",
+    "Лорд минус-ауры",
+    "Мемный гигачад",
+    "Кринж-менеджер",
+    "Повелитель рофла",
+    "Главный делулу",
+    "Брейнрот-мейстер",
+    "Канон-ивент чата",
+]
+
+JOKE_TITLES_SKOOF = [
+    "Скуф районного значения",
+    "Профессор кислых щей",
+    "Командир дивана",
+    "Академик гаражных наук",
+    "Почётный дачник чата",
+    "Директор пельменной",
+    "Инженер по телевизору",
+    "Знаток цен по акции",
+    "Маршал носков",
+    "Начальник пятничного отдыха",
+]
+
+JOKE_TITLES_OLD_RUSSIAN = [
+    "Князь потерянной мысли",
+    "Боярин кривого довода",
+    "Воевода диванной рати",
+    "Посадник поздних ответов",
+    "Дьяк великой переписки",
+    "Стольник забытых дел",
+    "Тысяцкий чатной дружины",
+    "Окольничий мемного приказа",
+    "Летописец чужих ошибок",
+    "Царь несказанного смысла",
+]
+
+JOKE_TITLES_BLAT = [
+    "Поц районный",
+    "Фраер ушастый",
+    "Кент без расклада",
+    "Авторитет диванный",
+    "Бродяга цифровой",
+    "Смотрящий за чатом",
+    "Решала без вопросов",
+    "Пахан комментариев",
+    "Барыга аргументов",
+    "Мастер малявы",
+]
+
+JOKE_TITLES_OPERATIVE = [
+    "Товарищ майор",
+    "Старший опер по мемам",
+    "Полковник переписки",
+    "Куратор чата",
+    "Начальник первого отдела",
+    "Дежурный по протоколу",
+    "Особист диванного полка",
+    "Архивариус личных дел",
+    "Замначальника отдела неловкости",
+    "Сотрудник органов юмора",
+]
+
+JOKE_TITLES_BATTLE_2017 = [
+    "МС Изи-Изи",
+    "Мастер рил-тока",
+    "Судья 17:03",
+    "Панчлайнер подъезда",
+    "Чемпион 1703",
+    "Король второго раунда",
+    "Победитель 5:0",
+    "Флоу без бита",
+    "Оппонент без микрофона",
+    "Убийца длинных подводок",
+]
+
+JOKE_TITLES_POST_IRONY = [
+    "Доктор очевидных наук",
+    "Эксперт по неизвестному",
+    "Кандидат абсурдных наук",
+    "Главный специалист по ничему",
+    "Научный сотрудник мемологии",
+    "Почётный свидетель происходящего",
+    "Директор штатной ситуации",
+    "Профессор отрицательного результата",
+    "Рецензент собственной работы",
+    "Замминистра странных выводов",
+]
+
+JOKE_TITLES_RUNET_2007 = [
+    "Аффтар Жжот",
+    "Медвед всея форумов",
+    "Капитан Очевидность",
+    "Боянщик почётный",
+    "Падонак заслуженный",
+    "Олбановед первой категории",
+    "Фотожабер района",
+    "Кармовед старой школы",
+    "Хранитель лытдыбра",
+    "Архивный тролль",
+]
+
+JOKE_TITLES_RUNET_2012_2016 = [
+    "Админ паблика",
+    "Лойс-мастер",
+    "Репостер всея Руси",
+    "Мемасолог",
+    "ЧСВ-менеджер",
+    "Стример без зрителей",
+    "Донатер мысли",
+    "Паблик-эксперт",
+    "Хозяин стены",
+    "Подписчик месяца",
+]
+
+JOKE_TITLES_LAN_2000S = [
+    "Админ сервера",
+    "Кемпер подъезда",
+    "Нуб первой категории",
+    "Кланлид на пенсии",
+    "Пинг 999",
+    "Рашер без команды",
+    "Тимкиллер года",
+    "Читер без читов",
+    "Фраг чата",
+    "АФК-легенда",
+]
+
+JOKE_TITLES_RUNET_CLASSIC = [
+    "Олдфаг форума",
+    "Модератор ветки",
+    "Старожил треда",
+    "Король оффтопа",
+    "Баян-магистр",
+    "Плюс в карму",
+    "Хранитель первого поста",
+    "Гуру диалапа",
+    "Мастер закрытых тем",
+    "Форумный аксакал",
+]
+
+JOKE_TITLES_STREET_MEMES = [
+    "Скуф",
+    "Шлюшка",
+    "Танкист",
+    "Задрот",
+    "Алкашик",
+    "Душнила",
+    "Подкаблучник",
+    "Куколдик",
+    "Диванный генерал",
+    "Гаражный философ",
+]
+
+JOKE_TITLE_CATEGORIES = {
+    "classic": JOKE_TITLES_CLASSIC,
+    "youth": JOKE_TITLES_YOUTH,
+    "skoof": JOKE_TITLES_SKOOF,
+    "old_russian": JOKE_TITLES_OLD_RUSSIAN,
+    "blat": JOKE_TITLES_BLAT,
+    "operative": JOKE_TITLES_OPERATIVE,
+    "battle_2017": JOKE_TITLES_BATTLE_2017,
+    "post_irony": JOKE_TITLES_POST_IRONY,
+    "runet_2007": JOKE_TITLES_RUNET_2007,
+    "runet_2012_2016": JOKE_TITLES_RUNET_2012_2016,
+    "lan_2000s": JOKE_TITLES_LAN_2000S,
+    "runet_classic": JOKE_TITLES_RUNET_CLASSIC,
+    "street_memes": JOKE_TITLES_STREET_MEMES,
+}
+
+JOKE_TITLES = tuple(
+    title
+    for pool in JOKE_TITLE_CATEGORIES.values()
+    for title in pool
+)
+
+
+'''
+
+          vocabulary.write_text(
+              text[:start] + new_section + text[end:],
+              encoding="utf-8",
+          )
+
+          # bot.py: выбор сначала личности, потом титула — чтобы структура
+          # категорий была реальной, а не только декоративной в словаре.
+          bot = Path("bot.py")
+          bot_text = bot.read_text(encoding="utf-8")
+          old_import = '''    HARD_REACTION_EMOJIS,\n    JOKE_TITLES,\n    MOODS,\n'''
+          new_import = '''    HARD_REACTION_EMOJIS,\n    JOKE_TITLE_CATEGORIES,\n    JOKE_TITLES,\n    MOODS,\n'''
+          if bot_text.count(old_import) != 1:
+              raise SystemExit("bot title import anchor mismatch")
+          bot_text = bot_text.replace(old_import, new_import, 1)
+
+          old_picker = '''def pick_new_title(\n    previous_title: str | None,\n) -> str:\n    """Выбирает новый титул, исключая предыдущий, если это возможно."""\n\n    candidates = [\n        title\n        for title in JOKE_TITLES\n        if title != previous_title\n    ]\n\n    if not candidates:\n        candidates = list(JOKE_TITLES)\n\n    return random.choice(candidates)\n'''
+          new_picker = '''def pick_new_title(\n    previous_title: str | None,\n) -> str:\n    """Выбирает сначала V2-личность титула, затем один из её 10 титулов."""\n\n    category_candidates: list[tuple[str, list[str]]] = []\n\n    for category, pool in JOKE_TITLE_CATEGORIES.items():\n        candidates = [\n            title\n            for title in pool\n            if title != previous_title\n        ]\n        if candidates:\n            category_candidates.append((category, candidates))\n\n    if not category_candidates:\n        return random.choice(JOKE_TITLES)\n\n    _category, candidates = random.choice(category_candidates)\n    return random.choice(candidates)\n'''
+          if bot_text.count(old_picker) != 1:
+              raise SystemExit("bot title picker anchor mismatch")
+          bot.write_text(bot_text.replace(old_picker, new_picker, 1), encoding="utf-8")
+
+          # Переписываем старый тест категорий на реальную V2-схему.
+          tests = Path("tests/test_vocabulary.py")
+          test_text = tests.read_text(encoding="utf-8")
+          old_test = '''def test_joke_title_categories_have_ten_each_for_the_new_tone_set():\n    tone_categories = (\n        "harsh",\n        "friendly",\n        "neutral",\n        "toxic",\n        "insulting",\n        "sycophantic",\n    )\n    for category in tone_categories:\n        assert len(vocabulary.JOKE_TITLE_CATEGORIES[category]) == 10, category\n'''
+          new_test = '''def test_joke_title_categories_are_v2_personalities_with_ten_each():\n    expected_categories = {\n        "classic",\n        "youth",\n        "skoof",\n        "old_russian",\n        "blat",\n        "operative",\n        "battle_2017",\n        "post_irony",\n        "runet_2007",\n        "runet_2012_2016",\n        "lan_2000s",\n        "runet_classic",\n        "street_memes",\n    }\n    assert set(vocabulary.JOKE_TITLE_CATEGORIES) == expected_categories\n    for category, titles in vocabulary.JOKE_TITLE_CATEGORIES.items():\n        assert len(titles) == 10, category\n        assert len(titles) == len(set(titles)), category\n\n\ndef test_joke_title_pool_has_130_unique_titles():\n    assert len(vocabulary.JOKE_TITLES) == 130\n    assert len(vocabulary.JOKE_TITLES) == len(set(vocabulary.JOKE_TITLES))\n\n\ndef test_requested_title_examples_are_in_correct_personality_pools():\n    assert "Поц районный" in vocabulary.JOKE_TITLE_CATEGORIES["blat"]\n    assert "Товарищ майор" in vocabulary.JOKE_TITLE_CATEGORIES["operative"]\n    street = vocabulary.JOKE_TITLE_CATEGORIES["street_memes"]\n    for title in ("Скуф", "Шлюшка", "Танкист", "Задрот", "Алкашик"):\n        assert title in street\n\n\ndef test_old_tone_title_categories_are_removed():\n    old_categories = {\n        "harsh", "friendly", "neutral", "toxic", "insulting", "sycophantic"\n    }\n    assert old_categories.isdisjoint(vocabulary.JOKE_TITLE_CATEGORIES)\n'''
+          if test_text.count(old_test) != 1:
+              raise SystemExit("old title category test anchor mismatch")
+          tests.write_text(test_text.replace(old_test, new_test, 1), encoding="utf-8")
+
+          runtime_test = Path("tests/test_v2_title_pools.py")
+          runtime_test.write_text(
+              '''import bot\nimport vocabulary\n\n\ndef test_pick_new_title_never_repeats_previous_when_alternatives_exist(monkeypatch):\n    previous = "Товарищ майор"\n    for _ in range(100):\n        assert bot.pick_new_title(previous) != previous\n\n\ndef test_every_personality_pool_has_exactly_ten_titles():\n    assert all(len(pool) == 10 for pool in vocabulary.JOKE_TITLE_CATEGORIES.values())\n\n\ndef test_all_title_personalities_are_represented_in_flat_pool():\n    flat = set(vocabulary.JOKE_TITLES)\n    for category, pool in vocabulary.JOKE_TITLE_CATEGORIES.items():\n        assert set(pool) <= flat, category\n\n\ndef test_legacy_titles_already_in_database_do_not_break_picker():\n    old_title = "Позор дружины"\n    new_title = bot.pick_new_title(old_title)\n    assert new_title in vocabulary.JOKE_TITLES\n    assert new_title != old_title\n''',
+              encoding="utf-8",
+          )
+          PY
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Validate
+        run: |
+          python -m py_compile bot.py vocabulary.py
+          pytest -q
+      - name: Commit tested code
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vocabulary.py bot.py tests/test_vocabulary.py tests/test_v2_title_pools.py
+          git commit -m "Rebuild V2 titles by personality"
+          git push origin HEAD:feature/human-yayceslav-v2
