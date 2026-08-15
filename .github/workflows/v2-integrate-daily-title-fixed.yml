@@ -1,0 +1,86 @@
+name: Integrate V2 daily title fixed
+
+on:
+  push:
+    branches:
+      - feature/human-yayceslav-v2
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.event.head_commit.message == 'Integrate V2 daily title fixed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/human-yayceslav-v2
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch daily title runtime
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path("bot.py")
+          text = p.read_text(encoding="utf-8")
+
+          def replace_once(old, new, label):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 match, got {count}")
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              "import aggression_engine\nimport humor_engine\n",
+              "import aggression_engine\nimport daily_title_engine\nimport humor_engine\n",
+              "daily title import",
+          )
+
+          replace_once(
+              '''        # Расписание автоматического недельного отчёта.\n        # По умолчанию — воскресенье, 21:00 по МСК.\n''',
+              '''        # V2: один автоматический титул дня на чат и дату.\n        # PRIMARY KEY не позволяет рестарту/гонке выдать второй\n        # daily title в тот же календарный день.\n        connection.execute(\n            """\n            CREATE TABLE IF NOT EXISTS daily_title_assignments (\n                chat_id INTEGER NOT NULL,\n                date TEXT NOT NULL,\n                user_id INTEGER NOT NULL,\n                title TEXT NOT NULL,\n                assigned_at TEXT NOT NULL DEFAULT (datetime('now')),\n                PRIMARY KEY (chat_id, date)\n            )\n            """\n        )\n\n        # Расписание автоматического недельного отчёта.\n        # По умолчанию — воскресенье, 21:00 по МСК.\n''',
+              "daily table",
+          )
+
+          member_anchor = '''async def set_member_title(\n    chat_id: int,\n    user_id: int,\n    title: str,\n    chat_type: str = "group",\n) -> None:\n    """Сохраняет титул без блокировки бота."""\n\n    await asyncio.to_thread(\n        set_member_title_sync,\n        chat_id,\n        user_id,\n        title,\n        chat_type,\n    )\n'''
+          member_addition = member_anchor + '''\n\ndef get_daily_title_assignment_sync(\n    chat_id: int,\n    date: str,\n) -> dict[str, Any] | None:\n    with get_db_connection() as connection:\n        row = connection.execute(\n            """\n            SELECT user_id, title, assigned_at\n            FROM daily_title_assignments\n            WHERE chat_id = ? AND date = ?\n            """,\n            (chat_id, date),\n        ).fetchone()\n\n    if row is None:\n        return None\n    return {\n        "user_id": int(row[0]),\n        "title": str(row[1]),\n        "assigned_at": str(row[2]),\n    }\n\n\nasync def get_daily_title_assignment(\n    chat_id: int,\n    date: str,\n) -> dict[str, Any] | None:\n    return await asyncio.to_thread(\n        get_daily_title_assignment_sync,\n        chat_id,\n        date,\n    )\n\n\ndef try_assign_daily_title_sync(\n    chat_id: int,\n    date: str,\n    user_id: int,\n    title: str,\n) -> bool:\n    """Атомарно фиксирует daily title и обновляет текущий титул участника."""\n\n    with get_db_connection() as connection:\n        cursor = connection.execute(\n            """\n            INSERT OR IGNORE INTO daily_title_assignments (\n                chat_id, date, user_id, title\n            ) VALUES (?, ?, ?, ?)\n            """,\n            (chat_id, date, user_id, title),\n        )\n\n        if cursor.rowcount != 1:\n            connection.commit()\n            return False\n\n        connection.execute(\n            """\n            UPDATE chat_member_profiles\n            SET current_title = ?, updated_at = datetime('now')\n            WHERE chat_id = ? AND user_id = ?\n            """,\n            (title, chat_id, user_id),\n        )\n        connection.commit()\n        return True\n\n\nasync def try_assign_daily_title(\n    chat_id: int,\n    date: str,\n    user_id: int,\n    title: str,\n) -> bool:\n    return await asyncio.to_thread(\n        try_assign_daily_title_sync,\n        chat_id,\n        date,\n        user_id,\n        title,\n    )\n'''
+          replace_once(member_anchor, member_addition, "daily persistence helpers")
+
+          pick_anchor = '''def pick_new_title(\n    previous_title: str | None,\n) -> str:\n    """Выбирает новый титул, исключая предыдущий, если это возможно."""\n\n    candidates = [\n        title\n        for title in JOKE_TITLES\n        if title != previous_title\n    ]\n\n    if not candidates:\n        candidates = list(JOKE_TITLES)\n\n    return random.choice(candidates)\n'''
+          pick_addition = pick_anchor + '''\n\nasync def maybe_assign_daily_title(\n    update: Update,\n) -> bool:\n    """При первой подходящей вечерней активности выдаёт один титул дня."""\n\n    if (\n        not update.message\n        or not update.effective_chat\n        or str(update.effective_chat.type) not in ("group", "supergroup")\n    ):\n        return False\n\n    msk_now = current_msk_datetime()\n    if not daily_title_engine.is_assignment_window_open(msk_now):\n        return False\n\n    chat_id = update.effective_chat.id\n    date = msk_now.date().isoformat()\n\n    if await get_daily_title_assignment(chat_id, date):\n        return False\n\n    activity = await get_weekly_activity(chat_id, date, date)\n    if not activity:\n        return False\n\n    known_members = await list_chat_member_profiles(chat_id, limit=200)\n    candidates = daily_title_engine.build_candidates(activity, known_members)\n    candidate = daily_title_engine.choose_candidate(candidates)\n    if candidate is None:\n        return False\n\n    new_title = pick_new_title(candidate.previous_title)\n    created = await try_assign_daily_title(\n        chat_id,\n        date,\n        candidate.user_id,\n        new_title,\n    )\n    if not created:\n        return False\n\n    await update.message.reply_text(\n        daily_title_engine.format_daily_title_message(\n            candidate.display_name,\n            new_title,\n        )\n    )\n    return True\n'''
+          replace_once(pick_anchor, pick_addition, "daily runtime")
+
+          replace_once(
+              '''    if is_serious_cooldown_active(chat_id, now):\n        return\n\n    # --------------------------------------------------------\n    # 1. Реакция на специальные слова\n''',
+              '''    if is_serious_cooldown_active(chat_id, now):\n        return\n\n    # V2 daily title — отдельное единичное вмешательство. Если оно\n    # сработало, не наслаиваем reaction/random reply на то же сообщение.\n    if await maybe_assign_daily_title(update):\n        return\n\n    # --------------------------------------------------------\n    # 1. Реакция на специальные слова\n''',
+              "daily title listener call",
+          )
+
+          p.write_text(text, encoding="utf-8")
+
+          Path("tests/test_v2_daily_title_runtime.py").write_text(
+              '''import bot\n\n\ndef test_daily_assignment_is_atomic_and_persistent(tmp_path, monkeypatch):\n    db_path = tmp_path / "daily-title.db"\n    monkeypatch.setattr(bot, "STATS_DB_PATH", db_path)\n    bot.initialize_stats_database()\n    bot.upsert_chat_and_user_sync(-1001, 11, "group")\n    assert bot.try_assign_daily_title_sync(-1001, "2026-08-15", 11, "Воевода споров")\n    assert not bot.try_assign_daily_title_sync(-1001, "2026-08-15", 11, "Другой титул")\n    saved = bot.get_daily_title_assignment_sync(-1001, "2026-08-15")\n    assert saved is not None\n    assert saved["user_id"] == 11\n    assert saved["title"] == "Воевода споров"\n\n\ndef test_daily_assignment_updates_current_member_title(tmp_path, monkeypatch):\n    db_path = tmp_path / "daily-title-member.db"\n    monkeypatch.setattr(bot, "STATS_DB_PATH", db_path)\n    bot.initialize_stats_database()\n    bot.upsert_chat_and_user_sync(-1002, 12, "group")\n    assert bot.try_assign_daily_title_sync(-1002, "2026-08-15", 12, "Князь тестов")\n    profile = bot.get_member_profile_sync(-1002, 12)\n    assert profile is not None\n    assert profile["current_title"] == "Князь тестов"\n\n\ndef test_same_chat_can_receive_new_title_next_day(tmp_path, monkeypatch):\n    db_path = tmp_path / "daily-title-next-day.db"\n    monkeypatch.setattr(bot, "STATS_DB_PATH", db_path)\n    bot.initialize_stats_database()\n    bot.upsert_chat_and_user_sync(-1003, 13, "group")\n    assert bot.try_assign_daily_title_sync(-1003, "2026-08-15", 13, "Первый")\n    assert bot.try_assign_daily_title_sync(-1003, "2026-08-16", 13, "Второй")\n''',
+              encoding="utf-8",
+          )
+          PY
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Validate
+        run: |
+          python -m py_compile bot.py daily_title_engine.py
+          pytest -q
+      - name: Commit tested code
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot.py tests/test_v2_daily_title_runtime.py
+          git commit -m "Wire persistent V2 daily title"
+          git push origin HEAD:feature/human-yayceslav-v2
