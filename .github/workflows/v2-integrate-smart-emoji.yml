@@ -1,0 +1,84 @@
+name: Integrate V2 smart emoji reactions
+
+on:
+  push:
+    branches:
+      - feature/human-yayceslav-v2
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.event.head_commit.message == 'Integrate V2 smart emoji reactions'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/human-yayceslav-v2
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch smart emoji runtime
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path("bot.py")
+          text = p.read_text(encoding="utf-8")
+
+          def replace_once(old, new, label):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 match, got {count}")
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              "import intent\nimport social_engine\n",
+              "import intent\nimport reaction_engine\nimport social_engine\n",
+              "reaction engine import",
+          )
+
+          replace_once(
+              '''def pick_reaction_emoji(\n    reason: str | None,\n) -> str:\n    """Выбирает эмодзи под причину реакции, иначе — случайное из общего пула."""\n\n    options = REACTION_REASON_EMOJIS.get(reason or "", HARD_REACTION_EMOJIS)\n    return random.choice(options)\n''',
+              '''def pick_reaction_emoji(\n    reason: str | None,\n) -> str:\n    """Выбирает эмодзи под причину реакции, иначе — случайное из общего пула."""\n\n    v2_emoji = reaction_engine.pick_v2_emoji(reason)\n    if v2_emoji:\n        return v2_emoji\n\n    options = REACTION_REASON_EMOJIS.get(reason or "", HARD_REACTION_EMOJIS)\n    return random.choice(options)\n''',
+              "smart emoji picker",
+          )
+
+          replace_once(
+              '''    if (\n        confidence != intent.LOW\n        and resolved_intent == "question"\n        and word_count >= 5\n    ):\n        return "good_question"\n\n    return None\n''',
+              '''    if (\n        confidence != intent.LOW\n        and resolved_intent == "question"\n        and word_count >= 5\n    ):\n        return "good_question"\n\n    return reaction_engine.detect_context_reason(\n        stripped,\n        resolved_intent=resolved_intent,\n        confidence=confidence,\n    )\n''',
+              "V2 context reaction reason",
+          )
+
+          replace_once(
+              '''    # Контекстная причина — не механическая случайность,\n    # даём ей более высокий шанс сработать.\n    effective_reaction_chance = (\n        max(reaction_chance, 0.85)\n        if reaction_reason\n        else reaction_chance\n    )\n''',
+              '''    # V2: контекстная причина всё ещё усиливает шанс, но ПОСЛЕ\n    # этого применяется -20% только к emoji-реакциям. Текстовый\n    # random_reply_chance ниже остаётся полностью без изменений.\n    effective_reaction_chance = reaction_engine.effective_emoji_reaction_chance(\n        reaction_chance,\n        has_context_reason=bool(reaction_reason),\n    )\n''',
+              "20 percent emoji-only scaling",
+          )
+
+          p.write_text(text, encoding="utf-8")
+
+          Path("tests/test_v2_smart_emoji_runtime.py").write_text(
+              '''import math\n\nimport bot\nimport reaction_engine\n\n\ndef test_bot_detects_v2_provocation_reason():\n    assert bot.detect_reaction_reason("а тебе слабо доказать?") == "provocation"\n\n\ndef test_bot_detects_mysticism_reason_even_with_low_intent_confidence():\n    assert bot.detect_reaction_reason("мне таро предсказали судьбу") == "mysticism"\n\n\ndef test_bot_picker_uses_v2_reason_map(monkeypatch):\n    monkeypatch.setattr(reaction_engine, "pick_v2_emoji", lambda reason: "🧿" if reason == "mysticism" else None)\n    assert bot.pick_reaction_emoji("mysticism") == "🧿"\n\n\ndef test_normal_hard_level_random_reply_chance_is_unchanged():\n    # Главное регрессионное правило этой правки: текстовые вмешательства\n    # не режем вместе с emoji.\n    assert math.isclose(bot.HARD_LEVEL_CHANCES["normal"]["random_reply_chance"], 0.16)\n\n\ndef test_normal_emoji_probability_is_effectively_056_without_reason():\n    normal = bot.HARD_LEVEL_CHANCES["normal"]["reaction_chance"]\n    assert math.isclose(normal, 0.70)\n    assert math.isclose(\n        reaction_engine.effective_emoji_reaction_chance(normal, has_context_reason=False),\n        0.56,\n    )\n''',
+              encoding="utf-8",
+          )
+          PY
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Validate
+        run: |
+          python -m py_compile bot.py reaction_engine.py
+          pytest -q
+      - name: Commit tested code
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bot.py tests/test_v2_smart_emoji_runtime.py
+          git commit -m "Wire V2 smart emoji reactions"
+          git push origin HEAD:feature/human-yayceslav-v2
