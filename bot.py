@@ -432,6 +432,16 @@ def initialize_stats_database() -> None:
             """
         )
 
+        # Отдельно отмечаем, что daily title уже реально объявлен в Telegram.
+        # Если отправка упадёт после атомарного выбора победителя, scheduler
+        # повторит только объявление, а не выберет второго человека.
+        _ensure_column(
+            connection,
+            "daily_title_assignments",
+            "announced_at",
+            "announced_at TEXT",
+        )
+
         # Расписание автоматического недельного отчёта.
         # По умолчанию — воскресенье, 21:00 по МСК.
         _ensure_column(
@@ -610,6 +620,10 @@ DEFAULT_CHAT_SETTINGS = {
     "random_replies_count": 0,
     "trigger_replies_count": 0,
     "last_intervention_at": None,
+    "weekly_report_enabled": False,
+    "weekly_report_weekday": 6,
+    "weekly_report_time": "21:00",
+    "weekly_report_last_sent_date": None,
 }
 
 CHAT_SETTING_COLUMNS = {
@@ -656,7 +670,11 @@ def get_chat_settings_sync(
                 reactions_count,
                 random_replies_count,
                 trigger_replies_count,
-                last_intervention_at
+                last_intervention_at,
+                weekly_report_enabled,
+                weekly_report_weekday,
+                weekly_report_time,
+                weekly_report_last_sent_date
             FROM chat_settings
             WHERE chat_id = ?
             """,
@@ -677,6 +695,10 @@ def get_chat_settings_sync(
         "random_replies_count": int(row[5]),
         "trigger_replies_count": int(row[6]),
         "last_intervention_at": row[7],
+        "weekly_report_enabled": bool(row[8]),
+        "weekly_report_weekday": int(row[9]),
+        "weekly_report_time": str(row[10]),
+        "weekly_report_last_sent_date": row[11],
     }
 
 
@@ -1137,7 +1159,7 @@ def get_daily_title_assignment_sync(
     with get_db_connection() as connection:
         row = connection.execute(
             """
-            SELECT user_id, title, assigned_at
+            SELECT user_id, title, assigned_at, announced_at
             FROM daily_title_assignments
             WHERE chat_id = ? AND date = ?
             """,
@@ -1150,6 +1172,7 @@ def get_daily_title_assignment_sync(
         "user_id": int(row[0]),
         "title": str(row[1]),
         "assigned_at": str(row[2]),
+        "announced_at": (str(row[3]) if row[3] else None),
     }
 
 
@@ -2437,6 +2460,10 @@ async def on_application_startup(
     application.create_task(
         weekly_report_scheduler_loop(application),
         name="weekly_report_scheduler",
+    )
+    application.create_task(
+        daily_title_scheduler_loop(application),
+        name="daily_title_scheduler",
     )
 
 
@@ -4956,6 +4983,78 @@ async def title_command(
     )
 
 
+
+async def title_status_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Показывает статус автоматического титула дня в этой группе."""
+
+    del context
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Титул дня автоматически разыгрывается только в группах."
+        )
+        return
+
+    now = current_msk_datetime()
+    date = now.date().isoformat()
+    assignment = await get_daily_title_assignment(
+        update.effective_chat.id,
+        date,
+    )
+
+    if assignment:
+        profile = await get_member_profile(
+            update.effective_chat.id,
+            assignment["user_id"],
+        )
+        display_name = (
+            profile.get("current_display_name")
+            if profile
+            else None
+        ) or f"участник {assignment['user_id']}"
+        announced = "да" if assignment.get("announced_at") else "ожидает отправки"
+        await update.message.reply_text(
+            "Титул дня:\n"
+            f"Сегодня уже выбран: {display_name} — «{assignment['title']}»\n"
+            f"Объявлен в чат: {announced}\n"
+            "Новый титул заменяет предыдущий; одновременно у человека только один."
+        )
+        return
+
+    activity = await get_weekly_activity(
+        update.effective_chat.id,
+        date,
+        date,
+    )
+    known_members = await list_chat_member_profiles(
+        update.effective_chat.id,
+        limit=200,
+    )
+    candidates = daily_title_engine.build_candidates(
+        activity,
+        known_members,
+    )
+
+    window = (
+        "уже открыто"
+        if daily_title_engine.is_assignment_window_open(now)
+        else f"откроется после {daily_title_engine.DAILY_TITLE_START_HOUR_MSK}:00 МСК"
+    )
+    await update.message.reply_text(
+        "Титул дня:\n"
+        "Статус: сегодня ещё не выбран\n"
+        f"Окно выдачи: {window}\n"
+        f"Активных кандидатов сегодня: {len(candidates)}\n"
+        "Выбор равновероятный среди тех, кто сегодня писал в чат."
+    )
+
+
 # ============================================================
 # РАЗВЛЕКАТЕЛЬНЫЕ КОМАНДЫ: С GEMINI
 # Общий помощник переиспользует ask_gemini (значит, и HumorEngine,
@@ -6120,6 +6219,43 @@ async def week_auto_off_command(
     )
 
 
+
+async def week_auto_status_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Показывает текущее расписание автоматического недельного отчёта."""
+
+    del context
+
+    if not update.message or not update.effective_chat:
+        return
+
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text(
+            "Авто-отчёт существует только для групп."
+        )
+        return
+
+    settings = await get_chat_settings(
+        update.effective_chat.id,
+        str(update.effective_chat.type),
+    )
+
+    enabled = bool(settings.get("weekly_report_enabled", False))
+    weekday = int(settings.get("weekly_report_weekday", 6))
+    report_time = str(settings.get("weekly_report_time", "21:00"))
+    last_sent = settings.get("weekly_report_last_sent_date") or "ещё не отправлялся"
+
+    await update.message.reply_text(
+        "Автоматический недельный отчёт:\n"
+        f"Статус: {'включён' if enabled else 'выключен'}\n"
+        f"Расписание: {WEEKDAY_LABELS_RU.get(weekday, 'воскресенье')} "
+        f"в {report_time} по МСК\n"
+        f"Последняя успешная авто-отправка: {last_sent}"
+    )
+
+
 async def week_time_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -6144,7 +6280,11 @@ async def week_time_command(
         )
         return
 
-    if not context.args or len(context.args) < 2:
+    if not context.args:
+        await week_auto_status_command(update, context)
+        return
+
+    if len(context.args) < 2:
         await update.message.reply_text(
             "Формат: /week_time воскресенье 21:00"
         )
@@ -6322,6 +6462,158 @@ async def weekly_report_scheduler_loop(
         except Exception as error:
             logging.warning(
                 "Ошибка планировщика недельных отчётов: %s",
+                error,
+            )
+
+
+
+# ============================================================
+# АВТОМАТИЧЕСКИЙ ТИТУЛ ДНЯ
+# ============================================================
+
+DAILY_TITLE_CHECK_INTERVAL_SECONDS = 60
+
+
+def get_daily_title_chat_ids_sync(date: str) -> list[int]:
+    """Группы, где сегодня есть хотя бы один активный участник."""
+
+    with get_db_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT activity.chat_id
+            FROM chat_activity_daily AS activity
+            JOIN chats ON chats.chat_id = activity.chat_id
+            WHERE activity.date = ?
+              AND activity.messages > 0
+              AND chats.chat_type IN ('group', 'supergroup')
+            ORDER BY activity.chat_id
+            """,
+            (date,),
+        ).fetchall()
+
+    return [int(row[0]) for row in rows]
+
+
+async def get_daily_title_chat_ids(date: str) -> list[int]:
+    return await asyncio.to_thread(
+        get_daily_title_chat_ids_sync,
+        date,
+    )
+
+
+def mark_daily_title_announced_sync(chat_id: int, date: str) -> None:
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            UPDATE daily_title_assignments
+            SET announced_at = datetime('now')
+            WHERE chat_id = ? AND date = ?
+            """,
+            (chat_id, date),
+        )
+        connection.commit()
+
+
+async def mark_daily_title_announced(chat_id: int, date: str) -> None:
+    await asyncio.to_thread(
+        mark_daily_title_announced_sync,
+        chat_id,
+        date,
+    )
+
+
+async def _daily_title_display_name(chat_id: int, user_id: int) -> str:
+    profile = await get_member_profile(chat_id, user_id)
+    if profile and profile.get("current_display_name"):
+        return str(profile["current_display_name"])
+    return f"участник {user_id}"
+
+
+async def run_due_daily_titles(application: Application) -> None:
+    """После 18:00 МСК выдаёт ровно один daily title каждой активной группе."""
+
+    now = current_msk_datetime()
+    if not daily_title_engine.is_assignment_window_open(now):
+        return
+
+    date = now.date().isoformat()
+
+    for chat_id in await get_daily_title_chat_ids(date):
+        assignment = await get_daily_title_assignment(chat_id, date)
+        display_name: str | None = None
+
+        if assignment and assignment.get("announced_at"):
+            continue
+
+        if assignment is None:
+            activity = await get_weekly_activity(chat_id, date, date)
+            known_members = await list_chat_member_profiles(chat_id, limit=200)
+            candidates = daily_title_engine.build_candidates(
+                activity,
+                known_members,
+            )
+            candidate = daily_title_engine.choose_candidate(candidates)
+            if candidate is None:
+                continue
+
+            new_title = pick_new_title(candidate.previous_title)
+            created = await try_assign_daily_title(
+                chat_id,
+                date,
+                candidate.user_id,
+                new_title,
+            )
+
+            if created:
+                assignment = {
+                    "user_id": candidate.user_id,
+                    "title": new_title,
+                    "announced_at": None,
+                }
+                display_name = candidate.display_name
+            else:
+                assignment = await get_daily_title_assignment(chat_id, date)
+
+        if not assignment or assignment.get("announced_at"):
+            continue
+
+        if display_name is None:
+            display_name = await _daily_title_display_name(
+                chat_id,
+                int(assignment["user_id"]),
+            )
+
+        try:
+            await application.bot.send_message(
+                chat_id=chat_id,
+                text=daily_title_engine.format_daily_title_message(
+                    display_name,
+                    str(assignment["title"]),
+                ),
+            )
+        except Exception as error:
+            logging.warning(
+                "Не удалось объявить титул дня в чате %s: %s "
+                "(повторим на следующей минуте)",
+                chat_id,
+                error,
+            )
+            continue
+
+        await mark_daily_title_announced(chat_id, date)
+
+
+async def daily_title_scheduler_loop(application: Application) -> None:
+    """Фоновая задача: после 18:00 МСК проверяет daily titles раз в минуту."""
+
+    while True:
+        await asyncio.sleep(DAILY_TITLE_CHECK_INTERVAL_SECONDS)
+
+        try:
+            await run_due_daily_titles(application)
+        except Exception as error:
+            logging.warning(
+                "Ошибка планировщика титула дня: %s",
                 error,
             )
 
@@ -6625,11 +6917,6 @@ async def hard_mode_listener(
     if is_serious_cooldown_active(chat_id, now):
         return
 
-    # V2 daily title — отдельное единичное вмешательство. Если оно
-    # сработало, не наслаиваем reaction/random reply на то же сообщение.
-    if await maybe_assign_daily_title(update):
-        return
-
     # --------------------------------------------------------
     # 1. Реакция на специальные слова
     # --------------------------------------------------------
@@ -6918,6 +7205,8 @@ HELP_GROUP_ANALYTICS_SECTION = (
     "/week_me — твоя статистика за неделю\n"
     "/leaderboard — таблица активности\n"
     "/awards — шуточные награды недели\n"
+    "/week_auto_status — статус автоматического недельного отчёта\n"
+    "/title_status — статус автоматического титула дня\n"
 )
 
 HELP_ENTERTAINMENT_SECTION = (
@@ -9862,6 +10151,12 @@ def main() -> None:
     )
     application.add_handler(
         CommandHandler(
+            "title_status",
+            title_status_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
             "prophecy",
             prophecy_command,
         )
@@ -9972,6 +10267,12 @@ def main() -> None:
         CommandHandler(
             "week_auto_off",
             week_auto_off_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "week_auto_status",
+            week_auto_status_command,
         )
     )
     application.add_handler(
