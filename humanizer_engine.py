@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 
 SPLIT_CHANCE = 0.08
+CONFLICT_TWO_MESSAGE_CHANCE = 0.38
 TYPO_CHANCE = 0.012
 LAZY_SHORT_CHANCE = 0.004
 LAZY_REFUSAL_CHANCE = 0.0008
@@ -83,6 +84,55 @@ def _first_compact_sentence(text: str, limit: int = 190) -> str:
     return clipped + "…"
 
 
+def _compact_conflict_text(
+    text: str,
+    *,
+    max_chars: int,
+    max_sentences: int = 2,
+) -> tuple[str, ...]:
+    clean = " ".join((text or "").split())
+    if not clean:
+        return ("",)
+
+    sentences = [part.strip() for part in _SENTENCE_BOUNDARY_RE.split(clean) if part.strip()]
+    if not sentences:
+        sentences = [clean]
+
+    # A short explicit send-off is already a complete human reply.
+    # Do not append Gemini's explanatory second sentence after it.
+    first_lower = sentences[0].lower()
+    direct_sendoff_markers = (
+        "иди нах",
+        "пошел нах",
+        "пошёл нах",
+        "нахуй",
+        "на хуй",
+        "отъеб",
+        "съеб",
+        "завали ебало",
+    )
+    if (
+        len(sentences[0]) <= 45
+        and any(marker in first_lower for marker in direct_sendoff_markers)
+    ):
+        return (sentences[0],)
+
+    kept: list[str] = []
+    total = 0
+    for sentence in sentences[:max_sentences]:
+        projected = total + (1 if kept else 0) + len(sentence)
+        if projected <= max_chars:
+            kept.append(sentence)
+            total = projected
+            continue
+        if not kept:
+            clipped = sentence[:max_chars].rsplit(" ", 1)[0].rstrip(" ,;:-")
+            kept.append((clipped or sentence[:max_chars]).rstrip() + "…")
+        break
+
+    return tuple(kept or [clean[:max_chars]])
+
+
 def _split_naturally(text: str) -> tuple[str, str] | None:
     if len(text) < 120 or len(text) > 850:
         return None
@@ -130,6 +180,7 @@ def humanize_reply(
     *,
     user_text: str = "",
     trace=None,
+    hostile_streak: int = 0,
     rng=random,
 ) -> HumanizedReply:
     """Применяет максимум один человеческий эффект за ответ."""
@@ -139,6 +190,26 @@ def humanize_reply(
         return HumanizedReply((clean,), (0.0,))
 
     important = _important_request(user_text, trace)
+    mode = getattr(trace, "conversation_mode", "normal") if trace else "normal"
+
+    # Conflict rhythm is enforced after Gemini, not merely requested in the prompt.
+    # First/second hostile turn and ordinary challenge: one or two compact phrases.
+    # Third/fourth hostile turn remains the intentional longer flare-up.
+    compact_conflict = (
+        mode == "challenge"
+        or (mode == "hostile" and int(hostile_streak) < 3)
+    )
+    if compact_conflict and not important:
+        max_chars = 125 if mode == "hostile" else 155
+        pieces = _compact_conflict_text(clean, max_chars=max_chars, max_sentences=2)
+        compact = " ".join(pieces).strip()
+        if len(pieces) >= 2 and rng.random() < CONFLICT_TWO_MESSAGE_CHANCE:
+            return HumanizedReply(
+                (pieces[0], pieces[1]),
+                (0.0, rng.uniform(0.65, 1.55)),
+                "conflict_split",
+            )
+        return HumanizedReply((compact,), (0.0,), "conflict_compact")
 
     if not important:
         roll = rng.random()

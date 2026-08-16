@@ -8786,6 +8786,19 @@ async def send_answer(
             await message.reply_text("Голосовой тракт охрип. Держи ответ текстом.")
 
     trace = feedback_engine.get_current_trace()
+    current_hostile_streak = 0
+    if (
+        trace is not None
+        and getattr(trace, "conversation_mode", "") == "hostile"
+        and update.effective_chat
+        and update.effective_user
+        and update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+    ):
+        current_hostile_streak = hostile_streak_engine.current(
+            update.effective_chat.id,
+            update.effective_user.id,
+        )
+
     if source_user_text is None:
         plan = humanizer_engine.HumanizedReply((answer_text,), (0.0,))
     else:
@@ -8793,6 +8806,7 @@ async def send_answer(
             answer_text,
             user_text=source_user_text,
             trace=trace,
+            hostile_streak=current_hostile_streak,
         )
 
     for message_index, planned_text in enumerate(plan.messages):

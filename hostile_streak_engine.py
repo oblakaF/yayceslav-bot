@@ -54,6 +54,16 @@ def is_escalated(count: int) -> bool:
     return HOSTILE_ESCALATION_FROM <= int(count) <= HOSTILE_STREAK_MAX
 
 
+def current(chat_id: int, user_id: int, *, now: float | None = None) -> int:
+    current_time = time.monotonic() if now is None else float(now)
+    entry = _STREAKS.get((int(chat_id), int(user_id)))
+    if entry is None:
+        return 0
+    if current_time - entry.last_at > HOSTILE_STREAK_WINDOW_SECONDS:
+        return 0
+    return entry.count
+
+
 def reset(chat_id: int | None = None, user_id: int | None = None) -> None:
     if chat_id is None and user_id is None:
         _STREAKS.clear()

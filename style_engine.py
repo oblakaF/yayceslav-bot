@@ -62,7 +62,7 @@ _VOICE_PACK_WEIGHTS_BY_MODE: dict[str, dict[str, float]] = {
         VOICE_PACK_CLASSIC: 0.28,
         VOICE_PACK_YOUTH: 0.22,
         VOICE_PACK_SKOOF: 0.18,
-        VOICE_PACK_OLD_RUSSIAN: 0.07,
+        VOICE_PACK_OLD_RUSSIAN: 0.045,
         VOICE_PACK_BLAT: 0.10,
         VOICE_PACK_OPERATIVE: 0.03,
         VOICE_PACK_BATTLE_2017: 0.06,
@@ -76,7 +76,7 @@ _VOICE_PACK_WEIGHTS_BY_MODE: dict[str, dict[str, float]] = {
         VOICE_PACK_CLASSIC: 0.20,
         VOICE_PACK_YOUTH: 0.23,
         VOICE_PACK_SKOOF: 0.20,
-        VOICE_PACK_OLD_RUSSIAN: 0.09,
+        VOICE_PACK_OLD_RUSSIAN: 0.055,
         VOICE_PACK_BLAT: 0.15,
         VOICE_PACK_OPERATIVE: 0.03,
         VOICE_PACK_BATTLE_2017: 0.05,
@@ -90,7 +90,7 @@ _VOICE_PACK_WEIGHTS_BY_MODE: dict[str, dict[str, float]] = {
         VOICE_PACK_CLASSIC: 0.08,
         VOICE_PACK_YOUTH: 0.22,
         VOICE_PACK_SKOOF: 0.16,
-        VOICE_PACK_OLD_RUSSIAN: 0.06,
+        VOICE_PACK_OLD_RUSSIAN: 0.040,
         VOICE_PACK_BLAT: 0.22,
         VOICE_PACK_OPERATIVE: 0.05,
         VOICE_PACK_BATTLE_2017: 0.11,
@@ -104,7 +104,7 @@ _VOICE_PACK_WEIGHTS_BY_MODE: dict[str, dict[str, float]] = {
         VOICE_PACK_CLASSIC: 0.04,
         VOICE_PACK_YOUTH: 0.18,
         VOICE_PACK_SKOOF: 0.15,
-        VOICE_PACK_OLD_RUSSIAN: 0.05,
+        VOICE_PACK_OLD_RUSSIAN: 0.030,
         VOICE_PACK_BLAT: 0.27,
         VOICE_PACK_OPERATIVE: 0.07,
         VOICE_PACK_BATTLE_2017: 0.14,
@@ -318,9 +318,9 @@ def _base_length_weights(ctx: ResponseLengthContext) -> dict[str, float]:
 
     if ctx.conversation_mode == "challenge":
         return {
-            "micro": 0.55,
-            "short": 0.38,
-            "normal": 0.07,
+            "micro": 0.78,
+            "short": 0.22,
+            "normal": 0.00,
             "long": 0.00,
         }
 
