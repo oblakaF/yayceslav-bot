@@ -41,7 +41,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add bot.py style_engine.py voice_runtime.py .github/workflows/v2-ci.yml tests/test_hostile_brevity_runtime.py
+          git add bot.py style_engine.py voice_runtime.py tests/test_hostile_brevity_runtime.py
           git diff --cached --quiet && exit 0
           git commit -m "Fix hostile escalation and feedback diagnostics"
           git push
