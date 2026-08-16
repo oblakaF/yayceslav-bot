@@ -1,6 +1,5 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
-
-import pytest
 
 import bot
 
@@ -82,8 +81,7 @@ class _FakeApplication:
         self.bot = _FakeBot()
 
 
-@pytest.mark.asyncio
-async def test_scheduler_assigns_even_when_hard_mode_is_off(tmp_path, monkeypatch):
+def test_scheduler_assigns_even_when_hard_mode_is_off(tmp_path, monkeypatch):
     _fresh_db(tmp_path, monkeypatch)
     chat_id = -2002
     user_id = 77
@@ -99,7 +97,7 @@ async def test_scheduler_assigns_even_when_hard_mode_is_off(tmp_path, monkeypatc
     monkeypatch.setattr(bot, "pick_new_title", lambda previous: "Титул теста")
 
     app = _FakeApplication()
-    await bot.run_due_daily_titles(app)
+    asyncio.run(bot.run_due_daily_titles(app))
 
     assert len(app.bot.messages) == 1
     assert "Вася" in app.bot.messages[0][1]
@@ -110,12 +108,11 @@ async def test_scheduler_assigns_even_when_hard_mode_is_off(tmp_path, monkeypatc
     assert profile["current_title"] == "Титул теста"
 
     # Повторная минутная проверка не должна отправить второй титул.
-    await bot.run_due_daily_titles(app)
+    asyncio.run(bot.run_due_daily_titles(app))
     assert len(app.bot.messages) == 1
 
 
-@pytest.mark.asyncio
-async def test_failed_announcement_retries_same_winner(tmp_path, monkeypatch):
+def test_failed_announcement_retries_same_winner(tmp_path, monkeypatch):
     _fresh_db(tmp_path, monkeypatch)
     chat_id = -3003
     user_id = 88
@@ -143,13 +140,13 @@ async def test_failed_announcement_retries_same_winner(tmp_path, monkeypatch):
     app = _FakeApplication()
     app.bot = FlakyBot()
 
-    await bot.run_due_daily_titles(app)
+    asyncio.run(bot.run_due_daily_titles(app))
     first = bot.get_daily_title_assignment_sync(chat_id, date)
     assert first is not None
     assert first["user_id"] == user_id
     assert first["announced_at"] is None
 
-    await bot.run_due_daily_titles(app)
+    asyncio.run(bot.run_due_daily_titles(app))
     second = bot.get_daily_title_assignment_sync(chat_id, date)
     assert second["user_id"] == first["user_id"]
     assert second["title"] == first["title"]
