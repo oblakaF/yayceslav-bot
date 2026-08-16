@@ -36,6 +36,39 @@ if bad_block not in text:
     raise RuntimeError("old broad voice-runtime insertion block not found")
 text = text.replace(bad_block, good_block, 1)
 
+old_picker = '''        voice_pack = style_engine.choose_voice_pack(
+            style_engine.VoicePackContext(
+                conversation_mode=conversation_mode,
+                selected_character=str(settings.get("character", "classic")),
+                serious_topic=(conversation_mode == "serious"),
+            ),
+            chat_native_weight=native_weight,
+            pack_multipliers=adaptation.get("pack_multipliers"),
+        )
+'''
+
+new_picker = '''        voice_ctx = style_engine.VoicePackContext(
+            conversation_mode=conversation_mode,
+            selected_character=str(settings.get("character", "classic")),
+            serious_topic=(conversation_mode == "serious"),
+        )
+        pack_multipliers = adaptation.get("pack_multipliers") or {}
+        if native_weight > 0.0 or pack_multipliers:
+            voice_pack = style_engine.choose_voice_pack(
+                voice_ctx,
+                chat_native_weight=native_weight,
+                pack_multipliers=pack_multipliers,
+            )
+        else:
+            # Сохраняем старый вызов для пустого/нового чата: это дешевле
+            # и совместимо с существующими monkeypatch-тестами/API.
+            voice_pack = style_engine.choose_voice_pack(voice_ctx)
+'''
+
+if old_picker not in text:
+    raise RuntimeError("adaptive voice picker block not found")
+text = text.replace(old_picker, new_picker, 1)
+
 old_cleanup = '''        # Не даём словарю расти бесконечно: старые одноразовые кандидаты
         # исчезают, устойчивые мемы/словечки остаются.
         connection.execute(
