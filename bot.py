@@ -44,6 +44,7 @@ import adaptation_cache
 import chat_native_engine
 import feedback_engine
 import humanizer_engine
+import hostile_streak_engine
 import daily_title_engine
 import humor_engine
 import intent
@@ -801,11 +802,18 @@ def get_chat_native_learning_status_sync(chat_id: int) -> dict[str, Any]:
                 (chat_id,),
             ).fetchone()[0]
         )
+        tracked_messages = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM bot_response_feedback WHERE chat_id = ?",
+                (chat_id,),
+            ).fetchone()[0]
+        )
     adaptation = get_chat_feedback_adaptation_sync(chat_id)
     return {
         **profile,
         "candidate_terms": candidate_terms,
         "observed_users": distinct_users,
+        "tracked_messages": tracked_messages,
         "reacted_messages": int(adaptation.get("reacted_messages", 0)),
     }
 
@@ -2740,6 +2748,9 @@ def cleanup_in_memory_state(
     stale_aggression_keys = aggression_engine.prune_stale_state(
         max_age_seconds, now=now
     )
+    stale_hostile_streaks = hostile_streak_engine.prune_stale_state(
+        max_age_seconds, now=now
+    )
     stale_length_chats = style_engine.prune_stale_state(
         max_age_seconds, now=now
     )
@@ -2758,6 +2769,7 @@ def cleanup_in_memory_state(
         "state_chats": stale_state_chats,
         "passive_chats": stale_passive_chats,
         "aggression_keys": stale_aggression_keys,
+        "hostile_streaks": stale_hostile_streaks,
         "length_chats": stale_length_chats,
     }
 
@@ -2987,6 +2999,19 @@ def build_full_system_instruction(
 
         conversation_mode = detect_conversation_mode(style_text)
 
+        hostile_streak = 0
+        if (
+            chat_id is not None
+            and user_id is not None
+            and chat_type in ("group", "supergroup")
+            and bot_was_mentioned
+        ):
+            hostile_streak = hostile_streak_engine.observe(
+                chat_id,
+                user_id,
+                hostile=(conversation_mode == "hostile"),
+            )
+
         resolved_intent, intent_confidence = intent.classify_intent(
             style_text,
             chat_type=chat_type,
@@ -3068,6 +3093,7 @@ def build_full_system_instruction(
                 response_preference=str(settings.get("response_length", "normal")),
                 serious_topic=(conversation_mode == "serious"),
                 character_state=character_state,
+                hostile_streak=hostile_streak,
             ),
             record=(chat_id is not None),
         )
@@ -10331,6 +10357,19 @@ async def message_reaction_feedback_handler(
     )
     if updated:
         adaptation_cache.invalidate("feedback", reaction.chat.id)
+        logging.info(
+            "Reaction feedback matched chat=%s message=%s score_delta=%.2f count_delta=%s",
+            reaction.chat.id,
+            reaction.message_id,
+            score_delta,
+            count_delta,
+        )
+    else:
+        logging.info(
+            "Reaction feedback received for untracked message chat=%s message=%s",
+            reaction.chat.id,
+            reaction.message_id,
+        )
 
 
 async def chat_native_status_command(
@@ -10363,6 +10402,7 @@ async def chat_native_status_command(
         f"Статус: {state}\n"
         f"Участников в обучающей выборке: {status.get('observed_users', 0)}\n"
         f"Кандидатов-термов: {status.get('candidate_terms', 0)}\n"
+        f"Отслеживаемых ответов Яйцеслава: {status.get('tracked_messages', 0)}\n"
         f"Ответов с реакционной обратной связью: {status.get('reacted_messages', 0)}\n"
         f"Освоено: {learned}"
     )

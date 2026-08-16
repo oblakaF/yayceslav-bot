@@ -135,6 +135,7 @@ class ResponseLengthContext:
     response_preference: str = "normal"
     serious_topic: bool = False
     character_state: str = "normal"
+    hostile_streak: int = 0
 
 
 @dataclass(frozen=True)
@@ -143,6 +144,8 @@ class ResponseLengthPlan:
     min_chars: int
     max_chars: int
     target_chars: int
+    conversation_mode: str = "normal"
+    hostile_streak: int = 0
 
 
 _LENGTH_RANGES = {
@@ -295,12 +298,30 @@ def _base_length_weights(ctx: ResponseLengthContext) -> dict[str, float]:
             "long": 0.00,
         }
 
-    if ctx.conversation_mode in ("challenge", "hostile"):
+    if ctx.conversation_mode == "hostile":
+        if ctx.hostile_streak >= 3:
+            # Третий-четвёртый подряд наезд: Яйцеслав может уже нормально
+            # развернуться, но это всё ещё злой ответ, а не эссе.
+            return {
+                "micro": 0.10,
+                "short": 0.34,
+                "normal": 0.56,
+                "long": 0.00,
+            }
+        # Первый-второй наезд: чаще естественный короткий посыл.
         return {
-            "micro": 0.34,
-            "short": 0.44,
-            "normal": 0.19,
-            "long": 0.03,
+            "micro": 0.78,
+            "short": 0.22,
+            "normal": 0.00,
+            "long": 0.00,
+        }
+
+    if ctx.conversation_mode == "challenge":
+        return {
+            "micro": 0.55,
+            "short": 0.38,
+            "normal": 0.07,
+            "long": 0.00,
         }
 
     if ctx.message_intent in ("joke", "reaction", "small_talk"):
@@ -380,6 +401,27 @@ def _apply_history_bias(
     weights[last] *= 0.72
 
 
+def _range_for_context(
+    ctx: ResponseLengthContext,
+    category: str,
+) -> tuple[int, int]:
+    if ctx.conversation_mode == "hostile":
+        if ctx.hostile_streak >= 3:
+            return {
+                "micro": (25, 95),
+                "short": (80, 220),
+                "normal": (200, 450),
+                "long": (200, 450),
+            }[category]
+        return {
+            "micro": (12, 90),
+            "short": (55, 180),
+            "normal": (120, 220),
+            "long": (120, 220),
+        }[category]
+    return _LENGTH_RANGES[category]
+
+
 def choose_response_length(
     chat_id: int,
     ctx: ResponseLengthContext,
@@ -403,7 +445,11 @@ def choose_response_length(
         if record
         else deque(maxlen=5)
     )
-    _apply_history_bias(weights, tuple(history))
+    # В конфликте естественнее несколько коротких ответов подряд, чем
+    # искусственное чередование micro -> short -> normal ради разнообразия.
+    use_history_bias = ctx.conversation_mode != "hostile"
+    if use_history_bias:
+        _apply_history_bias(weights, tuple(history))
 
     category = _weighted_choice(weights, rng=rng)
 
@@ -411,13 +457,13 @@ def choose_response_length(
     # имела немного другой шанс. Поэтому два соседних ответа одного
     # чата не получают один и тот же класс длины, пока существует
     # хотя бы одна допустимая альтернатива с ненулевым весом.
-    if history and category == history[-1]:
+    if use_history_bias and history and category == history[-1]:
         alternatives = dict(weights)
         alternatives[history[-1]] = 0.0
         if any(weight > 0 for weight in alternatives.values()):
             category = _weighted_choice(alternatives, rng=rng)
 
-    min_chars, max_chars = _LENGTH_RANGES[category]
+    min_chars, max_chars = _range_for_context(ctx, category)
     target_chars = rng.randint(min_chars, max_chars)
 
     if record:
@@ -429,6 +475,8 @@ def choose_response_length(
         min_chars=min_chars,
         max_chars=max_chars,
         target_chars=target_chars,
+        conversation_mode=ctx.conversation_mode,
+        hostile_streak=ctx.hostile_streak,
     )
 
 
@@ -454,11 +502,27 @@ def build_length_instruction(plan: ResponseLengthPlan) -> str:
         ),
     }
 
+    hostile_rule = ""
+    if plan.conversation_mode == "hostile":
+        if plan.hostile_streak >= 3:
+            hostile_rule = (
+                "\nЭто уже третий-четвёртый подряд наезд этого человека: можно развернуться "
+                "в злой ответ на 2–5 предложений, но максимум примерно 450 символов. "
+                "Не превращай разнос в лекцию."
+            )
+        else:
+            hostile_rule = (
+                "\nЭто первый-второй подряд наезд: ответ должен быть особенно коротким. "
+                "Одна матерная фраза или короткий огрызок считается полноценным ответом; "
+                "после него остановись."
+            )
+
     return (
         "\n\nДинамическая длина этого конкретного ответа:\n"
         f"Класс: {plan.category}; ориентир около {plan.target_chars} символов.\n"
         f"{rules[plan.category]}\n"
         "Это ориентир, а не обязанность добивать текст до числа символов."
+        + hostile_rule
     )
 
 
