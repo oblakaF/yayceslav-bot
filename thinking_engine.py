@@ -7,6 +7,148 @@
 
 from __future__ import annotations
 
+# ============================================================
+# GEMINI MODEL FALLBACK
+#
+# 3.6 Flash remains primary. If Google explicitly reports that the
+# per-day free-tier quota for that model is exhausted, the same request
+# is retried once with 3.1 Flash-Lite. Further requests use the fallback
+# until the Pacific calendar day changes, when 3.6 is tried again.
+# ============================================================
+
+import logging
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from google.genai import models as _genai_models
+
+
+PRIMARY_MODEL = "gemini-3.6-flash"
+FALLBACK_MODEL = "gemini-3.1-flash-lite"
+
+try:
+    _PACIFIC_TIMEZONE = ZoneInfo("America/Los_Angeles")
+except ZoneInfoNotFoundError:
+    # Missing tzdata must never prevent the bot from starting.
+    # UTC is only a conservative fallback; at worst the bot tries 3.6
+    # once before the real Pacific reset and immediately falls back again.
+    _PACIFIC_TIMEZONE = timezone.utc
+
+_PRIMARY_QUOTA_EXHAUSTED_PT_DATE: str | None = None
+_ORIGINAL_ASYNC_GENERATE_CONTENT = _genai_models.AsyncModels.generate_content
+
+
+def _today_pacific_date() -> str:
+    """Calendar date used by Google free-tier daily quota resets."""
+
+    return datetime.now(_PACIFIC_TIMEZONE).date().isoformat()
+
+
+def _is_primary_daily_quota_error(error: Exception) -> bool:
+    """Match only the per-day model quota, not transient RPM/TPM 429s."""
+
+    message = str(error).lower()
+
+    if "429" not in message or "resource_exhausted" not in message:
+        return False
+
+    return (
+        "generaterequestsperdayperprojectpermodel-freetier" in message
+        or "requestsperdayperprojectpermodel" in message
+    )
+
+
+def _route_gemini_model(requested_model: str) -> str:
+    """Select primary/fallback model from the remembered quota state."""
+
+    global _PRIMARY_QUOTA_EXHAUSTED_PT_DATE
+
+    if requested_model != PRIMARY_MODEL:
+        return requested_model
+
+    today = _today_pacific_date()
+
+    if _PRIMARY_QUOTA_EXHAUSTED_PT_DATE == today:
+        return FALLBACK_MODEL
+
+    if _PRIMARY_QUOTA_EXHAUSTED_PT_DATE is not None:
+        logging.info(
+            "Gemini daily quota window changed; trying %s again.",
+            PRIMARY_MODEL,
+        )
+        _PRIMARY_QUOTA_EXHAUSTED_PT_DATE = None
+
+    return PRIMARY_MODEL
+
+
+async def _generate_content_with_fallback(
+    self: Any,
+    *,
+    model: str,
+    contents: Any,
+    config: Any = None,
+) -> Any:
+    """Transparent 3.6 -> 3.1 fallback for an exhausted daily quota."""
+
+    global _PRIMARY_QUOTA_EXHAUSTED_PT_DATE
+
+    routed_model = _route_gemini_model(model)
+
+    try:
+        return await _ORIGINAL_ASYNC_GENERATE_CONTENT(
+            self,
+            model=routed_model,
+            contents=contents,
+            config=config,
+        )
+
+    except Exception as error:
+        if (
+            model == PRIMARY_MODEL
+            and routed_model == PRIMARY_MODEL
+            and _is_primary_daily_quota_error(error)
+        ):
+            _PRIMARY_QUOTA_EXHAUSTED_PT_DATE = _today_pacific_date()
+
+            logging.warning(
+                "Gemini daily quota exhausted for %s; switching to %s "
+                "for Pacific date %s.",
+                PRIMARY_MODEL,
+                FALLBACK_MODEL,
+                _PRIMARY_QUOTA_EXHAUSTED_PT_DATE,
+            )
+
+            return await _ORIGINAL_ASYNC_GENERATE_CONTENT(
+                self,
+                model=FALLBACK_MODEL,
+                contents=contents,
+                config=config,
+            )
+
+        raise
+
+
+def _install_gemini_model_fallback() -> None:
+    """Install the wrapper once for every async generate_content call."""
+
+    current = _genai_models.AsyncModels.generate_content
+
+    if getattr(current, "_yayceslav_model_fallback", False):
+        return
+
+    setattr(
+        _generate_content_with_fallback,
+        "_yayceslav_model_fallback",
+        True,
+    )
+
+    _genai_models.AsyncModels.generate_content = (  # type: ignore[method-assign]
+        _generate_content_with_fallback
+    )
+
+
+_install_gemini_model_fallback()
+
 import re
 from typing import Any
 
