@@ -88,6 +88,7 @@ def choose_verdict(
     conversation_mode: str,
     *,
     taunt_already_selected: bool = False,
+    chance_multiplier: float = 1.0,
     rng=random,
 ) -> str | None:
     """Возвращает редкий хвост только для conflict/banter режимов."""
@@ -99,7 +100,8 @@ def choose_verdict(
     if taunt_already_selected:
         return None
 
-    if rng.random() >= VERDICT_CHANCE:
+    effective_chance = max(0.0, min(1.0, VERDICT_CHANCE * chance_multiplier))
+    if rng.random() >= effective_chance:
         return None
 
     candidates = [item for item in VERDICTS if item not in _RECENT]

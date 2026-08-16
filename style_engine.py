@@ -28,6 +28,7 @@ VOICE_PACK_RUNET_2007 = "runet_2007"
 VOICE_PACK_RUNET_2012_2016 = "runet_2012_2016"
 VOICE_PACK_LAN_2000S = "lan_2000s"
 VOICE_PACK_RUNET_CLASSIC = "runet_classic"
+VOICE_PACK_CHAT_NATIVE = "chat_native"
 
 VOICE_PACKS = (
     VOICE_PACK_CLASSIC,
@@ -42,6 +43,7 @@ VOICE_PACKS = (
     VOICE_PACK_RUNET_2012_2016,
     VOICE_PACK_LAN_2000S,
     VOICE_PACK_RUNET_CLASSIC,
+    VOICE_PACK_CHAT_NATIVE,
 )
 
 # Пользовательские character-настройки, которые должны жёстко
@@ -212,6 +214,8 @@ def choose_voice_pack(
     ctx: VoicePackContext,
     *,
     rng=random,
+    chat_native_weight: float = 0.0,
+    pack_multipliers: Mapping[str, float] | None = None,
 ) -> str:
     """Выбирает ровно один взаимоисключающий речевой пакет."""
 
@@ -229,6 +233,20 @@ def choose_voice_pack(
             _VOICE_PACK_WEIGHTS_BY_MODE["normal"],
         )
     )
+
+    if pack_multipliers:
+        for pack_name, multiplier in pack_multipliers.items():
+            if pack_name in weights:
+                weights[pack_name] *= max(0.85, min(1.15, float(multiplier)))
+
+    if chat_native_weight > 0.0 and mode != "serious":
+        native_multiplier = 1.0
+        if pack_multipliers:
+            native_multiplier = max(
+                0.85,
+                min(1.15, float(pack_multipliers.get(VOICE_PACK_CHAT_NATIVE, 1.0))),
+            )
+        weights[VOICE_PACK_CHAT_NATIVE] = max(0.0, chat_native_weight) * native_multiplier
 
     # Chaos не создаёт новый стиль и не смешивает существующие — просто
     # уменьшает шанс нейтрального classic в пользу характерных пакетов.

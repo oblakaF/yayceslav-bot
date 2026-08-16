@@ -29,16 +29,20 @@ from telegram import (
     ReactionTypeEmoji,
     Update,
 )
-from telegram.constants import ChatAction, ChatType
+from telegram.constants import ChatAction, ChatType, UpdateType
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    MessageReactionHandler,
     filters,
 )
 import aggression_engine
+import chat_native_engine
+import feedback_engine
+import humanizer_engine
 import daily_title_engine
 import humor_engine
 import intent
@@ -469,10 +473,334 @@ def initialize_stats_database() -> None:
             "weekly_report_last_sent_date TEXT",
         )
 
+        # 13-й динамический voice pack: храним только агрегированные
+        # слова/короткие фразы, а не архив исходных сообщений.
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_native_terms (
+                chat_id INTEGER NOT NULL,
+                term TEXT NOT NULL,
+                occurrences INTEGER NOT NULL DEFAULT 0,
+                first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+                last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (chat_id, term)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_native_term_users (
+                chat_id INTEGER NOT NULL,
+                term TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+                last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (chat_id, term, user_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_native_profiles (
+                chat_id INTEGER PRIMARY KEY,
+                terms_json TEXT NOT NULL DEFAULT '[]',
+                distinct_users INTEGER NOT NULL DEFAULT 0,
+                compiled_at TEXT
+            )
+            """
+        )
+
+        # Метаданные только собственных ответов бота. Полный текст ответа
+        # здесь не хранится: нужен message_id + тип поведения для реакции.
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_response_feedback (
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                voice_pack TEXT NOT NULL,
+                humor_type TEXT,
+                verdict_used INTEGER NOT NULL DEFAULT 0,
+                reaction_score REAL NOT NULL DEFAULT 0,
+                reaction_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (chat_id, message_id)
+            )
+            """
+        )
+
         connection.commit()
 
 
 initialize_stats_database()
+
+
+def record_chat_native_message_sync(
+    chat_id: int,
+    user_id: int,
+    text: str,
+    chat_type: str = "group",
+) -> int:
+    """Сохраняет только агрегированные кандидаты локального сленга."""
+
+    terms = chat_native_engine.extract_candidate_terms(text)
+    if not terms:
+        return 0
+
+    with get_db_connection() as connection:
+        connection.execute(
+            "INSERT OR IGNORE INTO chats (chat_id, chat_type) VALUES (?, ?)",
+            (chat_id, chat_type),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+            (user_id,),
+        )
+        for term in terms:
+            connection.execute(
+                """
+                INSERT INTO chat_native_terms (chat_id, term, occurrences)
+                VALUES (?, ?, 1)
+                ON CONFLICT(chat_id, term) DO UPDATE SET
+                    occurrences = occurrences + 1,
+                    last_seen = datetime('now')
+                """,
+                (chat_id, term),
+            )
+            connection.execute(
+                """
+                INSERT INTO chat_native_term_users (chat_id, term, user_id)
+                VALUES (?, ?, ?)
+                ON CONFLICT(chat_id, term, user_id) DO UPDATE SET
+                    last_seen = datetime('now')
+                """,
+                (chat_id, term, user_id),
+            )
+        connection.commit()
+    return len(terms)
+
+
+def get_chat_native_profile_sync(chat_id: int) -> dict[str, Any]:
+    with get_db_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT terms_json, distinct_users, compiled_at
+            FROM chat_native_profiles
+            WHERE chat_id = ?
+            """,
+            (chat_id,),
+        ).fetchone()
+    if row is None:
+        return {"terms": [], "distinct_users": 0, "compiled_at": None}
+    try:
+        terms = json.loads(row[0] or "[]")
+    except (TypeError, json.JSONDecodeError):
+        terms = []
+    return {
+        "terms": [str(term) for term in terms if str(term).strip()],
+        "distinct_users": int(row[1] or 0),
+        "compiled_at": row[2],
+    }
+
+
+def refresh_due_chat_native_profiles_sync() -> int:
+    """Первый pack собирает после достаточной выборки, затем обновляет раз в неделю."""
+
+    now = datetime.now(timezone.utc)
+    refreshed = 0
+    with get_db_connection() as connection:
+        chat_rows = connection.execute(
+            "SELECT DISTINCT chat_id FROM chat_native_terms ORDER BY chat_id"
+        ).fetchall()
+
+        for (chat_id_raw,) in chat_rows:
+            chat_id = int(chat_id_raw)
+            profile_row = connection.execute(
+                "SELECT compiled_at FROM chat_native_profiles WHERE chat_id = ?",
+                (chat_id,),
+            ).fetchone()
+            if profile_row and profile_row[0]:
+                try:
+                    compiled_at = datetime.fromisoformat(str(profile_row[0]))
+                    if compiled_at.tzinfo is None:
+                        compiled_at = compiled_at.replace(tzinfo=timezone.utc)
+                    if (now - compiled_at).total_seconds() < chat_native_engine.PROFILE_REFRESH_SECONDS:
+                        continue
+                except ValueError:
+                    pass
+
+            stats_rows = connection.execute(
+                """
+                SELECT terms.term, terms.occurrences, COUNT(users.user_id)
+                FROM chat_native_terms AS terms
+                LEFT JOIN chat_native_term_users AS users
+                  ON users.chat_id = terms.chat_id AND users.term = terms.term
+                WHERE terms.chat_id = ?
+                GROUP BY terms.term, terms.occurrences
+                """,
+                (chat_id,),
+            ).fetchall()
+            distinct_users = int(
+                connection.execute(
+                    "SELECT COUNT(DISTINCT user_id) FROM chat_native_term_users WHERE chat_id = ?",
+                    (chat_id,),
+                ).fetchone()[0]
+            )
+            terms = chat_native_engine.compile_profile_terms(stats_rows)
+            if not chat_native_engine.profile_is_ready(terms, distinct_users):
+                continue
+
+            connection.execute(
+                """
+                INSERT INTO chat_native_profiles (chat_id, terms_json, distinct_users, compiled_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    terms_json = excluded.terms_json,
+                    distinct_users = excluded.distinct_users,
+                    compiled_at = excluded.compiled_at
+                """,
+                (
+                    chat_id,
+                    json.dumps(list(terms), ensure_ascii=False),
+                    distinct_users,
+                    now.isoformat(),
+                ),
+            )
+            refreshed += 1
+
+        # Не даём словарю расти бесконечно: редкие кандидаты, которые
+        # не появлялись 60 дней, забываются. Устойчивые локальные мемы
+        # (5+ употреблений) сохраняются и могут вернуться в следующий pack.
+        connection.execute(
+            """
+            DELETE FROM chat_native_terms
+            WHERE last_seen < datetime('now', '-60 days')
+              AND occurrences < 5
+            """
+        )
+        connection.execute(
+            """
+            DELETE FROM chat_native_term_users
+            WHERE NOT EXISTS (
+                SELECT 1 FROM chat_native_terms t
+                WHERE t.chat_id = chat_native_term_users.chat_id
+                  AND t.term = chat_native_term_users.term
+            )
+            """
+        )
+        connection.commit()
+    return refreshed
+
+
+async def refresh_due_chat_native_profiles() -> int:
+    return await asyncio.to_thread(refresh_due_chat_native_profiles_sync)
+
+
+def store_bot_response_feedback_sync(
+    chat_id: int,
+    message_id: int,
+    trace: feedback_engine.ResponseTrace,
+) -> None:
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO bot_response_feedback
+                (chat_id, message_id, voice_pack, humor_type, verdict_used)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                chat_id,
+                message_id,
+                trace.voice_pack,
+                trace.humor_type,
+                int(trace.verdict_used),
+            ),
+        )
+        # Последних 500 ответов на чат более чем достаточно для окна 20.
+        connection.execute(
+            """
+            DELETE FROM bot_response_feedback
+            WHERE chat_id = ?
+              AND rowid NOT IN (
+                  SELECT rowid FROM bot_response_feedback
+                  WHERE chat_id = ?
+                  ORDER BY created_at DESC, message_id DESC
+                  LIMIT 500
+              )
+            """,
+            (chat_id, chat_id),
+        )
+        connection.commit()
+
+
+def apply_bot_reaction_delta_sync(
+    chat_id: int,
+    message_id: int,
+    score_delta: float,
+    count_delta: int,
+) -> bool:
+    with get_db_connection() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE bot_response_feedback
+            SET reaction_score = reaction_score + ?,
+                reaction_count = MAX(0, reaction_count + ?)
+            WHERE chat_id = ? AND message_id = ?
+            """,
+            (score_delta, count_delta, chat_id, message_id),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
+
+
+def get_chat_feedback_adaptation_sync(chat_id: int) -> dict[str, Any]:
+    with get_db_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT voice_pack, humor_type, verdict_used,
+                   reaction_score, reaction_count
+            FROM bot_response_feedback
+            WHERE chat_id = ? AND reaction_count > 0
+            ORDER BY created_at DESC, message_id DESC
+            LIMIT 200
+            """,
+            (chat_id,),
+        ).fetchall()
+    return feedback_engine.build_adaptation(
+        [
+            {
+                "voice_pack": row[0],
+                "humor_type": row[1],
+                "verdict_used": bool(row[2]),
+                "reaction_score": float(row[3]),
+                "reaction_count": int(row[4]),
+            }
+            for row in rows
+        ]
+    )
+
+
+def get_chat_native_learning_status_sync(chat_id: int) -> dict[str, Any]:
+    profile = get_chat_native_profile_sync(chat_id)
+    with get_db_connection() as connection:
+        candidate_terms = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM chat_native_terms WHERE chat_id = ?",
+                (chat_id,),
+            ).fetchone()[0]
+        )
+        distinct_users = int(
+            connection.execute(
+                "SELECT COUNT(DISTINCT user_id) FROM chat_native_term_users WHERE chat_id = ?",
+                (chat_id,),
+            ).fetchone()[0]
+        )
+    adaptation = get_chat_feedback_adaptation_sync(chat_id)
+    return {
+        **profile,
+        "candidate_terms": candidate_terms,
+        "observed_users": distinct_users,
+        "reacted_messages": int(adaptation.get("reacted_messages", 0)),
+    }
 
 
 def get_user_settings_sync(
@@ -2465,6 +2793,10 @@ async def on_application_startup(
         daily_title_scheduler_loop(application),
         name="daily_title_scheduler",
     )
+    application.create_task(
+        chat_native_refresh_loop(application),
+        name="chat_native_refresh",
+    )
 
 
 async def on_application_shutdown(
@@ -2681,13 +3013,39 @@ def build_full_system_instruction(
             character_state
         )
 
-        voice_pack = style_engine.choose_voice_pack(
-            style_engine.VoicePackContext(
-                conversation_mode=conversation_mode,
-                selected_character=str(settings.get("character", "classic")),
-                serious_topic=(conversation_mode == "serious"),
-            )
+        adaptation = (
+            get_chat_feedback_adaptation_sync(chat_id)
+            if chat_id is not None and chat_type in ("group", "supergroup")
+            else feedback_engine.build_adaptation(())
         )
+        native_profile = (
+            get_chat_native_profile_sync(chat_id)
+            if chat_id is not None and chat_type in ("group", "supergroup")
+            else {"terms": []}
+        )
+        native_terms = tuple(native_profile.get("terms") or ())
+        native_weight = (
+            chat_native_engine.base_pack_weight(conversation_mode)
+            if native_terms
+            else 0.0
+        )
+
+        voice_ctx = style_engine.VoicePackContext(
+            conversation_mode=conversation_mode,
+            selected_character=str(settings.get("character", "classic")),
+            serious_topic=(conversation_mode == "serious"),
+        )
+        pack_multipliers = adaptation.get("pack_multipliers") or {}
+        if native_weight > 0.0 or pack_multipliers:
+            voice_pack = style_engine.choose_voice_pack(
+                voice_ctx,
+                chat_native_weight=native_weight,
+                pack_multipliers=pack_multipliers,
+            )
+        else:
+            # Сохраняем старый вызов для пустого/нового чата: это дешевле
+            # и совместимо с существующими monkeypatch-тестами/API.
+            voice_pack = style_engine.choose_voice_pack(voice_ctx)
         length_plan = style_engine.choose_response_length(
             chat_id if chat_id is not None else 0,
             style_engine.ResponseLengthContext(
@@ -2700,14 +3058,37 @@ def build_full_system_instruction(
             ),
             record=(chat_id is not None),
         )
-        voice_material = voice_runtime.choose_voice_material(
-            voice_pack,
-            conversation_mode=conversation_mode,
-            roughness=str(settings.get("roughness", "medium")),
-            serious_topic=(conversation_mode == "serious"),
-        )
         current_instruction += style_engine.build_length_instruction(length_plan)
-        current_instruction += voice_runtime.build_voice_instruction(voice_material)
+
+        voice_material = None
+        if voice_pack == style_engine.VOICE_PACK_CHAT_NATIVE:
+            current_instruction += chat_native_engine.build_pack_instruction(
+                native_terms,
+                conversation_mode=conversation_mode,
+                roughness=str(settings.get("roughness", "medium")),
+            )
+        else:
+            voice_material = voice_runtime.choose_voice_material(
+                voice_pack,
+                conversation_mode=conversation_mode,
+                roughness=str(settings.get("roughness", "medium")),
+                serious_topic=(conversation_mode == "serious"),
+                adaptation=adaptation,
+            )
+            current_instruction += voice_runtime.build_voice_instruction(voice_material)
+
+        feedback_engine.set_current_trace(
+            feedback_engine.ResponseTrace(
+                chat_id=chat_id,
+                chat_type=chat_type,
+                voice_pack=voice_pack,
+                humor_type=(voice_material.category if voice_material else None),
+                verdict_used=bool(voice_material and voice_material.verdict),
+                serious_topic=(conversation_mode == "serious"),
+                conversation_mode=conversation_mode,
+                message_intent=resolved_intent,
+            )
+        )
 
         if (
             bot_was_mentioned
@@ -2854,6 +3235,8 @@ async def ask_gemini(
     thinking_level: str | None = None,
 ) -> str:
     """Отправляет запрос Gemini с тремя попытками."""
+
+    feedback_engine.reset_current_trace()
 
     if isinstance(contents, str):
         style_text = contents
@@ -6618,6 +7001,23 @@ async def daily_title_scheduler_loop(application: Application) -> None:
             )
 
 
+CHAT_NATIVE_REFRESH_CHECK_INTERVAL_SECONDS = 6 * 60 * 60
+
+
+async def chat_native_refresh_loop(application: Application) -> None:
+    """Периодически собирает/обновляет 13-й voice pack каждого чата."""
+
+    del application
+    while True:
+        try:
+            refreshed = await refresh_due_chat_native_profiles()
+            if refreshed:
+                logging.info("Обновлены chat_native профили: %s", refreshed)
+        except Exception as error:
+            logging.warning("Ошибка обновления chat_native: %s", error)
+        await asyncio.sleep(CHAT_NATIVE_REFRESH_CHECK_INTERVAL_SECONDS)
+
+
 # ============================================================
 # АНТИСПАМ ДЛЯ СЛУЧАЙНЫХ ВМЕШАТЕЛЬСТВ В ГРУППЕ
 #
@@ -6810,6 +7210,17 @@ async def hard_mode_listener(
     # Команды в память не записываем
     if text.startswith("/"):
         return
+
+    # 13-й pack учится и на прямых обращениях, и на фоне чата. Полный
+    # текст в SQLite не сохраняется — только извлечённые агрегированные термы.
+    if not is_serious_text(text.lower()):
+        await asyncio.to_thread(
+            record_chat_native_message_sync,
+            update.effective_chat.id,
+            update.effective_user.id,
+            text,
+            str(update.effective_chat.type),
+        )
 
     bot_username = await get_bot_username(
         context
@@ -7207,6 +7618,7 @@ HELP_GROUP_ANALYTICS_SECTION = (
     "/awards — шуточные награды недели\n"
     "/week_auto_status — статус автоматического недельного отчёта\n"
     "/title_status — статус автоматического титула дня\n"
+    "/chat_native_status — чему Яйцеслав уже научился у этого чата\n"
 )
 
 HELP_ENTERTAINMENT_SECTION = (
@@ -8313,85 +8725,77 @@ async def send_answer(
     text: str,
     force_voice: bool = False,
     show_buttons: bool = False,
+    source_user_text: str | None = None,
 ) -> None:
-    """
-    Отправляет либо голосовой, либо текстовый ответ.
-
-    force_voice=True означает обязательную озвучку.
-    Команда /voice_on включает голосовой режим постоянно.
-    """
+    """Отправляет voice/text; в групповой болтовне иногда делает ответ человечнее."""
 
     message = update.effective_message
-
     if not message:
         return
 
-    answer_text = (
-        text
-        or ""
-    ).strip()
-
+    answer_text = (text or "").strip()
     if not answer_text:
-        answer_text = (
-            "Яйцеслав задумался и ничего не изрёк. "
-            "Редкий анлак."
-        )
+        answer_text = "Яйцеслав задумался и ничего не изрёк. Редкий анлак."
 
-    use_voice = (
-        force_voice
-        or voice_mode_enabled(context)
-    )
-
+    use_voice = force_voice or voice_mode_enabled(context)
     if use_voice:
         try:
-            await send_voice_answer(
-                update,
-                answer_text,
-            )
+            await send_voice_answer(update, answer_text)
             return
-
         except Exception as error:
-            logging.exception(
-                "Ошибка голосового ответа: %s",
-                error,
-            )
+            logging.exception("Ошибка голосового ответа: %s", error)
+            await message.reply_text("Голосовой тракт охрип. Держи ответ текстом.")
 
-            await message.reply_text(
-                "Голосовой тракт охрип. "
-                "Держи ответ текстом."
-            )
-
-    # Telegram ограничивает одно сообщение,
-    # поэтому длинный ответ делим на части.
-    for position in range(
-        0,
-        len(answer_text),
-        4000,
-    ):
-        is_last_part = (
-            position + 4000
-            >= len(answer_text)
+    trace = feedback_engine.get_current_trace()
+    if source_user_text is None:
+        plan = humanizer_engine.HumanizedReply((answer_text,), (0.0,))
+    else:
+        plan = humanizer_engine.humanize_reply(
+            answer_text,
+            user_text=source_user_text,
+            trace=trace,
         )
 
-        reply_markup = None
+    for message_index, planned_text in enumerate(plan.messages):
+        delay = plan.delays[message_index] if message_index < len(plan.delays) else 0.0
+        if delay > 0:
+            await asyncio.sleep(delay)
 
-        if (
-            show_buttons
-            and update.effective_chat
-            and update.effective_chat.type
-            == ChatType.PRIVATE
-            and is_last_part
-        ):
-            reply_markup = (
-                build_private_answer_keyboard()
+        for position in range(0, len(planned_text), 4000):
+            is_last_chunk = position + 4000 >= len(planned_text)
+            is_last_planned = message_index == len(plan.messages) - 1
+            reply_markup = None
+            if (
+                show_buttons
+                and update.effective_chat
+                and update.effective_chat.type == ChatType.PRIVATE
+                and is_last_chunk
+                and is_last_planned
+            ):
+                reply_markup = build_private_answer_keyboard()
+
+            sent_message = await message.reply_text(
+                planned_text[position:position + 4000],
+                reply_markup=reply_markup,
             )
 
-        await message.reply_text(
-            answer_text[
-                position:position + 4000
-            ],
-            reply_markup=reply_markup,
-        )
+            is_typo_correction = (
+                plan.effect == "typo_correction" and message_index == 1
+            )
+            if (
+                trace is not None
+                and update.effective_chat
+                and update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+                and not is_typo_correction
+            ):
+                await asyncio.to_thread(
+                    store_bot_response_feedback_sync,
+                    update.effective_chat.id,
+                    sent_message.message_id,
+                    trace,
+                )
+
+
 async def answer_button_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -8924,6 +9328,7 @@ async def answer_text_message(
                 or settings_voice_enabled
             ),
             show_buttons=True,
+            source_user_text=user_text,
         )
         
         await increment_stat(
@@ -9885,6 +10290,69 @@ async def answer_voice_or_audio(
         )
 
 
+
+async def message_reaction_feedback_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Учит вкус конкретного чата по реакциям людей на сообщения Яйцеслава."""
+
+    del context
+    reaction = update.message_reaction
+    if reaction is None:
+        return
+
+    score_delta, count_delta = feedback_engine.reaction_delta(
+        reaction.old_reaction,
+        reaction.new_reaction,
+    )
+    if score_delta == 0 and count_delta == 0:
+        return
+
+    await asyncio.to_thread(
+        apply_bot_reaction_delta_sync,
+        reaction.chat.id,
+        reaction.message_id,
+        score_delta,
+        count_delta,
+    )
+
+
+async def chat_native_status_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Показывает, насколько 13-й пакет уже освоил конкретный чат."""
+
+    del context
+    if not update.message or not update.effective_chat:
+        return
+    if update.effective_chat.type == ChatType.PRIVATE:
+        await update.message.reply_text("chat_native существует только в группах.")
+        return
+
+    status = await asyncio.to_thread(
+        get_chat_native_learning_status_sync,
+        update.effective_chat.id,
+    )
+    terms = status.get("terms") or []
+    if terms:
+        learned = ", ".join(terms[:12])
+        state = "готов и используется как отдельный 13-й voice pack"
+    else:
+        learned = "пока недостаточно устойчивых словечек"
+        state = "ещё набирает выборку"
+
+    await update.message.reply_text(
+        "chat_native этого чата:\n"
+        f"Статус: {state}\n"
+        f"Участников в обучающей выборке: {status.get('observed_users', 0)}\n"
+        f"Кандидатов-термов: {status.get('candidate_terms', 0)}\n"
+        f"Ответов с реакционной обратной связью: {status.get('reacted_messages', 0)}\n"
+        f"Освоено: {learned}"
+    )
+
+
 async def gemini_version_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -10157,6 +10625,12 @@ def main() -> None:
     )
     application.add_handler(
         CommandHandler(
+            "chat_native_status",
+            chat_native_status_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
             "prophecy",
             prophecy_command,
         )
@@ -10300,6 +10774,11 @@ def main() -> None:
         )
     )
     application.add_handler(
+        MessageReactionHandler(
+            message_reaction_feedback_handler,
+        )
+    )
+    application.add_handler(
         MessageHandler(
             filters.PHOTO,
             answer_photo,
@@ -10344,7 +10823,13 @@ def main() -> None:
     )
 
     application.run_polling(
-        drop_pending_updates=True
+        drop_pending_updates=True,
+        allowed_updates=[
+            UpdateType.MESSAGE,
+            UpdateType.EDITED_MESSAGE,
+            UpdateType.CALLBACK_QUERY,
+            UpdateType.MESSAGE_REACTION,
+        ],
     )
 
 

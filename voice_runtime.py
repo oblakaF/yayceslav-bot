@@ -91,12 +91,18 @@ def choose_voice_material(
     conversation_mode: str = "normal",
     roughness: str = "medium",
     serious_topic: bool = False,
+    adaptation: dict | None = None,
     rng=random,
 ) -> VoiceMaterial:
     pack = voice_packs.get_voice_pack(pack_name)
 
     if serious_topic or conversation_mode == "serious" or pack.name == "classic":
         return VoiceMaterial(pack_name=pack.name)
+
+    adaptation = adaptation or {}
+    taunt_chance = max(0.12, min(0.28, CONFLICT_TAUNT_CHANCE * float(adaptation.get("taunt_multiplier", 1.0))))
+    layered_chance = max(0.15, min(0.35, LAYERED_JOKE_CHANCE_WITHIN_TAUNT * float(adaptation.get("layered_multiplier", 1.0))))
+    verdict_multiplier = max(0.85, min(1.15, float(adaptation.get("verdict_multiplier", 1.0))))
 
     primary: str | None = None
     secondary: str | None = None
@@ -112,7 +118,7 @@ def choose_voice_material(
             secondary = _pick_distinct(primary, pack.addresses, rng=rng)
 
     elif conversation_mode in {"hostile", "challenge"}:
-        taunt_selected = rng.random() < CONFLICT_TAUNT_CHANCE
+        taunt_selected = rng.random() < taunt_chance
 
         if taunt_selected:
             # Многослойный setup→punchline — редкий ПОДТИП уже разрешённого
@@ -120,7 +126,7 @@ def choose_voice_material(
             # всех конфликтных ответов. Проверка через верхнюю четверть
             # сохраняет старые deterministic ZeroRng-тесты обычного taunt.
             layered_selected = (
-                rng.random() >= (1.0 - LAYERED_JOKE_CHANCE_WITHIN_TAUNT)
+                rng.random() >= (1.0 - layered_chance)
             )
 
             if layered_selected:
@@ -158,6 +164,7 @@ def choose_voice_material(
         verdict = verdict_engine.choose_verdict(
             conversation_mode,
             taunt_already_selected=taunt_selected,
+            chance_multiplier=verdict_multiplier,
             rng=rng,
         )
 
