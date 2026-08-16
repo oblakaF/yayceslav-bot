@@ -13,11 +13,50 @@ LAZY_REFUSAL_CHANCE = 0.0008
 
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?…])\s+")
 _CYRILLIC_WORD_RE = re.compile(r"\b[а-яё]{5,12}\b", re.IGNORECASE)
-_CONFLICT_INPUT_RE = re.compile(
+
+# Strong insults/commands are conflict even without an explicit "ты".
+# Word stems deliberately cover common declined/derived forms.
+_STRONG_CONFLICT_RE = re.compile(
     r"(?:"
-    r"^\s*(?:псин\w*|шавк\w*)\b|"
-    r"\b(?:сука|сучка|еблан\w*|долбо[её]б\w*|заебал\w*|пиздабол\w*)\b|"
+    r"\b(?:"
+    r"сука|сучка|еблан\w*|долбо[её]б\w*|у[её]бок\w*|"
+    r"мудак\w*|мудач\w*|мудил\w*|чмо|мраз\w*|гнид\w*|"
+    r"ублюд\w*|падл\w*|сволоч\w*|говнюк\w*|говноед\w*|"
+    r"дебил\w*|идиот\w*|кретин\w*|придур\w*|недоум\w*|"
+    r"имбецил\w*|тупорыл\w*|безмозгл\w*|псин\w*|шавк\w*|"
+    r"пиздабол\w*|заебал\w*"
+    r")\b|"
     r"\b(?:нахуй|на\s+хуй)\b|"
+    r"\b(?:отъеб\w*|съеб\w*)\b|"
+    r"\b(?:иди|пош[её]л)\s+(?:нахуй|на\s+хуй|в\s+пизду)\b|"
+    r"\b(?:завали|закрой)\s+ебало\b|"
+    r"\bебало\s+(?:завали|закрой)\b|"
+    r"\bхуй\s+соси\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# These words are ambiguous in ordinary Russian. They count as an insult only
+# when directed at the interlocutor, or when the whole message is the insult.
+_AMBIGUOUS_INSULT = (
+    r"(?:клоун\w*|баран\w*|ос[её]л\w*|коз[её]л\w*|собак\w*|"
+    r"крыс\w*|свин\w*|петух\w*|обезьян\w*|скуф\w*|"
+    r"нищ\w*|бомж\w*|днищ\w*|позорищ\w*|ничтож\w*|"
+    r"жалк\w*|никч[её]мн\w*|тормоз\w*)"
+)
+_DIRECTED_AMBIGUOUS_CONFLICT_RE = re.compile(
+    rf"(?:"
+    rf"\b(?:ты|тебя|тебе|твой|твоя|тво[её]|твои)\b.{{0,28}}\b{_AMBIGUOUS_INSULT}\b|"
+    rf"\b{_AMBIGUOUS_INSULT}\b.{{0,20}}\b(?:ты|тебя|тебе)\b|"
+    rf"\bну\s+ты\s+и\s+{_AMBIGUOUS_INSULT}\b|"
+    rf"^\s*{_AMBIGUOUS_INSULT}\s*[!?.]*\s*$"
+    rf")",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Tone complaints are also kept compact even though they are not necessarily insults.
+_CONFLICT_STYLE_COMPLAINT_RE = re.compile(
+    r"(?:"
     r"\bдушн\w*\b|"
     r"\bпростын\w*\b|"
     r"много\s+текста|слишком\s+длинн\w*|короче\s+отвечай|не\s+пиши\s+столько"
@@ -84,7 +123,12 @@ def _important_request(user_text: str, trace) -> bool:
 
 
 def _looks_like_conflict(user_text: str) -> bool:
-    return bool(_CONFLICT_INPUT_RE.search(user_text or ""))
+    text = user_text or ""
+    return bool(
+        _STRONG_CONFLICT_RE.search(text)
+        or _DIRECTED_AMBIGUOUS_CONFLICT_RE.search(text)
+        or _CONFLICT_STYLE_COMPLAINT_RE.search(text)
+    )
 
 
 def _lazy_eligible_request(user_text: str, trace) -> bool:
