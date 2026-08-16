@@ -41,6 +41,7 @@ def test_primary_text_path_can_use_humanizer_but_media_paths_do_not():
 
 def test_chat_native_is_exclusive_voice_pack(monkeypatch):
     feedback_engine.reset_current_trace()
+    bot.adaptation_cache.clear()
     monkeypatch.setattr(
         bot,
         "get_chat_native_profile_sync",
@@ -74,3 +75,16 @@ def test_chat_native_is_exclusive_voice_pack(monkeypatch):
     trace = feedback_engine.get_current_trace()
     assert trace is not None
     assert trace.voice_pack == "chat_native"
+
+
+def test_runtime_caches_adaptation_and_invalidates_on_fresh_feedback():
+    instruction_source = inspect.getsource(bot.build_full_system_instruction)
+    reaction_source = inspect.getsource(bot.message_reaction_feedback_handler)
+    refresh_source = inspect.getsource(bot.refresh_due_chat_native_profiles_sync)
+
+    assert 'adaptation_cache.get_or_load(\n                "feedback"' in instruction_source
+    assert 'ttl_seconds=45.0' in instruction_source
+    assert 'adaptation_cache.get_or_load(\n                "native"' in instruction_source
+    assert 'ttl_seconds=300.0' in instruction_source
+    assert 'adaptation_cache.invalidate("feedback", reaction.chat.id)' in reaction_source
+    assert 'adaptation_cache.invalidate("native", refreshed_chat_id)' in refresh_source
