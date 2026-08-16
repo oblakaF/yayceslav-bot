@@ -12,6 +12,10 @@ jobs:
       matrix:
         python-version: ['3.12', '3.13']
     runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: '123456:TEST_TOKEN_FOR_AUDIT'
+      GEMINI_API_KEY: 'test-key-for-audit'
+      BOT_OWNER_ID: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
