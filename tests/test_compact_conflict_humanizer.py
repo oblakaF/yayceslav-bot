@@ -3,6 +3,7 @@ import random
 import feedback_engine
 import humanizer_engine
 import hostile_streak_engine
+import personality
 import style_engine
 
 
@@ -79,6 +80,7 @@ def test_expanded_strong_insults_are_detected():
     )
     for sample in samples:
         assert humanizer_engine._looks_like_conflict(sample), sample
+        assert personality.detect_conversation_mode(sample) == "hostile", sample
 
 
 def test_ambiguous_insults_require_directed_context():
@@ -96,6 +98,7 @@ def test_ambiguous_insults_require_directed_context():
     )
     for sample in directed:
         assert humanizer_engine._looks_like_conflict(sample), sample
+        assert personality.detect_conversation_mode(sample) == "hostile", sample
 
 
 def test_ambiguous_words_do_not_trigger_on_ordinary_sentences():
@@ -109,6 +112,7 @@ def test_ambiguous_words_do_not_trigger_on_ordinary_sentences():
     )
     for sample in ordinary:
         assert not humanizer_engine._looks_like_conflict(sample), sample
+        assert personality.detect_conversation_mode(sample) != "hostile", sample
 
 
 def test_directed_ambiguous_insult_is_physically_compacted():
