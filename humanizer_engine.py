@@ -13,6 +13,16 @@ LAZY_REFUSAL_CHANCE = 0.0008
 
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?…])\s+")
 _CYRILLIC_WORD_RE = re.compile(r"\b[а-яё]{5,12}\b", re.IGNORECASE)
+_CONFLICT_INPUT_RE = re.compile(
+    r"(?:"
+    r"\b(?:сука|сучка|еблан\w*|долбо[её]б\w*|заебал\w*|пиздабол\w*)\b|"
+    r"\b(?:нахуй|на\s+хуй)\b|"
+    r"\bдушн\w*\b|"
+    r"\bпростын\w*\b|"
+    r"много\s+текста|слишком\s+длинн\w*|короче\s+отвечай|не\s+пиши\s+столько"
+    r")",
+    re.IGNORECASE,
+)
 
 _IMPORTANT_INTENTS = {
     "technical_help",
@@ -70,6 +80,19 @@ def _important_request(user_text: str, trace) -> bool:
     if len(lowered) >= 160:
         return True
     return any(marker in lowered for marker in _IMPORTANT_MARKERS)
+
+
+def _looks_like_conflict(user_text: str) -> bool:
+    return bool(_CONFLICT_INPUT_RE.search(user_text or ""))
+
+
+def _lazy_eligible_request(user_text: str, trace) -> bool:
+    if _looks_like_conflict(user_text):
+        return False
+    intent_name = getattr(trace, "message_intent", "unknown") if trace else "unknown"
+    # "Лень" — редкий прикол только на реальном простом вопросе,
+    # а не на междометии, оскорблении или обычной реплике чата.
+    return intent_name == "question" and len((user_text or "").strip()) <= 120
 
 
 def _first_compact_sentence(text: str, limit: int = 190) -> str:
@@ -195,13 +218,21 @@ def humanize_reply(
     # Conflict rhythm is enforced after Gemini, not merely requested in the prompt.
     # First/second hostile turn and ordinary challenge: one or two compact phrases.
     # Third/fourth hostile turn remains the intentional longer flare-up.
-    compact_conflict = (
-        mode == "challenge"
-        or (mode == "hostile" and int(hostile_streak) < 3)
-    )
+    raw_conflict = _looks_like_conflict(user_text)
+    compact_conflict = raw_conflict or mode in {"challenge", "hostile"}
     if compact_conflict and not important:
-        max_chars = 125 if mode == "hostile" else 155
-        pieces = _compact_conflict_text(clean, max_chars=max_chars, max_sentences=2)
+        escalated = mode == "hostile" and int(hostile_streak) >= 3
+        if escalated:
+            max_chars = 220
+            max_sentences = 3
+        else:
+            max_chars = 95 if (raw_conflict or mode == "hostile") else 110
+            max_sentences = 2
+        pieces = _compact_conflict_text(
+            clean,
+            max_chars=max_chars,
+            max_sentences=max_sentences,
+        )
         compact = " ".join(pieces).strip()
         if len(pieces) >= 2 and rng.random() < CONFLICT_TWO_MESSAGE_CHANCE:
             return HumanizedReply(
@@ -211,7 +242,7 @@ def humanize_reply(
             )
         return HumanizedReply((compact,), (0.0,), "conflict_compact")
 
-    if not important:
+    if not important and _lazy_eligible_request(user_text, trace):
         roll = rng.random()
         if roll < LAZY_REFUSAL_CHANCE:
             return HumanizedReply(("бля лень. гугл есть.",), (0.0,), "lazy_refusal")

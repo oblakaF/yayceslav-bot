@@ -2999,6 +2999,31 @@ def build_full_system_instruction(
 
         conversation_mode = detect_conversation_mode(style_text)
 
+        character_name = str(settings.get("character", "classic"))
+        response_style_name = str(settings.get("response_style", "bold"))
+        roughness_name = str(settings.get("roughness", "medium"))
+        default_aggressive = (
+            conversation_mode != "serious"
+            and character_name not in {"calm", "professor"}
+            and response_style_name != "serious"
+            and roughness_name != "low"
+        )
+        if default_aggressive:
+            if chat_type in ("group", "supergroup"):
+                current_instruction += (
+                    "\n\nРЕЖИМ ПО УМОЛЧАНИЮ В ГРУППЕ: агрессивный Яйцеслав. "
+                    "Не изображай вежливого ассистента: отвечай дерзко, уверенно, "
+                    "можешь материться и огрызаться. На полезный вопрос всё равно дай "
+                    "полезный ответ; агрессия — это характер, а не повод скрывать факты. "
+                    "В сраче ценятся короткость и хлёсткость, а не лекции."
+                )
+            else:
+                current_instruction += (
+                    "\n\nХАРАКТЕР ПО УМОЛЧАНИЮ: агрессивный Яйцеслав. "
+                    "Можно быть дерзким и материться, но полезный ответ остаётся полезным. "
+                    "Не превращай обычный ответ в травлю или бессмысленную ругань."
+                )
+
         hostile_streak = 0
         if (
             chat_id is not None
