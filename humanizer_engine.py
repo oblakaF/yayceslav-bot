@@ -15,6 +15,7 @@ _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?…])\s+")
 _CYRILLIC_WORD_RE = re.compile(r"\b[а-яё]{5,12}\b", re.IGNORECASE)
 _CONFLICT_INPUT_RE = re.compile(
     r"(?:"
+    r"^\s*(?:псин\w*|шавк\w*)\b|"
     r"\b(?:сука|сучка|еблан\w*|долбо[её]б\w*|заебал\w*|пиздабол\w*)\b|"
     r"\b(?:нахуй|на\s+хуй)\b|"
     r"\bдушн\w*\b|"
@@ -216,18 +217,13 @@ def humanize_reply(
     mode = getattr(trace, "conversation_mode", "normal") if trace else "normal"
 
     # Conflict rhythm is enforced after Gemini, not merely requested in the prompt.
-    # First/second hostile turn and ordinary challenge: one or two compact phrases.
-    # Third/fourth hostile turn remains the intentional longer flare-up.
+    # Any non-serious hostile/challenge turn stays compact. Repeated hostility may
+    # change wording/intensity elsewhere, but it must never unlock a text wall.
     raw_conflict = _looks_like_conflict(user_text)
     compact_conflict = raw_conflict or mode in {"challenge", "hostile"}
     if compact_conflict and not important:
-        escalated = mode == "hostile" and int(hostile_streak) >= 3
-        if escalated:
-            max_chars = 220
-            max_sentences = 3
-        else:
-            max_chars = 95 if (raw_conflict or mode == "hostile") else 110
-            max_sentences = 2
+        max_chars = 95 if (raw_conflict or mode == "hostile") else 110
+        max_sentences = 2
         pieces = _compact_conflict_text(
             clean,
             max_chars=max_chars,
