@@ -30,5 +30,6 @@ jobs:
           social_engine.py aggression_engine.py reaction_engine.py passive_engine.py
           daily_title_engine.py state_engine.py thinking_engine.py title_pools.py
           chat_native_engine.py feedback_engine.py humanizer_engine.py adaptation_cache.py
+          hostile_streak_engine.py
       - name: Test
         run: pytest -q
