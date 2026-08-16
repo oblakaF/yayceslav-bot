@@ -87,14 +87,12 @@ def compile_profile_terms(
     """Выбирает устойчивые локальные слова/фразы по частоте и числу разных людей."""
 
     ranked: list[tuple[float, str]] = []
-    distinct_users_seen: set[int] = set()
 
     for term, occurrences, distinct_users in stats:
         occurrences = int(occurrences)
         distinct_users = int(distinct_users)
         if occurrences < 3 or distinct_users < 2:
             continue
-        distinct_users_seen.add(distinct_users)
         phrase_bonus = 1.22 if " " in term else 1.0
         diversity_bonus = 1.0 + 0.42 * min(distinct_users, 5)
         score = occurrences * diversity_bonus * phrase_bonus * (1.0 + math.log1p(occurrences) * 0.08)
