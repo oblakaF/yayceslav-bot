@@ -29,6 +29,9 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
+      - name: Correct temporary patcher
+        run: python tools/fix_chat_adaptation_patcher.py
+
       - name: Apply adaptation patch
         run: python tools/apply_chat_adaptation.py
 
