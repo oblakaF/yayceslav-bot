@@ -66,3 +66,17 @@ def test_hostile_streak_current_observes_window():
     assert hostile_streak_engine.observe(5, 6, hostile=True, now=100.0) == 1
     assert hostile_streak_engine.current(5, 6, now=101.0) == 1
     assert hostile_streak_engine.current(5, 6, now=1000.0) == 0
+
+
+def test_voice_mix_rebalances_away_from_youth_and_skoof():
+    normal = style_engine._VOICE_PACK_WEIGHTS_BY_MODE["normal"]
+    assert normal[style_engine.VOICE_PACK_YOUTH] == 0.19
+    assert normal[style_engine.VOICE_PACK_SKOOF] == 0.15
+    assert normal[style_engine.VOICE_PACK_BLAT] == 0.13
+    assert normal[style_engine.VOICE_PACK_POST_IRONY] == 0.09
+
+    hostile = style_engine._VOICE_PACK_WEIGHTS_BY_MODE["hostile"]
+    assert hostile[style_engine.VOICE_PACK_YOUTH] == 0.15
+    assert hostile[style_engine.VOICE_PACK_SKOOF] == 0.12
+    assert hostile[style_engine.VOICE_PACK_BLAT] == 0.31
+    assert hostile[style_engine.VOICE_PACK_POST_IRONY] == 0.12
