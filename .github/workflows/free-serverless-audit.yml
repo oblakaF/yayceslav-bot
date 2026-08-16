@@ -35,8 +35,16 @@ jobs:
           daily_title_engine.py state_engine.py thinking_engine.py title_pools.py
           chat_native_engine.py feedback_engine.py humanizer_engine.py adaptation_cache.py
           hostile_streak_engine.py
-      - name: Cold import
-        run: python -c "import bot; print('COLD_IMPORT_OK', bot.STATS_DB_PATH)"
+      - name: Cold import and memory
+        run: |
+          python - <<'PY'
+          import resource
+          import bot
+          rss_kib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+          print('COLD_IMPORT_OK', bot.STATS_DB_PATH)
+          print('COLD_START_MAX_RSS_MIB', round(rss_kib / 1024, 1))
+          assert rss_kib < 450 * 1024, f'cold import RSS too high: {rss_kib/1024:.1f} MiB'
+          PY
       - name: Full tests
         run: pytest -q
       - name: Restart and persistence audit
