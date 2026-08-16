@@ -4,6 +4,8 @@ import random
 import re
 from dataclasses import dataclass
 
+import personality
+
 
 SPLIT_CHANCE = 0.08
 CONFLICT_TWO_MESSAGE_CHANCE = 0.38
@@ -63,6 +65,32 @@ _CONFLICT_STYLE_COMPLAINT_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+
+
+def _install_personality_hostile_extension() -> None:
+    """Make the main conversation-mode classifier use the same insult lexicon."""
+
+    current = personality.HOSTILE_RE
+    if getattr(current, "_yayceslav_extended_hostile", False):
+        return
+
+    combined = re.compile(
+        rf"(?:{current.pattern}|{_STRONG_CONFLICT_RE.pattern}|"
+        rf"{_DIRECTED_AMBIGUOUS_CONFLICT_RE.pattern})",
+        re.IGNORECASE | re.DOTALL,
+    )
+    # re.Pattern objects do not allow arbitrary attributes, so idempotence is
+    # recorded on the personality module instead.
+    personality.HOSTILE_RE = combined
+    personality._YAYCESLAV_EXTENDED_HOSTILE = True
+
+
+# bot.py imports humanizer_engine before it imports HOSTILE_RE and
+# detect_conversation_mode from personality, so this extends the central
+# classifier without duplicating or rewriting personality.py.
+if not getattr(personality, "_YAYCESLAV_EXTENDED_HOSTILE", False):
+    _install_personality_hostile_extension()
+
 
 _IMPORTANT_INTENTS = {
     "technical_help",
