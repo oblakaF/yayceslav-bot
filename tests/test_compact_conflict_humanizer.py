@@ -36,12 +36,32 @@ def test_short_direct_sendoff_stays_short():
     assert len(" ".join(plan.messages)) <= 125
 
 
-def test_third_hostile_turn_is_not_forced_through_compact_layer():
+def test_third_hostile_turn_is_still_compact():
     text = "Первое предложение. Второе предложение. Третье предложение — это уже сознательный разнос."
     plan = humanizer_engine.humanize_reply(
         text, user_text="пошел нахуй", trace=_trace("hostile"), hostile_streak=3, rng=random.Random(2)
     )
-    assert "Третье предложение" in " ".join(plan.messages)
+    joined = " ".join(plan.messages)
+    assert "Третье предложение" not in joined
+    assert len(joined) <= 125
+
+
+def test_psina_banter_is_compacted_even_if_mode_was_normal():
+    text = (
+        "Главный свидетель происходящего на связи, да. "
+        "Мечтать не вредно, родной. "
+        "Экспертная комиссия сейчас начнёт длинный монолог."
+    )
+    plan = humanizer_engine.humanize_reply(
+        text,
+        user_text="псина еще с нами, она стала умнее, но жить ему не долго )",
+        trace=_trace("normal"),
+        hostile_streak=0,
+        rng=random.Random(7),
+    )
+    joined = " ".join(plan.messages)
+    assert "Экспертная комиссия" not in joined
+    assert len(joined) <= 125
 
 
 def test_challenge_is_also_compact_even_if_classifier_does_not_call_it_hostile():
