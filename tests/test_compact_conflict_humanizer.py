@@ -64,6 +64,71 @@ def test_psina_banter_is_compacted_even_if_mode_was_normal():
     assert len(joined) <= 125
 
 
+def test_expanded_strong_insults_are_detected():
+    samples = (
+        "ублюдок",
+        "мразь ты",
+        "гнида",
+        "тупорылый",
+        "безмозглый",
+        "говнюк",
+        "уёбок",
+        "шавка",
+        "закрой ебало",
+        "отъебись",
+    )
+    for sample in samples:
+        assert humanizer_engine._looks_like_conflict(sample), sample
+
+
+def test_ambiguous_insults_require_directed_context():
+    directed = (
+        "ты клоун",
+        "ну ты и баран",
+        "собака ты",
+        "ты крыса",
+        "ты свинья",
+        "ты козёл",
+        "ты осёл",
+        "ты бомж",
+        "ты нищий",
+        "днище",
+    )
+    for sample in directed:
+        assert humanizer_engine._looks_like_conflict(sample), sample
+
+
+def test_ambiguous_words_do_not_trigger_on_ordinary_sentences():
+    ordinary = (
+        "у меня собака заболела",
+        "в цирке выступает клоун",
+        "на ферме живёт баран",
+        "крыса пробежала по подвалу",
+        "свинья весит сто килограммов",
+        "козёл стоит у забора",
+    )
+    for sample in ordinary:
+        assert not humanizer_engine._looks_like_conflict(sample), sample
+
+
+def test_directed_ambiguous_insult_is_physically_compacted():
+    text = (
+        "Ну наконец-то ты сформулировал мысль. "
+        "Но сейчас я почему-то решил написать ещё три предложения. "
+        "Вот эта часть уже должна исчезнуть."
+    )
+    plan = humanizer_engine.humanize_reply(
+        text,
+        user_text="ты клоун",
+        trace=_trace("normal"),
+        hostile_streak=0,
+        rng=random.Random(8),
+    )
+    joined = " ".join(plan.messages)
+    assert len(joined) <= 125
+    assert "должна исчезнуть" not in joined
+
+
 def test_challenge_is_also_compact_even_if_classifier_does_not_call_it_hostile():
     text = "О, уровень аргументации вырос до небес. Ты прямо гений контекста. А теперь длинный второй абзац."
     plan = humanizer_engine.humanize_reply(
