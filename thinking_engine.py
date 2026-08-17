@@ -91,11 +91,51 @@ def content_to_text(contents: Any) -> str:
             text = getattr(item, "text", None)
             if isinstance(text, str):
                 parts.append(text)
+                continue
+
+            item_parts = getattr(item, "parts", None)
+            if isinstance(item_parts, (list, tuple)):
+                for part in item_parts:
+                    part_text = getattr(part, "text", None)
+                    if isinstance(part_text, str):
+                        parts.append(part_text)
 
         return "\n".join(parts)
 
     text = getattr(contents, "text", None)
-    return text if isinstance(text, str) else ""
+    if isinstance(text, str):
+        return text
+
+    item_parts = getattr(contents, "parts", None)
+    if isinstance(item_parts, (list, tuple)):
+        parts = []
+        for part in item_parts:
+            part_text = getattr(part, "text", None)
+            if isinstance(part_text, str):
+                parts.append(part_text)
+        return "\n".join(parts)
+
+    return ""
+
+
+_GROUP_LAST_MESSAGE_RE = re.compile(
+    r"Новое\s+обращение\s+к\s+тебе\s+от\s+[^:\n]+:\s*\n",
+    re.IGNORECASE,
+)
+
+
+def latest_user_text(contents: Any) -> str:
+    """Return the current user's message, not the five-minute group memory wrapper."""
+
+    text = content_to_text(contents).strip()
+    if not text:
+        return ""
+
+    matches = list(_GROUP_LAST_MESSAGE_RE.finditer(text))
+    if matches:
+        return text[matches[-1].end():].strip()
+
+    return text
 
 
 def choose_thinking_level(
@@ -111,7 +151,7 @@ def choose_thinking_level(
             raise ValueError(f"Unsupported thinking level: {explicit}")
         return normalized
 
-    text = content_to_text(contents).strip()
+    text = latest_user_text(contents).strip()
     if not text:
         return THINKING_LOW
 
@@ -329,7 +369,7 @@ _COMPACT_SYSTEM_RULE = """
 
 
 def _should_force_compact(contents: Any) -> bool:
-    text = content_to_text(contents).strip()
+    text = latest_user_text(contents).strip()
 
     if not text or len(text) > 260:
         return False
@@ -457,8 +497,10 @@ GRAMMAR_NAZI_CHANCE = 0.25
 
 _GRAMMAR_NAZI_RULE = """
 ДОПОЛНИТЕЛЬНЫЙ ВАРИАНТ ПОДКОЛА:
-если в исходном сообщении пользователя действительно есть ЯВНАЯ орфографическая,
+если в ПОСЛЕДНЕМ сообщении пользователя действительно есть ЯВНАЯ орфографическая,
 грамматическая или словарная ошибка, можешь сделать её главным коротким подколом.
+Если запрос содержит историю группы и блок «Новое обращение к тебе от ...»,
+проверяй на ошибки ТОЛЬКО текст после этого блока, а не старую переписку и цитаты.
 Коротко укажи ошибочное слово/форму и правильный вариант, затем один панч.
 Не превращай это в урок русского языка: максимум одна-две короткие фразы.
 Если ошибки нет или ты не уверен на 100%, НИЧЕГО про грамотность не выдумывай
@@ -468,7 +510,7 @@ _GRAMMAR_NAZI_RULE = """
 
 
 def _should_offer_grammar_nazi(contents: Any) -> bool:
-    text = content_to_text(contents).strip()
+    text = latest_user_text(contents).strip()
 
     if not text or len(text) > 240:
         return False
@@ -644,7 +686,7 @@ def _install_gemini_router() -> None:
         COMPACT_MAX_CHARS,
     )
     logging.warning(
-        "Gemini grammar-nazi option installed: %.0f%% chance on short non-serious text",
+        "Gemini grammar-nazi option installed: %.0f%% chance on latest short non-serious message",
         GRAMMAR_NAZI_CHANCE * 100,
     )
 
