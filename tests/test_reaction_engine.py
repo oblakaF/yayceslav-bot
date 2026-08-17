@@ -4,33 +4,33 @@ import random
 import reaction_engine
 
 
-def test_emoji_chance_is_reduced_exactly_twenty_percent_without_reason():
+def test_emoji_chance_uses_current_frequency_multiplier_without_reason():
     assert math.isclose(
         reaction_engine.effective_emoji_reaction_chance(
             0.70,
             has_context_reason=False,
         ),
-        0.56,
+        0.504,
     )
 
 
-def test_context_floor_is_applied_before_twenty_percent_reduction():
+def test_context_floor_is_applied_before_current_frequency_multiplier():
     assert math.isclose(
         reaction_engine.effective_emoji_reaction_chance(
             0.70,
             has_context_reason=True,
         ),
-        0.68,
+        0.612,
     )
 
 
-def test_chaos_probability_is_also_scaled_not_clipped_upward():
+def test_chaos_probability_is_scaled_not_clipped_upward():
     assert math.isclose(
         reaction_engine.effective_emoji_reaction_chance(
             0.90,
             has_context_reason=True,
         ),
-        0.72,
+        0.648,
     )
 
 
@@ -73,5 +73,5 @@ def test_dead_argument_has_gravestone_available():
 
 
 def test_module_has_no_random_reply_multiplier():
-    # Защита от случайного переноса -20% на текстовые вмешательства.
+    # Защита от случайного переноса снижения на текстовые вмешательства.
     assert not hasattr(reaction_engine, "RANDOM_REPLY_FREQUENCY_MULTIPLIER")
