@@ -1,4 +1,8 @@
-"""Telegram runtime for Yayceslav stickers and scoped command menus."""
+"""Telegram runtime for Yayceslav stickers and scoped command menus.
+
+Important PTB detail: Application is a slotted class. Never attach custom
+instance attributes to it. Runtime bookkeeping lives in this module instead.
+"""
 
 from __future__ import annotations
 
@@ -40,10 +44,11 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 STICKER_ID_CACHE_PATH = DATA_DIR / "yayceslav_sticker_ids.json"
 STATS_DB_PATH = DATA_DIR / "yayceslav_stats.db"
 
-STICKER_CHAT_COOLDOWN_SECONDS = 180.0
-STICKER_USER_COOLDOWN_SECONDS = 300.0
-STICKER_WINDOW_SECONDS = 15 * 60.0
-STICKER_MAX_PER_WINDOW = 3
+# Background stickers are deliberately much rarer than emoji reactions.
+STICKER_CHAT_COOLDOWN_SECONDS = 10 * 60.0
+STICKER_USER_COOLDOWN_SECONDS = 20 * 60.0
+STICKER_WINDOW_SECONDS = 60 * 60.0
+STICKER_MAX_PER_WINDOW = 2
 QUIET_HOURS_START_MSK = 0
 QUIET_HOURS_END_MSK = 7
 
@@ -53,6 +58,10 @@ _CHAT_STICKER_TIMES: dict[int, deque[float]] = defaultdict(deque)
 _STICKER_UNIQUE_IDS: dict[str, str] = {}
 _OWNER_GROUP_MENU_INSTALLED: set[int] = set()
 
+# Application has __slots__ and no __dict__. Store per-instance flags here.
+_PREPARED_APPLICATION_IDS: set[int] = set()
+_MENU_WRAPPED_APPLICATION_IDS: set[int] = set()
+
 
 def _owner_id() -> int:
     raw = os.getenv("BOT_OWNER_ID", "").strip()
@@ -60,10 +69,8 @@ def _owner_id() -> int:
 
 
 def _known_group_chat_ids() -> tuple[int, ...]:
-    """Read already-seen Telegram groups without importing the huge bot.py."""
     if not STATS_DB_PATH.exists():
         return ()
-
     try:
         with sqlite3.connect(STATS_DB_PATH) as connection:
             rows = connection.execute(
@@ -72,7 +79,6 @@ def _known_group_chat_ids() -> tuple[int, ...]:
     except (sqlite3.Error, OSError) as error:
         logging.warning("Could not read known group chats for owner menu: %s", error)
         return ()
-
     return tuple(int(row[0]) for row in rows)
 
 
@@ -128,7 +134,11 @@ async def ensure_sticker_catalog(bot, *, force: bool = False) -> dict[str, str]:
     _STICKER_IDS = outgoing
     _STICKER_UNIQUE_IDS = incoming
     _save_sticker_ids(outgoing)
-    logging.info("Yayceslav sticker catalog resolved: %s stickers", len(outgoing))
+    logging.warning(
+        "Yayceslav sticker catalog resolved: set=%s stickers=%s",
+        getattr(sticker_set, "name", sticker_engine.STICKER_SET_NAME),
+        len(outgoing),
+    )
     return outgoing
 
 
@@ -137,17 +147,31 @@ async def ensure_sticker_ids(bot, *, force: bool = False) -> dict[str, str]:
 
 
 async def own_sticker_key(bot, sticker) -> str | None:
-    """Recognize only stickers belonging to Yayceslav's official set."""
-    if not sticker or sticker.set_name != sticker_engine.STICKER_SET_NAME:
+    """Recognize only stickers from the official Yayceslav set."""
+    if not sticker:
+        return None
+
+    set_name = getattr(sticker, "set_name", None)
+    if set_name != sticker_engine.STICKER_SET_NAME:
+        logging.debug("Foreign sticker ignored: set_name=%r", set_name)
         return None
 
     await ensure_sticker_catalog(bot)
-    key = _STICKER_UNIQUE_IDS.get(sticker.file_unique_id)
+    unique_id = getattr(sticker, "file_unique_id", None)
+    key = _STICKER_UNIQUE_IDS.get(unique_id)
     if key:
         return key
 
+    # Pack may have been edited/re-published; refresh once.
     await ensure_sticker_catalog(bot, force=True)
-    return _STICKER_UNIQUE_IDS.get(sticker.file_unique_id)
+    key = _STICKER_UNIQUE_IDS.get(unique_id)
+    if not key:
+        logging.warning(
+            "Own-pack sticker not mapped after refresh: set=%s unique_id=%s",
+            set_name,
+            unique_id,
+        )
+    return key
 
 
 def _quiet_hours_msk() -> bool:
@@ -217,17 +241,13 @@ def _is_direct_call(update, context) -> bool:
 
 
 async def install_owner_group_menu(bot, chat_id: int) -> bool:
-    """Give only BOT_OWNER_ID the full menu inside one group."""
     owner_id = _owner_id()
     if not owner_id or chat_id in _OWNER_GROUP_MENU_INSTALLED:
         return False
 
     await bot.set_my_commands(
         command_menu.OWNER_COMMANDS,
-        scope=BotCommandScopeChatMember(
-            chat_id=chat_id,
-            user_id=owner_id,
-        ),
+        scope=BotCommandScopeChatMember(chat_id=chat_id, user_id=owner_id),
     )
     _OWNER_GROUP_MENU_INSTALLED.add(chat_id)
     logging.info("Owner full command menu installed in group %s", chat_id)
@@ -235,7 +255,7 @@ async def install_owner_group_menu(bot, chat_id: int) -> bool:
 
 
 async def install_scoped_command_menus(bot) -> None:
-    """Publish group/private/owner slash-command menus."""
+    """Publish separate slash-command menus for groups/private/owner."""
     await bot.set_my_commands(
         command_menu.PRIVATE_COMMANDS,
         scope=BotCommandScopeDefault(),
@@ -248,23 +268,15 @@ async def install_scoped_command_menus(bot) -> None:
         command_menu.GROUP_COMMANDS,
         scope=BotCommandScopeAllGroupChats(),
     )
-
-    # Do not let ordinary group admins inherit stale BotFather admin commands.
-    await bot.delete_my_commands(
-        scope=BotCommandScopeAllChatAdministrators(),
-    )
+    await bot.delete_my_commands(scope=BotCommandScopeAllChatAdministrators())
 
     owner_id = _owner_id()
     owner_groups = 0
     if owner_id:
-        # Full menu in the owner's private dialog.
         await bot.set_my_commands(
             command_menu.OWNER_COMMANDS,
             scope=BotCommandScopeChat(chat_id=owner_id),
         )
-
-        # Full menu only for the owner inside groups already known to the bot.
-        # New groups are handled lazily by owner_group_menu_listener below.
         for chat_id in _known_group_chat_ids():
             try:
                 if await install_owner_group_menu(bot, chat_id):
@@ -275,10 +287,7 @@ async def install_scoped_command_menus(bot) -> None:
                     chat_id,
                     error,
                 )
-
-        owner_note = (
-            f"owner private={owner_id}; owner group scopes={owner_groups}"
-        )
+        owner_note = f"owner private={owner_id}; owner group scopes={owner_groups}"
     else:
         owner_note = "owner scopes skipped: BOT_OWNER_ID is not set"
 
@@ -291,11 +300,9 @@ async def install_scoped_command_menus(bot) -> None:
 
 
 async def owner_group_menu_listener(update, context) -> None:
-    """Install the owner's per-group menu when the owner enters a new group."""
     chat = update.effective_chat
     user = update.effective_user
     owner_id = _owner_id()
-
     if (
         not chat
         or not user
@@ -305,7 +312,6 @@ async def owner_group_menu_listener(update, context) -> None:
         or chat.id in _OWNER_GROUP_MENU_INSTALLED
     ):
         return
-
     try:
         await install_owner_group_menu(context.bot, chat.id)
     except Exception as error:
@@ -350,7 +356,7 @@ async def reply_sticker_by_key(update, context, sticker_key: str) -> bool:
 
 
 async def own_pack_sticker_listener(update, context) -> None:
-    """Reply only to stickers from Yayceslav's own public sticker set."""
+    """Reply to our own pack; foreign packs are ignored."""
     message = update.effective_message
     user = update.effective_user
     if not message or not message.sticker or not user or user.is_bot:
@@ -377,8 +383,8 @@ async def own_pack_sticker_listener(update, context) -> None:
     if not sent:
         return
 
-    logging.info(
-        "Yayceslav own-sticker conversation: incoming=%s reply=%s chat=%s user=%s",
+    logging.warning(
+        "Yayceslav own-sticker reply: incoming=%s reply=%s chat=%s user=%s",
         sticker_engine.STICKER_LABELS.get(incoming_key, incoming_key),
         sticker_engine.STICKER_LABELS.get(reply_key, reply_key),
         update.effective_chat.id if update.effective_chat else None,
@@ -388,7 +394,7 @@ async def own_pack_sticker_listener(update, context) -> None:
 
 
 async def direct_question_sticker_listener(update, context) -> None:
-    """Replace exactly 5% of qualifying direct question answers with a sticker."""
+    """Replace exactly 5% of qualifying direct-question answers with a sticker."""
     message = update.effective_message
     user = update.effective_user
     if not message or not message.text or not user or user.is_bot:
@@ -413,11 +419,7 @@ async def direct_question_sticker_listener(update, context) -> None:
     try:
         sent = await reply_sticker_by_key(update, context, sticker_key)
     except Exception as error:
-        logging.warning(
-            "Yayceslav 5%% question sticker failed key=%s: %s",
-            sticker_key,
-            error,
-        )
+        logging.warning("Yayceslav 5%% question sticker failed key=%s: %s", sticker_key, error)
         return
     if not sent:
         return
@@ -432,11 +434,10 @@ async def direct_question_sticker_listener(update, context) -> None:
 
 
 async def contextual_sticker_listener(update, context) -> None:
-    """Rare context-aware sticker reply to background group conversation."""
+    """Very rare context-aware background sticker in group conversation."""
     message = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
-
     if not message or not message.text or not chat or not user or user.is_bot:
         return
     if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
@@ -486,6 +487,52 @@ async def contextual_sticker_listener(update, context) -> None:
         )
 
 
+def prepare_application_runtime(application: Application) -> None:
+    """Attach handlers/menu startup without writing custom attrs to Application."""
+    app_id = id(application)
+
+    if app_id not in _PREPARED_APPLICATION_IDS:
+        application.add_handler(
+            MessageHandler(filters.ALL, owner_group_menu_listener),
+            group=-2,
+        )
+        application.add_handler(CommandHandler("stickers", stickers_command), group=0)
+        application.add_handler(
+            MessageHandler(filters.Sticker.ALL, own_pack_sticker_listener),
+            group=-1,
+        )
+        application.add_handler(
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND,
+                direct_question_sticker_listener,
+            ),
+            group=-1,
+        )
+        application.add_handler(
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND,
+                contextual_sticker_listener,
+            ),
+            group=2,
+        )
+        _PREPARED_APPLICATION_IDS.add(app_id)
+
+    if app_id not in _MENU_WRAPPED_APPLICATION_IDS:
+        previous_post_init = application.post_init
+
+        async def combined_post_init(app):
+            if previous_post_init is not None:
+                await previous_post_init(app)
+            try:
+                await install_scoped_command_menus(app.bot)
+            except Exception as error:
+                # Menu publishing must never prevent polling from starting.
+                logging.exception("Could not install Telegram command menus: %s", error)
+
+        application.post_init = combined_post_init
+        _MENU_WRAPPED_APPLICATION_IDS.add(app_id)
+
+
 def install_runtime_hooks() -> None:
     if getattr(Application, "_yayceslav_sticker_patch_installed", False):
         return
@@ -493,57 +540,16 @@ def install_runtime_hooks() -> None:
     original_run_polling = Application.run_polling
 
     def run_polling_with_yayceslav_runtime(self, *args, **kwargs):
-        if not getattr(self, "_yayceslav_sticker_handlers_added", False):
-            # Owner menu scope helper. It never replies to a message.
-            self.add_handler(
-                MessageHandler(filters.ALL, owner_group_menu_listener),
-                group=-2,
-            )
-
-            self.add_handler(CommandHandler("stickers", stickers_command), group=0)
-            self.add_handler(
-                MessageHandler(filters.Sticker.ALL, own_pack_sticker_listener),
-                group=-1,
-            )
-            self.add_handler(
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    direct_question_sticker_listener,
-                ),
-                group=-1,
-            )
-            self.add_handler(
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    contextual_sticker_listener,
-                ),
-                group=2,
-            )
-            self._yayceslav_sticker_handlers_added = True
-
-        if not getattr(self, "_yayceslav_command_menu_startup_added", False):
-            previous_post_init = self.post_init
-
-            async def combined_post_init(application):
-                if previous_post_init is not None:
-                    await previous_post_init(application)
-                try:
-                    await install_scoped_command_menus(application.bot)
-                except Exception as error:
-                    # Menu publishing must never prevent the bot from starting.
-                    logging.exception("Could not install Telegram command menus: %s", error)
-
-            self.post_init = combined_post_init
-            self._yayceslav_command_menu_startup_added = True
-
+        prepare_application_runtime(self)
         logging.warning(
-            "Yayceslav stickers installed: own-pack replies ON; foreign packs ignored; "
-            "direct-question sticker chance=5%%; contextual map=%s events",
-            len(sticker_engine.EVENT_STICKERS),
+            "Yayceslav stickers runtime ready: own-pack replies ON; foreign packs ignored; "
+            "question=5%%; background<=2%%; background cap=%s/hour",
+            STICKER_MAX_PER_WINDOW,
         )
         return original_run_polling(self, *args, **kwargs)
 
     Application.run_polling = run_polling_with_yayceslav_runtime
+    # Class attribute is safe; the crash was from setting new INSTANCE attrs.
     Application._yayceslav_sticker_patch_installed = True
 
 
