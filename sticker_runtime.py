@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import random
+import sqlite3
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,7 @@ from telegram import (
     BotCommandScopeAllGroupChats,
     BotCommandScopeAllPrivateChats,
     BotCommandScopeChat,
+    BotCommandScopeChatMember,
     BotCommandScopeDefault,
 )
 from telegram.constants import ChatType
@@ -36,6 +38,7 @@ import sticker_interaction
 DATA_DIR = Path("/app/data") if Path("/app/data").exists() else Path("data")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 STICKER_ID_CACHE_PATH = DATA_DIR / "yayceslav_sticker_ids.json"
+STATS_DB_PATH = DATA_DIR / "yayceslav_stats.db"
 
 STICKER_CHAT_COOLDOWN_SECONDS = 180.0
 STICKER_USER_COOLDOWN_SECONDS = 300.0
@@ -48,11 +51,29 @@ _CHAT_LAST_STICKER: dict[int, float] = {}
 _USER_LAST_STICKER: dict[tuple[int, int], float] = {}
 _CHAT_STICKER_TIMES: dict[int, deque[float]] = defaultdict(deque)
 _STICKER_UNIQUE_IDS: dict[str, str] = {}
+_OWNER_GROUP_MENU_INSTALLED: set[int] = set()
 
 
 def _owner_id() -> int:
     raw = os.getenv("BOT_OWNER_ID", "").strip()
     return int(raw) if raw.isdigit() else 0
+
+
+def _known_group_chat_ids() -> tuple[int, ...]:
+    """Read already-seen Telegram groups without importing the huge bot.py."""
+    if not STATS_DB_PATH.exists():
+        return ()
+
+    try:
+        with sqlite3.connect(STATS_DB_PATH) as connection:
+            rows = connection.execute(
+                "SELECT chat_id FROM chats WHERE chat_type IN ('group', 'supergroup')"
+            ).fetchall()
+    except (sqlite3.Error, OSError) as error:
+        logging.warning("Could not read known group chats for owner menu: %s", error)
+        return ()
+
+    return tuple(int(row[0]) for row in rows)
 
 
 def _load_sticker_ids() -> dict[str, str]:
@@ -195,11 +216,26 @@ def _is_direct_call(update, context) -> bool:
     )
 
 
+async def install_owner_group_menu(bot, chat_id: int) -> bool:
+    """Give only BOT_OWNER_ID the full menu inside one group."""
+    owner_id = _owner_id()
+    if not owner_id or chat_id in _OWNER_GROUP_MENU_INSTALLED:
+        return False
+
+    await bot.set_my_commands(
+        command_menu.OWNER_COMMANDS,
+        scope=BotCommandScopeChatMember(
+            chat_id=chat_id,
+            user_id=owner_id,
+        ),
+    )
+    _OWNER_GROUP_MENU_INSTALLED.add(chat_id)
+    logging.info("Owner full command menu installed in group %s", chat_id)
+    return True
+
+
 async def install_scoped_command_menus(bot) -> None:
-    """Publish different slash-command menus for group/private/owner scopes."""
-    # Default is intentionally the useful private menu. Explicit group/private
-    # scopes override it. Clear any old all-admin scope so group admins do not
-    # inherit a stale BotFather-era extended menu.
+    """Publish group/private/owner slash-command menus."""
     await bot.set_my_commands(
         command_menu.PRIVATE_COMMANDS,
         scope=BotCommandScopeDefault(),
@@ -212,19 +248,39 @@ async def install_scoped_command_menus(bot) -> None:
         command_menu.GROUP_COMMANDS,
         scope=BotCommandScopeAllGroupChats(),
     )
+
+    # Do not let ordinary group admins inherit stale BotFather admin commands.
     await bot.delete_my_commands(
         scope=BotCommandScopeAllChatAdministrators(),
     )
 
     owner_id = _owner_id()
+    owner_groups = 0
     if owner_id:
+        # Full menu in the owner's private dialog.
         await bot.set_my_commands(
             command_menu.OWNER_COMMANDS,
             scope=BotCommandScopeChat(chat_id=owner_id),
         )
-        owner_note = f"owner scope={owner_id} ({len(command_menu.OWNER_COMMANDS)} commands)"
+
+        # Full menu only for the owner inside groups already known to the bot.
+        # New groups are handled lazily by owner_group_menu_listener below.
+        for chat_id in _known_group_chat_ids():
+            try:
+                if await install_owner_group_menu(bot, chat_id):
+                    owner_groups += 1
+            except Exception as error:
+                logging.info(
+                    "Could not install owner menu in known group %s: %s",
+                    chat_id,
+                    error,
+                )
+
+        owner_note = (
+            f"owner private={owner_id}; owner group scopes={owner_groups}"
+        )
     else:
-        owner_note = "owner scope skipped: BOT_OWNER_ID is not set"
+        owner_note = "owner scopes skipped: BOT_OWNER_ID is not set"
 
     logging.warning(
         "Telegram command menus installed: group=%s private=%s; %s",
@@ -232,6 +288,32 @@ async def install_scoped_command_menus(bot) -> None:
         len(command_menu.PRIVATE_COMMANDS),
         owner_note,
     )
+
+
+async def owner_group_menu_listener(update, context) -> None:
+    """Install the owner's per-group menu when the owner enters a new group."""
+    chat = update.effective_chat
+    user = update.effective_user
+    owner_id = _owner_id()
+
+    if (
+        not chat
+        or not user
+        or not owner_id
+        or user.id != owner_id
+        or chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP)
+        or chat.id in _OWNER_GROUP_MENU_INSTALLED
+    ):
+        return
+
+    try:
+        await install_owner_group_menu(context.bot, chat.id)
+    except Exception as error:
+        logging.warning(
+            "Could not lazily install owner command menu in group %s: %s",
+            chat.id,
+            error,
+        )
 
 
 async def stickers_command(update, context) -> None:
@@ -412,6 +494,12 @@ def install_runtime_hooks() -> None:
 
     def run_polling_with_yayceslav_runtime(self, *args, **kwargs):
         if not getattr(self, "_yayceslav_sticker_handlers_added", False):
+            # Owner menu scope helper. It never replies to a message.
+            self.add_handler(
+                MessageHandler(filters.ALL, owner_group_menu_listener),
+                group=-2,
+            )
+
             self.add_handler(CommandHandler("stickers", stickers_command), group=0)
             self.add_handler(
                 MessageHandler(filters.Sticker.ALL, own_pack_sticker_listener),
