@@ -7,8 +7,11 @@
 
 from __future__ import annotations
 
+import logging
 import random
+import re
 from dataclasses import dataclass
+from typing import Any
 
 import verdict_engine
 import voice_packs
@@ -290,3 +293,182 @@ def build_voice_instruction(material: VoiceMaterial) -> str:
         )
 
     return "\n".join(lines)
+
+
+# ============================================================
+# INCOMING AUDIO / VOICE HARD COMPACT GUARD
+# ============================================================
+
+AUDIO_REPLY_MAX_CHARS = 220
+AUDIO_REPLY_MAX_OUTPUT_TOKENS = 192
+
+_AUDIO_TIMECODE_RE = re.compile(
+    r"\b00(?:\s*[-,:]\s*\d{1,4}){1,4}\b"
+)
+
+_AUDIO_REPLY_RULE = """
+ЖЁСТКОЕ ПРАВИЛО ДЛЯ ОТВЕТА НА ГОЛОСОВОЕ/АУДИО:
+ответь именно на смысл услышанного, но НЕ делай расшифровку записи.
+Не выводи таймкоды, интервалы, метки времени, номера фрагментов или служебные цифры
+вроде «00:03», «00-03-00-05», «00-13-00-16».
+По умолчанию ответ должен быть очень коротким: одна-две человеческие фразы.
+Не повторяй услышанную реплику целиком и не объясняй, что ты её прослушал.
+Если это подкол/оскорбление — коротко отбей его и остановись, без лекции.
+Никаких длинных вступлений и нескольких абзацев.
+""".strip()
+
+
+def _audio_request_contents(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+    if "contents" in kwargs:
+        return kwargs.get("contents")
+    if len(args) >= 2:
+        return args[1]
+    return None
+
+
+def _is_audio_item(item: Any) -> bool:
+    direct_mime = getattr(item, "mime_type", None)
+    if isinstance(direct_mime, str) and direct_mime.lower().startswith("audio/"):
+        return True
+
+    inline_data = getattr(item, "inline_data", None)
+    inline_mime = getattr(inline_data, "mime_type", None)
+    if isinstance(inline_mime, str) and inline_mime.lower().startswith("audio/"):
+        return True
+
+    file_data = getattr(item, "file_data", None)
+    file_mime = getattr(file_data, "mime_type", None)
+    if isinstance(file_mime, str) and file_mime.lower().startswith("audio/"):
+        return True
+
+    return False
+
+
+def _is_audio_request(contents: Any) -> bool:
+    items = contents if isinstance(contents, (list, tuple)) else (contents,)
+
+    for item in items:
+        if _is_audio_item(item):
+            return True
+        if isinstance(item, str) and "Прослушай сообщение пользователя" in item:
+            return True
+
+    return False
+
+
+def _prepare_audio_request_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    new_kwargs = dict(kwargs)
+    config = new_kwargs.get("config")
+    if config is None:
+        return new_kwargs
+
+    system_instruction = getattr(config, "system_instruction", None)
+    if isinstance(system_instruction, str):
+        new_instruction = system_instruction.rstrip() + "\n\n" + _AUDIO_REPLY_RULE
+    else:
+        new_instruction = system_instruction
+
+    current_max = getattr(config, "max_output_tokens", None)
+    try:
+        new_max = min(int(current_max), AUDIO_REPLY_MAX_OUTPUT_TOKENS)
+    except (TypeError, ValueError):
+        new_max = AUDIO_REPLY_MAX_OUTPUT_TOKENS
+
+    updates: dict[str, Any] = {"max_output_tokens": new_max}
+    if isinstance(new_instruction, str):
+        updates["system_instruction"] = new_instruction
+
+    try:
+        if hasattr(config, "model_copy"):
+            new_kwargs["config"] = config.model_copy(update=updates)
+        else:
+            for key, value in updates.items():
+                setattr(config, key, value)
+    except Exception as error:
+        logging.debug("Voice compact guard: config clone failed: %s", error)
+
+    return new_kwargs
+
+
+def _clean_audio_reply(text: str) -> str:
+    clean = _AUDIO_TIMECODE_RE.sub("", text or "")
+    clean = re.sub(r"\s+([,.!?;:])", r"\1", clean)
+    clean = re.sub(r"\s+", " ", clean).strip(" ,;:-")
+
+    if not clean:
+        return "Чё-то ты там наговорил. Сформулируй ещё раз."
+
+    if len(clean) <= AUDIO_REPLY_MAX_CHARS:
+        return clean
+
+    sentences = re.split(r"(?<=[.!?…])\s+", clean)
+    chosen: list[str] = []
+    for sentence in sentences:
+        candidate = " ".join(chosen + [sentence]).strip()
+        if len(candidate) > AUDIO_REPLY_MAX_CHARS:
+            break
+        chosen.append(sentence)
+        if len(chosen) >= 2:
+            break
+
+    if chosen:
+        compact = " ".join(chosen).strip()
+        if compact:
+            return compact
+
+    cut = clean[: AUDIO_REPLY_MAX_CHARS - 1].rstrip()
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0].rstrip()
+    return cut.rstrip(" ,;:-") + "…"
+
+
+class _AudioResponseProxy:
+    def __init__(self, response: Any):
+        self._response = response
+        self._text = _clean_audio_reply(getattr(response, "text", "") or "")
+
+    @property
+    def text(self) -> str:
+        return self._text
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._response, name)
+
+
+def _install_audio_reply_guard() -> None:
+    try:
+        from google.genai.models import AsyncModels
+    except Exception as import_error:
+        logging.warning("Voice compact guard unavailable: %s", import_error)
+        return
+
+    if getattr(AsyncModels.generate_content, "_yayceslav_audio_guard", False):
+        return
+
+    original_generate_content = AsyncModels.generate_content
+
+    async def guarded_generate_content(self: Any, *args: Any, **kwargs: Any) -> Any:
+        contents = _audio_request_contents(args, kwargs)
+        if not _is_audio_request(contents):
+            return await original_generate_content(self, *args, **kwargs)
+
+        guarded_kwargs = _prepare_audio_request_kwargs(kwargs)
+        response = await original_generate_content(self, *args, **guarded_kwargs)
+        compact = _AudioResponseProxy(response)
+
+        logging.info(
+            "Voice compact guard active: output=%s chars, timecodes stripped",
+            len(compact.text),
+        )
+        return compact
+
+    guarded_generate_content._yayceslav_audio_guard = True
+    AsyncModels.generate_content = guarded_generate_content
+
+    logging.warning(
+        "Voice compact guard installed: incoming audio replies <= %s chars; timecodes stripped",
+        AUDIO_REPLY_MAX_CHARS,
+    )
+
+
+_install_audio_reply_guard()
