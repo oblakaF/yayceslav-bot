@@ -42,6 +42,15 @@ def test_long_wall_has_ramble_event():
     assert sticker_engine.detect_event("текст " * 150) == "ramble"
 
 
-def test_event_chances_are_reasonable():
+def test_background_sticker_probability_is_hard_capped_at_two_percent():
+    assert sticker_engine.BACKGROUND_STICKER_CHANCE_CAP == 0.02
     assert sticker_engine.EVENT_CHANCE
-    assert all(0.0 <= chance <= 0.30 for chance in sticker_engine.EVENT_CHANCE.values())
+    assert set(sticker_engine.EVENT_CHANCE) == set(sticker_engine.EVENT_STICKERS)
+    assert all(
+        0.0 <= sticker_engine.event_chance(event) <= 0.02
+        for event in sticker_engine.EVENT_STICKERS
+    )
+
+
+def test_unknown_event_has_zero_background_chance():
+    assert sticker_engine.event_chance("definitely_unknown") == 0.0
