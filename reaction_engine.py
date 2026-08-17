@@ -11,7 +11,10 @@ import random
 import re
 
 
-EMOJI_REACTION_FREQUENCY_MULTIPLIER = 0.80
+# Ещё мягко снижаем текущую частоту emoji на 10%: 0.80 -> 0.72.
+# Это множитель поверх сохранённого reaction_chance чата, поэтому
+# существующие настройки в Railway SQLite менять не требуется.
+EMOJI_REACTION_FREQUENCY_MULTIPLIER = 0.72
 CONTEXT_REASON_FLOOR = 0.85
 
 # Причина -> набор подходящих Telegram reaction emoji.
@@ -95,9 +98,10 @@ def effective_emoji_reaction_chance(
     has_context_reason: bool,
 ) -> float:
     """
-    Применяет -20% именно к emoji reaction ПОСЛЕ context floor.
+    Применяет текущий множитель 0.72 именно к emoji reaction
+    ПОСЛЕ context floor.
 
-    Например normal 0.70 -> 0.56; context reason 0.85 -> 0.68.
+    Например normal 0.70 -> 0.504; context reason 0.85 -> 0.612.
     Текстовая random_reply_chance сюда вообще не передаётся.
     """
 
