@@ -144,32 +144,27 @@ def test_award_templates_have_name_placeholder_and_no_duplicates():
             assert "{name}" in template, (key, template)
 
 
-def test_joke_title_pool_is_exactly_130_unique_titles():
-    assert len(vocabulary.JOKE_TITLES) == 130
+def test_joke_title_pool_matches_approved_titles_and_is_unique():
+    assert len(vocabulary.JOKE_TITLES) == 66
     assert len(vocabulary.JOKE_TITLES) == len(set(vocabulary.JOKE_TITLES))
     assert vocabulary.JOKE_TITLES == title_pools.ALL_TITLES
 
 
-def test_joke_title_categories_are_v2_personalities_with_ten_each():
+def test_joke_title_categories_are_current_compact_pools():
     expected_categories = {
         "classic",
         "youth",
-        "skoof",
-        "old_russian",
         "blat",
         "operative",
-        "battle_2017",
-        "post_irony",
-        "runet_2007",
-        "runet_2012_2016",
-        "lan_2000s",
-        "runet_classic",
+        "absurd",
+        "profane",
         "street_memes",
+        "legendary",
     }
     assert set(vocabulary.JOKE_TITLE_CATEGORIES) == expected_categories
     assert vocabulary.JOKE_TITLE_CATEGORIES is title_pools.TITLE_POOLS
     for category, titles in vocabulary.JOKE_TITLE_CATEGORIES.items():
-        assert len(titles) == 10, category
+        assert titles, category
         assert len(titles) == len(set(titles)), category
 
 
@@ -177,8 +172,11 @@ def test_requested_title_examples_are_in_correct_personality_pools():
     assert "Поц районный" in title_pools.TITLE_POOLS["blat"]
     assert "Товарищ майор" in title_pools.TITLE_POOLS["operative"]
     street = title_pools.TITLE_POOLS["street_memes"]
-    for title in ("Скуф", "Шлюшка", "Танкист", "Задрот", "Алкашик"):
+    for title in ("Скуф", "Шлюшенция", "Танкист", "Задрот", "Алкашик"):
         assert title in street
+    legendary = title_pools.TITLE_POOLS["legendary"]
+    for title in ("Звёздный Лорд", "Боба Фетт", "Абсолютный Скуф"):
+        assert title in legendary
 
 
 def test_old_tone_title_categories_are_not_active_in_v2():
