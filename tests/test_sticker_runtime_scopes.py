@@ -20,6 +20,27 @@ def test_sticker_runtime_patch_is_installed_once():
     assert getattr(Application, "_yayceslav_sticker_patch_installed", False) is True
 
 
+def test_prepare_runtime_works_on_real_slotted_application_and_is_idempotent():
+    application = Application.builder().token("123456:TESTTOKEN").build()
+    app_id = id(application)
+    sticker_runtime._PREPARED_APPLICATION_IDS.discard(app_id)
+    sticker_runtime._MENU_WRAPPED_APPLICATION_IDS.discard(app_id)
+
+    before = sum(len(group_handlers) for group_handlers in application.handlers.values())
+    sticker_runtime.prepare_application_runtime(application)
+    after_first = sum(len(group_handlers) for group_handlers in application.handlers.values())
+    sticker_runtime.prepare_application_runtime(application)
+    after_second = sum(len(group_handlers) for group_handlers in application.handlers.values())
+
+    assert after_first == before + 5
+    assert after_second == after_first
+    assert app_id in sticker_runtime._PREPARED_APPLICATION_IDS
+    assert app_id in sticker_runtime._MENU_WRAPPED_APPLICATION_IDS
+    # Regression for Railway crash: no custom instance attrs are ever assigned.
+    assert not hasattr(application, "_yayceslav_sticker_handlers_added")
+    assert not hasattr(application, "_yayceslav_command_menu_startup_added")
+
+
 class FakeBot:
     def __init__(self):
         self.set_calls = []
@@ -85,7 +106,6 @@ def test_owner_gets_full_menu_in_group_without_exposing_it_to_other_admins(monke
         (command_menu.OWNER_COMMANDS, -1001234567890, 747123682)
     ]
 
-    # Second call is cached, so startup/concurrent messages do not spam Telegram API.
     installed_again = asyncio.run(
         sticker_runtime.install_owner_group_menu(fake, -1001234567890)
     )
