@@ -2,7 +2,7 @@
 
 The public pack is https://t.me/addstickers/yayceslav_stickers .
 This module intentionally contains only pure detection / selection logic;
-Telegram transport lives in sitecustomize.py so the huge bot.py does not
+Telegram transport lives in sticker_runtime.py so the large bot.py does not
 need an invasive rewrite.
 """
 
@@ -15,9 +15,12 @@ from typing import Final
 STICKER_SET_NAME: Final = "yayceslav_stickers"
 STICKER_PACK_URL: Final = "https://t.me/addstickers/yayceslav_stickers"
 
-# Current order in the published pack. On first runtime lookup file_ids are
-# persisted by canonical key, so later reordering the pack does not break the
-# bot after it has learned the IDs once.
+# Hard ceiling for unsolicited text -> sticker interventions. The event table
+# below may keep relative/legacy weights, but runtime can never exceed 2% once
+# a matching event was detected. Direct questions have their own exact 5% slot
+# in sticker_interaction.py and are not affected by this cap.
+BACKGROUND_STICKER_CHANCE_CAP: Final = 0.02
+
 STICKER_ORDER: Final[tuple[str, ...]] = (
     "che_nado",
     "zavali_varezhku",
@@ -82,8 +85,6 @@ STICKER_LABELS: Final[dict[str, str]] = {
     "krinzh": "КРИНЖ",
 }
 
-# Draft event -> sticker pool. This is deliberately human-editable: the user
-# can change only this table without touching Telegram runtime code.
 EVENT_STICKERS: Final[dict[str, tuple[str, ...]]] = {
     "direct_ping": ("che_nado", "nu_i_che"),
     "shut_up": ("zavali_varezhku", "ne_bazar"),
@@ -114,8 +115,8 @@ EVENT_STICKERS: Final[dict[str, tuple[str, ...]]] = {
     "cringe": ("krinzh", "minus_aura"),
 }
 
-# Chance is evaluated only after an event has been found and all cooldowns
-# passed. Stickers should be rarer than emoji reactions.
+# Raw event weights are retained so we can tune relative intent later. The
+# public event_chance() applies BACKGROUND_STICKER_CHANCE_CAP unconditionally.
 EVENT_CHANCE: Final[dict[str, float]] = {
     "direct_ping": 0.24,
     "shut_up": 0.22,
@@ -198,7 +199,6 @@ def is_direct_address(text: str, bot_username: str = "") -> bool:
 
 def detect_event(text: str, *, direct: bool = False) -> str | None:
     """Return the first strong sticker event found in a message."""
-
     stripped = (text or "").strip()
     if not stripped or is_serious_text(stripped):
         return None
@@ -206,14 +206,12 @@ def detect_event(text: str, *, direct: bool = False) -> str | None:
     if direct and len(stripped.split()) <= 4:
         return "direct_ping"
 
-    # Very long chat walls get a separate low-frequency sticker slot.
     if len(stripped) >= 650:
         return "ramble"
 
     for event, pattern in _EVENT_PATTERNS:
         if pattern.search(stripped):
             return event
-
     return None
 
 
@@ -226,13 +224,16 @@ def choose_sticker_key(event: str, rng: random.Random | None = None) -> str | No
 
 
 def event_chance(event: str) -> float:
-    return float(EVENT_CHANCE.get(event, 0.12))
+    """Return the effective unsolicited sticker chance, hard-capped at 2%."""
+    raw = float(EVENT_CHANCE.get(event, 0.0))
+    return max(0.0, min(BACKGROUND_STICKER_CHANCE_CAP, raw))
 
 
 def validate_map() -> None:
     known = set(STICKER_ORDER)
     if set(STICKER_LABELS) != known:
         raise RuntimeError("STICKER_LABELS and STICKER_ORDER are out of sync")
+
     unknown = {
         key
         for options in EVENT_STICKERS.values()
@@ -241,6 +242,11 @@ def validate_map() -> None:
     }
     if unknown:
         raise RuntimeError(f"Unknown sticker keys in EVENT_STICKERS: {sorted(unknown)}")
+
+    if set(EVENT_CHANCE) != set(EVENT_STICKERS):
+        raise RuntimeError("EVENT_CHANCE and EVENT_STICKERS are out of sync")
+    if not (0.0 <= BACKGROUND_STICKER_CHANCE_CAP <= 0.05):
+        raise RuntimeError("Background sticker cap is unexpectedly high")
 
 
 validate_map()
