@@ -3,32 +3,27 @@ import random
 import title_pools
 
 
-def test_exactly_thirteen_title_personalities():
+def test_active_title_categories_are_the_approved_compact_pools():
     assert set(title_pools.TITLE_POOLS) == {
         "classic",
         "youth",
-        "skoof",
-        "old_russian",
         "blat",
         "operative",
-        "battle_2017",
-        "post_irony",
-        "runet_2007",
-        "runet_2012_2016",
-        "lan_2000s",
-        "runet_classic",
+        "absurd",
+        "profane",
         "street_memes",
+        "legendary",
     }
 
 
-def test_each_personality_has_exactly_ten_titles():
+def test_each_active_title_pool_is_nonempty_and_unique():
     for personality, titles in title_pools.TITLE_POOLS.items():
-        assert len(titles) == 10, personality
+        assert titles, personality
         assert len(titles) == len(set(titles)), personality
 
 
-def test_all_titles_are_globally_unique_and_total_130():
-    assert len(title_pools.ALL_TITLES) == 130
+def test_all_approved_titles_are_globally_unique_and_total_66():
+    assert len(title_pools.ALL_TITLES) == 66
     assert len(title_pools.ALL_TITLES) == len(set(title_pools.ALL_TITLES))
 
 
@@ -39,24 +34,37 @@ def test_requested_blat_titles_exist():
     assert "Смотрящий за чатом" in blat
 
 
-def test_requested_operative_titles_exist():
-    operative = title_pools.TITLE_POOLS["operative"]
-    assert "Товарищ майор" in operative
-    assert "Старший опер по мемам" in operative
-    assert "Полковник переписки" in operative
+def test_compact_operative_pool_keeps_tovarish_major():
+    assert title_pools.TITLE_POOLS["operative"] == ("Товарищ майор",)
 
 
 def test_requested_street_meme_titles_exist():
     street = title_pools.TITLE_POOLS["street_memes"]
     for title in (
         "Скуф",
-        "Шлюшка",
+        "Шлюшенция",
         "Танкист",
         "Задрот",
         "Алкашик",
         "Душнила",
+        "Подкаблучник",
+        "Куколдини",
+        "Курва",
+        "Бобр",
     ):
         assert title in street
+
+
+def test_requested_legendary_examples_exist():
+    legendary = title_pools.TITLE_POOLS["legendary"]
+    for title in (
+        "Звёздный Лорд",
+        "Боба Фетт",
+        "Абсолютный Скуф",
+        "Избранный Ящерами",
+        "Космический Мусор",
+    ):
+        assert title in legendary
 
 
 def test_picker_never_repeats_previous_active_title():
