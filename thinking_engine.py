@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 import time
 from pathlib import Path
@@ -38,12 +39,16 @@ _INITIAL_TOKEN_FLOOR = {
 
 
 # ============================================================
-# GEMINI MODEL FALLBACK
+# GEMINI MODEL FALLBACK + HARD COMPACT-REPLY GUARD
 # ============================================================
 
 PRIMARY_MODEL = "gemini-3.6-flash"
 FALLBACK_MODEL = "gemini-3.1-flash-lite"
 PRIMARY_RETRY_SECONDS = 30 * 60
+
+# For short hostile/challenge chat messages we physically prevent essays.
+COMPACT_MAX_CHARS = 180
+COMPACT_MAX_OUTPUT_TOKENS = 192
 
 _RAILWAY_DATA_DIR = Path("/app/data")
 _STATE_DIR = _RAILWAY_DATA_DIR if _RAILWAY_DATA_DIR.exists() else Path("data")
@@ -51,6 +56,73 @@ _STATE_FILE = _STATE_DIR / "gemini_model_router.json"
 
 _primary_blocked_until_epoch = 0.0
 _primary_probe_in_progress = False
+
+
+_COMPACT_HOSTILE_RE = re.compile(
+    r"(?:"
+    r"\b(?:нахуй|на\s+хуй|пош[её]л\s+нах|иди\s+нах|соси|заткнись)\b|"
+    r"\b(?:хуй|ху[её]в\w*|еблан\w*|долбо[её]б\w*|дебил\w*|"
+    r"мудак\w*|чмо|пиздабол\w*|заебал\w*|туп\w*|ишак\w*)\b|"
+    r"\b(?:душн\w*|простын\w*|тавтолог\w*|насрал\w*\s+текст\w*|"
+    r"много\s+пиш\w*|много\s+текст\w*|короче\s+отвечай)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_EXPLICIT_LONG_REQUEST_RE = re.compile(
+    r"\b(?:"
+    r"объясни\w*|разъясни\w*|расскажи\w*|разбери\w*|подробн\w*|"
+    r"проанализир\w*|анализ\w*|сравни\w*|докажи\w*|обоснуй\w*|"
+    r"по\s+шагам|пошагов\w*"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_SERIOUS_GUARD_RE = re.compile(
+    r"\b(?:"
+    r"врач\w*|лекарств\w*|болит|болят|боль|симптом\w*|болезн\w*|"
+    r"суицид\w*|умер\w*|смерт\w*|травм\w*|кровотеч\w*|насили\w*|"
+    r"кредит\w*|долг\w*|пожар\w*"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+_LECTURE_STYLE_RE = re.compile(
+    r"\b(?:"
+    r"суть\s+претензи\w*|конструктив\w*|содержательн\w*\s+дискусси\w*|"
+    r"если\s+ты\s+считаешь|моя\s+задача|уровень\s+коммуникаци\w*|"
+    r"воспринимать\s+аргумент\w*|переходи\s+к\s+обсуждени\w*|"
+    r"по\s+существу\s+дела|акцент\w*\s+на|формулировк\w*\s+претензи\w*"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_ULTRA_SHORT_REPLIES = (
+    "Пошёл нахуй.",
+    "Завали ебало.",
+    "Иди лесом, душнила.",
+)
+
+_ANTI_LECTURE_REPLIES = (
+    "Ты тупой ишак, лови суть: сказал хуйню — получил ответ. Пошёл нахуй.",
+    "Слов дохуя, смысла на сдачу. Не души.",
+    "О, профессор проснулся. Мысль сначала найди, потом выёбывайся.",
+    "Не разводи кафедру в чате. Суть простая: хуйню сказал — хуйню получил.",
+)
+
+_COMPACT_SYSTEM_RULE = """
+КРИТИЧЕСКОЕ ПРАВИЛО ДЛЯ ЭТОГО ОТВЕТА:
+пользователь написал короткий наезд, подкол или претензию к манере речи.
+Ответь ОДНОЙ-ДВУМЯ короткими фразами, максимум примерно 180 знаков.
+Никаких объяснений, рассуждений, лекций, защиты своей позиции и повторения тезиса.
+Не используй канцелярские конструкции вроде «суть претензии», «конструктив»,
+«если ты считаешь», «в содержательной дискуссии», «моя задача».
+Сразу дай короткий человеческий встречный подкол и закончи.
+Мат допустим, если он уже разрешён основными настройками персонажа.
+Пример только ритма, НЕ копируй дословно:
+«Ты тупой ишак, лови суть: ты некомпетентный хуй. Пошёл нахуй.»
+""".strip()
 
 
 def _load_router_state() -> None:
@@ -137,6 +209,151 @@ def _with_model(
     return args, new_kwargs
 
 
+def _request_contents(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+    if "contents" in kwargs:
+        return kwargs.get("contents")
+
+    # AsyncModels.generate_content(model, contents, config=...)
+    if len(args) >= 2:
+        return args[1]
+
+    return None
+
+
+def _should_force_compact(contents: Any) -> bool:
+    text = content_to_text(contents).strip()
+
+    if not text or len(text) > 260:
+        return False
+
+    if _SERIOUS_GUARD_RE.search(text):
+        return False
+
+    if _EXPLICIT_LONG_REQUEST_RE.search(text):
+        return False
+
+    return bool(_COMPACT_HOSTILE_RE.search(text))
+
+
+def _prepare_compact_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Append a per-request hard style rule and lower visible output budget."""
+
+    new_kwargs = dict(kwargs)
+    config = new_kwargs.get("config")
+
+    if config is None:
+        return new_kwargs
+
+    system_instruction = getattr(config, "system_instruction", None)
+    if isinstance(system_instruction, str):
+        new_system_instruction = (
+            system_instruction.rstrip()
+            + "\n\n"
+            + _COMPACT_SYSTEM_RULE
+        )
+    else:
+        new_system_instruction = system_instruction
+
+    current_max = getattr(config, "max_output_tokens", None)
+    try:
+        compact_max = min(int(current_max), COMPACT_MAX_OUTPUT_TOKENS)
+    except (TypeError, ValueError):
+        compact_max = COMPACT_MAX_OUTPUT_TOKENS
+
+    try:
+        if hasattr(config, "model_copy"):
+            updates = {"max_output_tokens": compact_max}
+            if isinstance(new_system_instruction, str):
+                updates["system_instruction"] = new_system_instruction
+            new_kwargs["config"] = config.model_copy(update=updates)
+        else:
+            config.max_output_tokens = compact_max
+            if isinstance(new_system_instruction, str):
+                config.system_instruction = new_system_instruction
+    except Exception as error:
+        # The post-response guard below still prevents essays.
+        logging.debug(
+            "Gemini compact guard: could not clone request config: %s",
+            error,
+        )
+
+    return new_kwargs
+
+
+def _truncate_compact_text(text: str, max_chars: int = COMPACT_MAX_CHARS) -> str:
+    """Keep at most two short sentences and never expose a wall of text."""
+
+    clean = re.sub(r"\s+", " ", (text or "")).strip()
+    if not clean:
+        return clean
+
+    # Roughly one reply out of three is intentionally ultra-short.
+    if random.random() < 0.33:
+        return random.choice(_ULTRA_SHORT_REPLIES)
+
+    # If Gemini ignored the tone rule and started lecturing, replace the
+    # lecture instead of merely cutting the first pompous sentence.
+    if _LECTURE_STYLE_RE.search(clean):
+        return random.choice(_ANTI_LECTURE_REPLIES)
+
+    # Prefer one or two complete sentences.
+    sentences = re.split(r"(?<=[.!?…])\s+", clean)
+    chosen: list[str] = []
+
+    for sentence in sentences:
+        candidate = " ".join(chosen + [sentence]).strip()
+        if len(candidate) > max_chars:
+            break
+        chosen.append(sentence)
+        if len(chosen) >= 2:
+            break
+
+    if chosen:
+        compact = " ".join(chosen).strip()
+        if compact:
+            return compact
+
+    # If even the first sentence is huge, cut cleanly on a word boundary.
+    if len(clean) <= max_chars:
+        return clean
+
+    cut = clean[: max_chars - 1].rstrip()
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0].rstrip()
+
+    return cut.rstrip(" ,;:-") + "…"
+
+
+class _CompactResponseProxy:
+    """Delegate the Gemini response but expose a physically capped .text."""
+
+    def __init__(self, response: Any):
+        self._response = response
+        self._compact_text = _truncate_compact_text(
+            getattr(response, "text", "") or ""
+        )
+
+    @property
+    def text(self) -> str:
+        return self._compact_text
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._response, name)
+
+
+def _maybe_compact_response(response: Any, force_compact: bool) -> Any:
+    if not force_compact:
+        return response
+
+    compact = _CompactResponseProxy(response)
+    logging.info(
+        "Gemini compact guard: output capped to %s chars (actual=%s)",
+        COMPACT_MAX_CHARS,
+        len(compact.text),
+    )
+    return compact
+
+
 def _install_gemini_fallback_router() -> None:
     """
     Patch the exact async generate_content method used by bot.py.
@@ -148,6 +365,9 @@ def _install_gemini_fallback_router() -> None:
     4) after 30 minutes allow one probe to 3.6;
     5) probe 429 -> immediate 3.1 and another 30-minute cooldown;
        probe success -> restore normal 3.6 traffic.
+
+    Additionally, short hostile/challenge messages receive a hard compact
+    response guard so prompt drift can never produce a multi-paragraph essay.
     """
 
     global _primary_probe_in_progress
@@ -175,6 +395,15 @@ def _install_gemini_fallback_router() -> None:
         if requested_model != PRIMARY_MODEL:
             return await original_generate_content(self, *args, **kwargs)
 
+        force_compact = _should_force_compact(
+            _request_contents(args, kwargs)
+        )
+        if force_compact:
+            kwargs = _prepare_compact_kwargs(kwargs)
+            logging.info(
+                "Gemini compact guard active: short hostile/challenge reply"
+            )
+
         now = time.time()
 
         # During cooldown, 3.6 is not called at all.
@@ -188,11 +417,12 @@ def _install_gemini_fallback_router() -> None:
                 "Gemini router: 3.6 cooldown active (%.0fs left) -> 3.1",
                 _primary_blocked_until_epoch - now,
             )
-            return await original_generate_content(
+            result = await original_generate_content(
                 self,
                 *fallback_args,
                 **fallback_kwargs,
             )
+            return _maybe_compact_response(result, force_compact)
 
         recovering_from_cooldown = _primary_blocked_until_epoch > 0.0
 
@@ -207,11 +437,12 @@ def _install_gemini_fallback_router() -> None:
                 logging.info(
                     "Gemini router: 3.6 probe already in flight -> 3.1",
                 )
-                return await original_generate_content(
+                result = await original_generate_content(
                     self,
                     *fallback_args,
                     **fallback_kwargs,
                 )
+                return _maybe_compact_response(result, force_compact)
 
             _primary_probe_in_progress = True
             logging.warning(
@@ -236,11 +467,12 @@ def _install_gemini_fallback_router() -> None:
                     kwargs,
                     FALLBACK_MODEL,
                 )
-                return await original_generate_content(
+                result = await original_generate_content(
                     self,
                     *fallback_args,
                     **fallback_kwargs,
                 )
+                return _maybe_compact_response(result, force_compact)
 
             if recovering_from_cooldown:
                 _clear_primary_cooldown()
@@ -248,7 +480,7 @@ def _install_gemini_fallback_router() -> None:
                     "Gemini router: 3.6 probe succeeded; primary restored",
                 )
 
-            return result
+            return _maybe_compact_response(result, force_compact)
         finally:
             if recovering_from_cooldown:
                 _primary_probe_in_progress = False
@@ -257,7 +489,11 @@ def _install_gemini_fallback_router() -> None:
     AsyncModels.generate_content = routed_generate_content
 
     logging.warning(
-        "Gemini router installed: 3.6 -> 3.1 on 429; retry 3.6 after 30 min",
+        "Gemini router installed: 3.6 -> 3.1 on 429; retry 3.6 after 30 min"
+    )
+    logging.warning(
+        "Gemini compact guard installed: hostile/challenge replies <= %s chars",
+        COMPACT_MAX_CHARS,
     )
 
 
