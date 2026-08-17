@@ -1,8 +1,11 @@
 """Telegram runtime for Yayceslav's sticker pack.
 
 Imported for side effects by passive_engine. It patches Application.run_polling
-once, adding /stickers and a low-priority background sticker listener without
-rewriting the large bot.py file.
+once, adding:
+- /stickers with the official public pack;
+- recognition/replies only for Yayceslav's own sticker set;
+- a 5% chance to replace a direct question answer with one own sticker;
+- rare contextual sticker drops in background group chat.
 """
 
 from __future__ import annotations
@@ -17,9 +20,16 @@ from pathlib import Path
 
 from telegram.constants import ChatType
 from telegram.error import BadRequest
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    ApplicationHandlerStop,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
 import sticker_engine
+import sticker_interaction
 
 
 DATA_DIR = Path("/app/data") if Path("/app/data").exists() else Path("data")
@@ -36,6 +46,10 @@ QUIET_HOURS_END_MSK = 7
 _CHAT_LAST_STICKER: dict[int, float] = {}
 _USER_LAST_STICKER: dict[tuple[int, int], float] = {}
 _CHAT_STICKER_TIMES: dict[int, deque[float]] = defaultdict(deque)
+
+# Learned from the live public pack on first use. file_unique_id is used for
+# incoming recognition because it is stable and directly present on Message.sticker.
+_STICKER_UNIQUE_IDS: dict[str, str] = {}
 
 
 def _load_sticker_ids() -> dict[str, str]:
@@ -67,12 +81,12 @@ def _save_sticker_ids(mapping: dict[str, str]) -> None:
 _STICKER_IDS: dict[str, str] = _load_sticker_ids()
 
 
-async def ensure_sticker_ids(bot, *, force: bool = False) -> dict[str, str]:
-    """Resolve public pack positions to reusable Telegram file_ids."""
+async def ensure_sticker_catalog(bot, *, force: bool = False) -> dict[str, str]:
+    """Resolve the live public pack to outgoing file_ids and incoming IDs."""
 
-    global _STICKER_IDS
+    global _STICKER_IDS, _STICKER_UNIQUE_IDS
 
-    if _STICKER_IDS and not force:
+    if _STICKER_IDS and _STICKER_UNIQUE_IDS and not force:
         return _STICKER_IDS
 
     sticker_set = await bot.get_sticker_set(sticker_engine.STICKER_SET_NAME)
@@ -84,14 +98,41 @@ async def ensure_sticker_ids(bot, *, force: bool = False) -> dict[str, str]:
             f"Sticker set has {len(stickers)} stickers, expected at least {expected}"
         )
 
-    mapping = {
-        key: stickers[index].file_id
-        for index, key in enumerate(sticker_engine.STICKER_ORDER)
-    }
-    _STICKER_IDS = mapping
-    _save_sticker_ids(mapping)
-    logging.info("Yayceslav sticker ids resolved: %s stickers", len(mapping))
-    return mapping
+    outgoing: dict[str, str] = {}
+    incoming: dict[str, str] = {}
+
+    for index, key in enumerate(sticker_engine.STICKER_ORDER):
+        sticker = stickers[index]
+        outgoing[key] = sticker.file_id
+        incoming[sticker.file_unique_id] = key
+
+    _STICKER_IDS = outgoing
+    _STICKER_UNIQUE_IDS = incoming
+    _save_sticker_ids(outgoing)
+    logging.info("Yayceslav sticker catalog resolved: %s stickers", len(outgoing))
+    return outgoing
+
+
+async def ensure_sticker_ids(bot, *, force: bool = False) -> dict[str, str]:
+    """Backward-compatible alias used by the sending path."""
+
+    return await ensure_sticker_catalog(bot, force=force)
+
+
+async def own_sticker_key(bot, sticker) -> str | None:
+    """Recognize only stickers belonging to Yayceslav's official set."""
+
+    if not sticker or sticker.set_name != sticker_engine.STICKER_SET_NAME:
+        return None
+
+    await ensure_sticker_catalog(bot)
+    key = _STICKER_UNIQUE_IDS.get(sticker.file_unique_id)
+    if key:
+        return key
+
+    # Pack order/file ids can change after the user edits the public pack.
+    await ensure_sticker_catalog(bot, force=True)
+    return _STICKER_UNIQUE_IDS.get(sticker.file_unique_id)
 
 
 def _quiet_hours_msk() -> bool:
@@ -100,7 +141,7 @@ def _quiet_hours_msk() -> bool:
 
 
 def sticker_slot_allowed(chat_id: int, user_id: int, now: float) -> bool:
-    """Global anti-spam gate for contextual sticker interventions."""
+    """Global anti-spam gate for unsolicited contextual sticker drops."""
 
     if _quiet_hours_msk():
         return False
@@ -128,7 +169,7 @@ def _record_sticker_slot(chat_id: int, user_id: int, now: float) -> None:
 
 
 def _main_hard_mode_already_intervened(context, now: float) -> bool:
-    """Do not stack sticker + emoji/text intervention on one message."""
+    """Do not stack sticker + emoji/text hard-mode intervention."""
 
     for key in (
         "hard_last_reaction",
@@ -144,6 +185,29 @@ def _main_hard_mode_already_intervened(context, now: float) -> bool:
             return True
 
     return False
+
+
+def _is_direct_call(update, context) -> bool:
+    message = update.effective_message
+    chat = update.effective_chat
+    if not message or not chat:
+        return False
+
+    if chat.type == ChatType.PRIVATE:
+        return True
+
+    replied_to_bot = bool(
+        message.reply_to_message
+        and message.reply_to_message.from_user
+        and message.reply_to_message.from_user.id == context.bot.id
+    )
+    if replied_to_bot:
+        return True
+
+    return sticker_engine.is_direct_address(
+        message.text or "",
+        context.bot.username or "",
+    )
 
 
 async def stickers_command(update, context) -> None:
@@ -190,6 +254,101 @@ async def reply_sticker_by_key(update, context, sticker_key: str) -> bool:
         return True
 
 
+async def own_pack_sticker_listener(update, context) -> None:
+    """Reply only to stickers from Yayceslav's own public sticker set."""
+
+    message = update.effective_message
+    user = update.effective_user
+    if not message or not message.sticker or not user or user.is_bot:
+        return
+
+    # This is the hard boundary requested by the user: all foreign packs are
+    # ignored completely and never get a bot reaction from this subsystem.
+    incoming_key = await own_sticker_key(context.bot, message.sticker)
+    if not incoming_key:
+        return
+
+    reply_key = sticker_interaction.choose_own_pack_comeback(incoming_key)
+    if not reply_key:
+        return
+
+    try:
+        sent = await reply_sticker_by_key(update, context, reply_key)
+    except Exception as error:
+        logging.warning(
+            "Yayceslav own-sticker reply failed incoming=%s reply=%s: %s",
+            incoming_key,
+            reply_key,
+            error,
+        )
+        return
+
+    if not sent:
+        return
+
+    logging.info(
+        "Yayceslav own-sticker conversation: incoming=%s reply=%s chat=%s user=%s",
+        sticker_engine.STICKER_LABELS.get(incoming_key, incoming_key),
+        sticker_engine.STICKER_LABELS.get(reply_key, reply_key),
+        update.effective_chat.id if update.effective_chat else None,
+        user.id,
+    )
+
+    # No other bot subsystem should additionally answer the same own sticker.
+    raise ApplicationHandlerStop
+
+
+async def direct_question_sticker_listener(update, context) -> None:
+    """Replace 5% of direct question answers with one own sticker."""
+
+    message = update.effective_message
+    user = update.effective_user
+    if not message or not message.text or not user or user.is_bot:
+        return
+
+    # Do not answer edited messages a second time.
+    if update.edited_message is not None:
+        return
+
+    text = message.text.strip()
+    if (
+        not text
+        or text.startswith("/")
+        or sticker_engine.is_serious_text(text)
+        or not sticker_interaction.is_question(text)
+        or not _is_direct_call(update, context)
+    ):
+        return
+
+    if random.random() >= sticker_interaction.QUESTION_STICKER_REPLY_CHANCE:
+        return
+
+    sticker_key = sticker_interaction.choose_question_sticker(text)
+
+    try:
+        sent = await reply_sticker_by_key(update, context, sticker_key)
+    except Exception as error:
+        logging.warning(
+            "Yayceslav 5%% question sticker failed key=%s: %s",
+            sticker_key,
+            error,
+        )
+        return
+
+    if not sent:
+        return
+
+    logging.info(
+        "Yayceslav direct question answered by sticker (5%% slot): %s chat=%s user=%s",
+        sticker_engine.STICKER_LABELS.get(sticker_key, sticker_key),
+        update.effective_chat.id if update.effective_chat else None,
+        user.id,
+    )
+
+    # This sticker IS the answer. Stop answer_text_message and all later groups.
+    raise ApplicationHandlerStop
+
+
 async def contextual_sticker_listener(update, context) -> None:
     """Rare context-aware sticker reply to background group conversation."""
 
@@ -207,16 +366,9 @@ async def contextual_sticker_listener(update, context) -> None:
     if not text or text.startswith("/") or sticker_engine.is_serious_text(text):
         return
 
-    # Direct calls are handled by bot.py with a full answer. V1 stickers are
-    # background interventions only, so direct messages never get a second reply.
-    bot_username = context.bot.username or ""
-    replied_to_bot = bool(
-        message.reply_to_message
-        and message.reply_to_message.from_user
-        and message.reply_to_message.from_user.id == context.bot.id
-    )
-
-    if replied_to_bot or sticker_engine.is_direct_address(text, bot_username):
+    # Direct calls are handled by bot.py, except the explicit 5% replacement
+    # slot above. Never add a second sticker after a direct answer.
+    if _is_direct_call(update, context):
         return
 
     event = sticker_engine.detect_event(text, direct=False)
@@ -240,7 +392,7 @@ async def contextual_sticker_listener(update, context) -> None:
     if not sticker_key:
         return
 
-    # Reserve before Telegram await: concurrent_updates(8) cannot double-send.
+    # Reserve before Telegram await: concurrent_updates cannot double-send.
     _record_sticker_slot(chat.id, user.id, now)
 
     try:
@@ -278,6 +430,25 @@ def install_runtime_hooks() -> None:
                 CommandHandler("stickers", stickers_command),
                 group=0,
             )
+
+            # Negative group executes before bot.py group=0. If one of these
+            # sends a sticker, ApplicationHandlerStop prevents a duplicate text
+            # response. PTB officially supports this handler-group behavior.
+            self.add_handler(
+                MessageHandler(
+                    filters.Sticker.ALL,
+                    own_pack_sticker_listener,
+                ),
+                group=-1,
+            )
+            self.add_handler(
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    direct_question_sticker_listener,
+                ),
+                group=-1,
+            )
+
             self.add_handler(
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
@@ -285,9 +456,11 @@ def install_runtime_hooks() -> None:
                 ),
                 group=2,
             )
+
             self._yayceslav_sticker_handlers_added = True
             logging.warning(
-                "Yayceslav stickers installed: /stickers + contextual map (%s events)",
+                "Yayceslav stickers installed: own-pack replies ON; foreign packs ignored; "
+                "direct-question sticker chance=5%%; contextual map=%s events",
                 len(sticker_engine.EVENT_STICKERS),
             )
 
