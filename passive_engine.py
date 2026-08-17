@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 import humor_engine
 import voice_packs
+import sticker_runtime  # noqa: F401 - installs Telegram sticker hooks at startup
 
 
 RANDOM_DROP_MIN_ACTIVITY = 12
