@@ -31,5 +31,6 @@ jobs:
           daily_title_engine.py state_engine.py thinking_engine.py title_pools.py
           chat_native_engine.py feedback_engine.py humanizer_engine.py adaptation_cache.py
           hostile_streak_engine.py sticker_engine.py sticker_interaction.py sticker_runtime.py
+          command_menu.py
       - name: Test
         run: pytest -q
