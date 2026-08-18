@@ -333,7 +333,7 @@ async def stickers_command(update, context) -> None:
 
 async def reply_sticker_by_key(update, context, sticker_key: str) -> bool:
     message = update.effective_message
-    if not message:
+    if not message or not sticker_key:
         return False
 
     mapping = await ensure_sticker_ids(context.bot)
@@ -394,7 +394,7 @@ async def own_pack_sticker_listener(update, context) -> None:
 
 
 async def direct_question_sticker_listener(update, context) -> None:
-    """Replace exactly 5% of qualifying direct-question answers with a sticker."""
+    """Replace at most 5% of semantically suitable direct answers with sticker."""
     message = update.effective_message
     user = update.effective_user
     if not message or not message.text or not user or user.is_bot:
@@ -412,20 +412,25 @@ async def direct_question_sticker_listener(update, context) -> None:
     ):
         return
 
+    # Semantic fit comes first. A generic question has no candidate and stays
+    # a normal text answer even when RNG would otherwise enter the 5% slot.
+    sticker_key = sticker_interaction.choose_question_sticker(text)
+    if not sticker_key:
+        return
+
     if random.random() >= sticker_interaction.QUESTION_STICKER_REPLY_CHANCE:
         return
 
-    sticker_key = sticker_interaction.choose_question_sticker(text)
     try:
         sent = await reply_sticker_by_key(update, context, sticker_key)
     except Exception as error:
-        logging.warning("Yayceslav 5%% question sticker failed key=%s: %s", sticker_key, error)
+        logging.warning("Yayceslav <=5%% question sticker failed key=%s: %s", sticker_key, error)
         return
     if not sent:
         return
 
     logging.info(
-        "Yayceslav direct question answered by sticker (5%% slot): %s chat=%s user=%s",
+        "Yayceslav direct question answered by sticker (<=5%% semantic slot): %s chat=%s user=%s",
         sticker_engine.STICKER_LABELS.get(sticker_key, sticker_key),
         update.effective_chat.id if update.effective_chat else None,
         user.id,
@@ -542,8 +547,9 @@ def install_runtime_hooks() -> None:
     def run_polling_with_yayceslav_runtime(self, *args, **kwargs):
         prepare_application_runtime(self)
         logging.warning(
-            "Yayceslav stickers runtime ready: own-pack replies ON; foreign packs ignored; "
-            "question=5%%; background<=2%%; background cap=%s/hour",
+            "Yayceslav stickers runtime ready: pack=%s; own-pack replies ON; foreign packs ignored; "
+            "question<=5%% semantic-only; background<=2%%; background cap=%s/hour",
+            len(sticker_engine.STICKER_ORDER),
             STICKER_MAX_PER_WINDOW,
         )
         return original_run_polling(self, *args, **kwargs)
