@@ -29,6 +29,30 @@ def test_foreign_sticker_is_rejected_without_catalog_api_call():
     assert result is None
 
 
+def test_final_pack_catalog_maps_all_37_positions(monkeypatch):
+    stickers = [
+        SimpleNamespace(file_id=f"file-{i}", file_unique_id=f"unique-{i}")
+        for i in range(37)
+    ]
+
+    class FakeBot:
+        async def get_sticker_set(self, name):
+            assert name == sticker_engine.STICKER_SET_NAME
+            return SimpleNamespace(name=name, stickers=stickers)
+
+    monkeypatch.setattr(sticker_runtime, "_STICKER_IDS", {})
+    monkeypatch.setattr(sticker_runtime, "_STICKER_UNIQUE_IDS", {})
+    monkeypatch.setattr(sticker_runtime, "_save_sticker_ids", lambda mapping: None)
+
+    mapping = asyncio.run(sticker_runtime.ensure_sticker_catalog(FakeBot(), force=True))
+    assert len(mapping) == 37
+    assert mapping["ty_po_moemu_pereputal"] == "file-0"
+    assert mapping["idi_nahui"] == "file-8"
+    assert mapping["krinzh"] == "file-36"
+    assert sticker_runtime._STICKER_UNIQUE_IDS["unique-0"] == "ty_po_moemu_pereputal"
+    assert sticker_runtime._STICKER_UNIQUE_IDS["unique-36"] == "krinzh"
+
+
 def test_question_sticker_slot_is_exactly_five_percent_at_boundary(monkeypatch):
     calls = []
 
@@ -56,6 +80,25 @@ def test_question_sticker_slot_is_exactly_five_percent_at_boundary(monkeypatch):
     monkeypatch.setattr(sticker_runtime.random, "random", lambda: 0.05)
     asyncio.run(sticker_runtime.direct_question_sticker_listener(update, context))
     assert calls == []
+
+
+def test_generic_question_never_calls_sticker_sender_even_with_zero_rng(monkeypatch):
+    async def must_not_send(*args, **kwargs):
+        raise AssertionError("generic direct question must stay a text answer")
+
+    monkeypatch.setattr(sticker_runtime, "_is_direct_call", lambda update, context: True)
+    monkeypatch.setattr(sticker_runtime, "reply_sticker_by_key", must_not_send)
+    monkeypatch.setattr(sticker_runtime.random, "random", lambda: 0.0)
+
+    update = SimpleNamespace(
+        effective_message=SimpleNamespace(text="Яйцеслав, как тебе погода сегодня?"),
+        effective_user=SimpleNamespace(id=123, is_bot=False),
+        effective_chat=SimpleNamespace(id=-1001),
+        edited_message=None,
+    )
+    context = SimpleNamespace(bot=SimpleNamespace())
+
+    asyncio.run(sticker_runtime.direct_question_sticker_listener(update, context))
 
 
 def test_serious_question_never_uses_sticker_even_when_rng_is_zero(monkeypatch):
@@ -89,5 +132,10 @@ def test_all_background_events_are_at_most_two_percent():
     ) <= 0.02
 
 
-def test_question_probability_constant_is_five_percent():
+def test_hard_hostile_background_events_are_below_one_percent():
+    assert sticker_engine.event_chance("hard_dismissal") < 0.01
+    assert sticker_engine.event_chance("shut_up_escalated") < 0.01
+
+
+def test_question_probability_constant_is_five_percent_maximum():
     assert sticker_interaction.QUESTION_STICKER_REPLY_CHANCE == 0.05
