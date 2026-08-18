@@ -53,6 +53,65 @@ def test_final_pack_catalog_maps_all_37_positions(monkeypatch):
     assert sticker_runtime._STICKER_UNIQUE_IDS["unique-36"] == "krinzh"
 
 
+def test_own_sticker_fifty_percent_visual_branch_uses_semantic_counter(monkeypatch):
+    calls = []
+
+    async def fake_own_key(bot, sticker):
+        return "minus_aura"
+
+    async def fake_reply(update, context, sticker_key):
+        calls.append(sticker_key)
+        return True
+
+    async def must_not_text(_text):
+        raise AssertionError("visual 50% branch must not also send text")
+
+    monkeypatch.setattr(sticker_runtime, "own_sticker_key", fake_own_key)
+    monkeypatch.setattr(sticker_runtime, "reply_sticker_by_key", fake_reply)
+    monkeypatch.setattr(sticker_runtime.random, "random", lambda: 0.0)
+
+    update = SimpleNamespace(
+        effective_message=SimpleNamespace(sticker=object(), reply_text=must_not_text),
+        effective_user=SimpleNamespace(id=123, is_bot=False),
+        effective_chat=SimpleNamespace(id=-1001),
+    )
+    context = SimpleNamespace(bot=SimpleNamespace())
+
+    with pytest.raises(ApplicationHandlerStop):
+        asyncio.run(sticker_runtime.own_pack_sticker_listener(update, context))
+    assert calls == ["plus_aura"]
+
+
+def test_own_sticker_other_half_uses_text_reply(monkeypatch):
+    texts = []
+
+    async def fake_own_key(bot, sticker):
+        return "po_delu_govori"
+
+    async def fake_text(text):
+        texts.append(text)
+        return True
+
+    async def must_not_sticker(*args, **kwargs):
+        raise AssertionError("text 50% branch must not force a sticker")
+
+    monkeypatch.setattr(sticker_runtime, "own_sticker_key", fake_own_key)
+    monkeypatch.setattr(sticker_runtime, "reply_sticker_by_key", must_not_sticker)
+    monkeypatch.setattr(sticker_runtime.random, "random", lambda: 0.75)
+
+    update = SimpleNamespace(
+        effective_message=SimpleNamespace(sticker=object(), reply_text=fake_text),
+        effective_user=SimpleNamespace(id=123, is_bot=False),
+        effective_chat=SimpleNamespace(id=-1001),
+    )
+    context = SimpleNamespace(bot=SimpleNamespace())
+
+    with pytest.raises(ApplicationHandlerStop):
+        asyncio.run(sticker_runtime.own_pack_sticker_listener(update, context))
+    assert len(texts) == 1
+    assert texts[0]
+
+
 def test_question_sticker_slot_is_exactly_five_percent_at_boundary(monkeypatch):
     calls = []
 
