@@ -45,6 +45,7 @@ _SIMPLE_ARITHMETIC_RE = re.compile(
     r"[\d\s.,()+\-*/×÷%^]+[=?]?\s*$",
     re.IGNORECASE,
 )
+_DATE_RE = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}$")
 
 _SHORT_INTERJECTION_RE = re.compile(
     r"^\s*(?:"
@@ -110,10 +111,15 @@ def is_simple_arithmetic(text: str) -> bool:
     stripped = (text or "").strip()
     if not stripped or len(stripped) > 48:
         return False
+    if _DATE_RE.fullmatch(stripped):
+        return False
     if not _SIMPLE_ARITHMETIC_RE.fullmatch(stripped):
         return False
-    # A bare number/date is not enough. Require an actual arithmetic operator.
-    return bool(re.search(r"[+*/×÷%^]", stripped) or re.search(r"\d\s*-\s*\d", stripped))
+    # A bare number is not enough. Require an actual arithmetic operator.
+    return bool(
+        re.search(r"[+*/×÷%^]", stripped)
+        or re.search(r"\d\s*-\s*\d", stripped)
+    )
 
 
 def should_force_primitive_compact(contents: Any) -> bool:
