@@ -37,6 +37,13 @@ def test_skill_issue_gets_a_real_comeback_from_own_pack():
     assert reply in {"obtekay", "slabyy_zahod", "zavali_varezhku"}
 
 
+def test_new_stickers_have_semantic_comebacks():
+    for key in sticker_engine.STICKER_ORDER[:9]:
+        assert sticker_interaction.choose_own_pack_comeback(
+            key, rng=random.Random(1)
+        ) in set(sticker_interaction.OWN_STICKER_COMEBACKS[key])
+
+
 def test_unknown_or_foreign_sticker_key_has_no_comeback():
     assert sticker_interaction.choose_own_pack_comeback("foreign_pack_sticker") is None
 
@@ -48,9 +55,31 @@ def test_semantic_question_prefers_matching_sticker_event():
     ) == "gde_prufy"
 
 
-def test_generic_question_uses_only_generic_question_pool():
-    result = sticker_interaction.choose_question_sticker(
+def test_generic_question_has_no_random_sticker_candidate():
+    assert sticker_interaction.choose_question_sticker(
         "как тебе погода сегодня?",
         rng=random.Random(3),
+    ) is None
+
+
+def test_waiting_question_can_use_waiting_stickers_only():
+    result = sticker_interaction.choose_question_sticker(
+        "сколько можно ждать уже?",
+        rng=random.Random(3),
     )
-    assert result in sticker_interaction.QUESTION_REPLY_STICKERS
+    assert result in {"14_minut_blyat", "tyazhelo_tyazhelo"}
+
+
+def test_direct_question_pool_never_contains_hard_hostile_stickers():
+    outputs = {
+        key
+        for replies in sticker_interaction.QUESTION_EVENT_STICKERS.values()
+        for key in replies
+    }
+    assert "idi_nahui" not in outputs
+    assert "vremya_zavalit_ebalo" not in outputs
+
+
+def test_old_idi_lesom_key_is_gone_everywhere():
+    assert "idi_lesom" not in sticker_engine.STICKER_ORDER
+    assert "idi_lesom" not in sticker_interaction.OWN_STICKER_COMEBACKS
