@@ -356,7 +356,7 @@ async def reply_sticker_by_key(update, context, sticker_key: str) -> bool:
 
 
 async def own_pack_sticker_listener(update, context) -> None:
-    """Reply to our own pack; foreign packs are ignored."""
+    """Understand our own sticker and answer 50/50 with sticker or short text."""
     message = update.effective_message
     user = update.effective_user
     if not message or not message.sticker or not user or user.is_bot:
@@ -364,29 +364,57 @@ async def own_pack_sticker_listener(update, context) -> None:
 
     incoming_key = await own_sticker_key(context.bot, message.sticker)
     if not incoming_key:
+        # Foreign sticker packs are intentionally ignored.
         return
 
-    reply_key = sticker_interaction.choose_own_pack_comeback(incoming_key)
-    if not reply_key:
-        return
+    reply_mode = "text"
+    reply_key = None
 
+    # 50% chance to TRY a sticker counter. No semantic candidate means text;
+    # this prevents nonsense pairings just to satisfy the random branch.
+    if random.random() < sticker_interaction.OWN_STICKER_REPLY_CHANCE:
+        reply_key = sticker_interaction.choose_own_pack_comeback(incoming_key)
+        if reply_key:
+            try:
+                sent = await reply_sticker_by_key(update, context, reply_key)
+            except Exception as error:
+                logging.warning(
+                    "Yayceslav own-sticker visual reply failed incoming=%s reply=%s: %s",
+                    incoming_key,
+                    reply_key,
+                    error,
+                )
+                sent = False
+            if sent:
+                reply_mode = "sticker"
+                logging.info(
+                    "Yayceslav own-sticker semantic reply: incoming=%s reply=%s chat=%s user=%s",
+                    sticker_engine.STICKER_LABELS.get(incoming_key, incoming_key),
+                    sticker_engine.STICKER_LABELS.get(reply_key, reply_key),
+                    update.effective_chat.id if update.effective_chat else None,
+                    user.id,
+                )
+                raise ApplicationHandlerStop
+
+    # Text is the other 50%, and also the fallback when there is no clean
+    # sticker counterargument or Telegram rejected the visual reply.
+    text_reply = sticker_interaction.choose_own_pack_text_reply(incoming_key)
+    if not text_reply:
+        return
     try:
-        sent = await reply_sticker_by_key(update, context, reply_key)
+        await message.reply_text(text_reply)
     except Exception as error:
         logging.warning(
-            "Yayceslav own-sticker reply failed incoming=%s reply=%s: %s",
+            "Yayceslav own-sticker text reply failed incoming=%s: %s",
             incoming_key,
-            reply_key,
             error,
         )
         return
-    if not sent:
-        return
 
-    logging.warning(
-        "Yayceslav own-sticker reply: incoming=%s reply=%s chat=%s user=%s",
+    logging.info(
+        "Yayceslav own-sticker semantic reply: incoming=%s reply=%s chat=%s user=%s",
         sticker_engine.STICKER_LABELS.get(incoming_key, incoming_key),
-        sticker_engine.STICKER_LABELS.get(reply_key, reply_key),
+        reply_mode,
         update.effective_chat.id if update.effective_chat else None,
         user.id,
     )
@@ -547,8 +575,9 @@ def install_runtime_hooks() -> None:
     def run_polling_with_yayceslav_runtime(self, *args, **kwargs):
         prepare_application_runtime(self)
         logging.warning(
-            "Yayceslav stickers runtime ready: pack=%s; own-pack replies ON; foreign packs ignored; "
-            "question<=5%% semantic-only; background<=2%%; background cap=%s/hour",
+            "Yayceslav stickers runtime ready: pack=%s; own-pack=50%% semantic sticker/text; "
+            "foreign packs ignored; question<=5%% semantic-only; background<=2%%; "
+            "background cap=%s/hour",
             len(sticker_engine.STICKER_ORDER),
             STICKER_MAX_PER_WINDOW,
         )
