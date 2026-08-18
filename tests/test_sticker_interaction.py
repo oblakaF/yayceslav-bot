@@ -8,6 +8,10 @@ def test_question_sticker_probability_is_exactly_five_percent():
     assert sticker_interaction.QUESTION_STICKER_REPLY_CHANCE == 0.05
 
 
+def test_own_sticker_visual_reply_probability_is_exactly_half():
+    assert sticker_interaction.OWN_STICKER_REPLY_CHANCE == 0.50
+
+
 def test_question_detector_handles_question_marks_and_russian_question_forms():
     assert sticker_interaction.is_question("Яйцеслав, ты вообще живой?")
     assert sticker_interaction.is_question("почему не работает")
@@ -15,37 +19,72 @@ def test_question_detector_handles_question_marks_and_russian_question_forms():
     assert not sticker_interaction.is_question("просто утверждение")
 
 
-def test_own_pack_comeback_map_covers_every_published_sticker():
-    assert set(sticker_interaction.OWN_STICKER_COMEBACKS) == set(
-        sticker_engine.STICKER_ORDER
-    )
+def test_own_pack_maps_cover_every_published_sticker():
+    known = set(sticker_engine.STICKER_ORDER)
+    assert set(sticker_interaction.OWN_STICKER_COMEBACKS) == known
+    assert set(sticker_interaction.OWN_STICKER_TEXT_REPLIES) == known
 
 
-def test_all_own_pack_comebacks_stay_inside_yayceslav_pack():
+def test_all_visual_comebacks_stay_inside_yayceslav_pack():
     known = set(sticker_engine.STICKER_ORDER)
     for incoming, replies in sticker_interaction.OWN_STICKER_COMEBACKS.items():
         assert incoming in known
-        assert replies
         assert set(replies) <= known
 
 
-def test_skill_issue_gets_a_real_comeback_from_own_pack():
+def test_every_own_sticker_has_text_fallback():
+    for key in sticker_engine.STICKER_ORDER:
+        assert sticker_interaction.choose_own_pack_text_reply(
+            key, rng=random.Random(1)
+        ) in set(sticker_interaction.OWN_STICKER_TEXT_REPLIES[key])
+
+
+def test_skill_issue_gets_a_real_visual_comeback():
     reply = sticker_interaction.choose_own_pack_comeback(
         "skill_issue",
         rng=random.Random(7),
     )
-    assert reply in {"obtekay", "slabyy_zahod", "zavali_varezhku"}
+    assert reply in {"obtekay", "slabyy_zahod"}
 
 
-def test_new_stickers_have_semantic_comebacks():
-    for key in sticker_engine.STICKER_ORDER[:9]:
-        assert sticker_interaction.choose_own_pack_comeback(
-            key, rng=random.Random(1)
-        ) in set(sticker_interaction.OWN_STICKER_COMEBACKS[key])
+def test_po_delu_govori_does_not_force_an_illogical_sticker_reply():
+    assert sticker_interaction.choose_own_pack_comeback(
+        "po_delu_govori",
+        rng=random.Random(1),
+    ) is None
+    assert sticker_interaction.choose_own_pack_text_reply(
+        "po_delu_govori",
+        rng=random.Random(1),
+    )
 
 
-def test_unknown_or_foreign_sticker_key_has_no_comeback():
+def test_minus_aura_counters_with_plus_aura():
+    assert sticker_interaction.choose_own_pack_comeback(
+        "minus_aura",
+        rng=random.Random(1),
+    ) == "plus_aura"
+
+
+def test_pereigral_never_answers_za_dvizh():
+    assert "za_dvizh" not in sticker_interaction.OWN_STICKER_COMEBACKS[
+        "pereigral_i_unichtozhil"
+    ]
+    assert set(sticker_interaction.OWN_STICKER_COMEBACKS[
+        "pereigral_i_unichtozhil"
+    ]) == {"ty_po_moemu_pereputal", "gde_prufy", "nadel_tebya_na_suk"}
+
+
+def test_idi_nahui_has_only_banter_counter_stickers():
+    assert set(sticker_interaction.OWN_STICKER_COMEBACKS["idi_nahui"]) == {
+        "ne_bazar",
+        "obtekay",
+        "zavali_varezhku",
+    }
+
+
+def test_unknown_or_foreign_sticker_key_has_no_comeback_or_text():
     assert sticker_interaction.choose_own_pack_comeback("foreign_pack_sticker") is None
+    assert sticker_interaction.choose_own_pack_text_reply("foreign_pack_sticker") is None
 
 
 def test_semantic_question_prefers_matching_sticker_event():
