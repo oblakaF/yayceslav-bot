@@ -4,6 +4,11 @@ import threading
 import time
 from typing import Any, Callable
 
+# Loaded early by bot.py, before thinking_engine installs its Gemini router.
+# This lets the primitive compact guard sit underneath the router and apply
+# equally to the primary and fallback chat models.
+import primitive_compact_guard  # noqa: F401
+
 
 _LOCK = threading.Lock()
 _CACHE: dict[tuple[str, int], tuple[float, Any]] = {}
