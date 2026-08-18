@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from typing import Final
 
+# Imported for its runtime hook. sticker_runtime imports command_menu, so this
+# hook is installed on the same startup path without touching the huge bot.py.
+import sticker_post_runtime  # noqa: F401
+
 
 # Exactly the compact group menu approved by the user.
 GROUP_COMMANDS: Final[tuple[tuple[str, str], ...]] = (
