@@ -35,6 +35,37 @@ def test_daily_assignment_is_atomic_and_persistent(tmp_path, monkeypatch):
     assert saved["title"] == "Воевода споров"
 
 
+def test_daily_assignment_survives_database_reinitialization(tmp_path, monkeypatch):
+    """Simulate a Railway restart: schema init must not erase today's winner."""
+    db_path = tmp_path / "daily-title-restart.db"
+    monkeypatch.setattr(bot, "STATS_DB_PATH", db_path)
+    bot.initialize_stats_database()
+    _seed_member(-1010, 110)
+    _seed_member(-1010, 111)
+
+    assert bot.try_assign_daily_title_sync(
+        -1010, "2026-08-18", 110, "Несменяемый победитель"
+    )
+
+    # Startup calls database initialization again after a process restart.
+    bot.initialize_stats_database()
+
+    saved = bot.get_daily_title_assignment_sync(-1010, "2026-08-18")
+    assert saved is not None
+    assert saved["user_id"] == 110
+    assert saved["title"] == "Несменяемый победитель"
+
+    # The same day remains locked even if another participant is considered.
+    assert not bot.try_assign_daily_title_sync(
+        -1010, "2026-08-18", 111, "Второй победитель"
+    )
+
+    winner = bot.get_member_profile_sync(-1010, 110)
+    loser = bot.get_member_profile_sync(-1010, 111)
+    assert winner is not None and winner["current_title"] == "Несменяемый победитель"
+    assert loser is not None and loser["current_title"] is None
+
+
 def test_daily_assignment_updates_current_member_title(tmp_path, monkeypatch):
     db_path = tmp_path / "daily-title-member.db"
     monkeypatch.setattr(bot, "STATS_DB_PATH", db_path)
