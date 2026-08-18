@@ -11,11 +11,15 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install dependencies
         run: |
@@ -31,6 +35,6 @@ jobs:
           daily_title_engine.py state_engine.py thinking_engine.py title_pools.py
           chat_native_engine.py feedback_engine.py humanizer_engine.py adaptation_cache.py
           hostile_streak_engine.py sticker_engine.py sticker_interaction.py sticker_runtime.py
-          command_menu.py
+          sticker_post_runtime.py primitive_compact_guard.py scoped_help_runtime.py command_menu.py
       - name: Test
         run: pytest -q
