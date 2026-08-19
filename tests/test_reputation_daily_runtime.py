@@ -197,7 +197,7 @@ def test_small_positive_reputation_gets_goodwill_override(tmp_path):
     daily._patch_instruction(bot)
     result = bot.build_full_system_instruction("обычный вопрос", chat_id=1, user_id=2)
     assert "NATURAL GOODWILL OVERRIDE" in result
-    assert "общается нормально" in result
+    assert "нормальный человек" in result
     assert "не льсти" in result
 
 
