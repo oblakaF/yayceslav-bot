@@ -1,9 +1,10 @@
-"""Deterministic lifetime reputation scoring for Yayceslav.
+"""Deterministic explicit reputation scoring for Yayceslav.
 
 Reputation is not the same thing as familiarity or the 30-day positive-affinity
-state. Every member starts at zero. Only messages actually directed at
-Yayceslav can move the score, so unrelated group praise/abuse never changes the
-relationship. One message produces at most one signed delta in [-10, 10].
+state. Every member starts at zero. Explicit praise/abuse only counts when it
+is directed at Yayceslav; ordinary clean-day goodwill is handled separately by
+reputation_daily_runtime. One explicit message produces at most one signed
+delta in [-10, 10].
 """
 
 from __future__ import annotations
@@ -61,8 +62,12 @@ def reputation_label(score: int) -> str:
         return "негативный"
     if value <= -10:
         return "настороженно"
-    if value < 10:
+    if value < 0:
+        return "слегка настороженно"
+    if value == 0:
         return "нейтрально"
+    if value < 10:
+        return "нормальный"
     if value < 35:
         return "симпатия"
     if value < 70:
@@ -92,7 +97,7 @@ def score_message(
     directed_at_bot: bool,
     hostile_mode: bool = False,
 ) -> ReputationDecision:
-    """Score one user message toward Yayceslav.
+    """Score one explicit user message toward Yayceslav.
 
     Negative intent wins over praise in mixed messages such as
     "спасибо, мудак". `hostile_mode` is only a guard confirming that the
