@@ -86,6 +86,30 @@ def test_instruction_patch_celebrates_real_success(tmp_path, monkeypatch):
     assert "Не хвали без реального повода" in result
 
 
+def test_group_praise_is_not_assumed_to_target_bot(tmp_path, monkeypatch):
+    bot = _db_bot(tmp_path)
+    runtime._initialize_tables(bot)
+    monkeypatch.setattr(runtime, "_latest_user_text", lambda contents: str(contents or ""))
+    runtime._patch_build_instruction(bot)
+
+    unrelated = bot.build_full_system_instruction(
+        "красава, Вадим",
+        chat_id=1,
+        user_id=2,
+        chat_type="group",
+    )
+    assert unrelated == "BASE"
+
+    directed = bot.build_full_system_instruction(
+        "Яйцеслав, красава",
+        chat_id=1,
+        user_id=2,
+        chat_type="group",
+    )
+    assert "POSITIVE/SOCIAL LAYER" in directed
+    assert "похвалил/поблагодарил" in directed
+
+
 def test_prepare_application_registers_group9_once(monkeypatch):
     fake_bot = object()
     calls = []
