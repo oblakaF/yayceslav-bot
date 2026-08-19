@@ -42,6 +42,17 @@ import daily_content_runtime
 import daily_content_source_patch  # noqa: F401
 
 
+# These class sentinels are the compatibility contract used by three older
+# sticker/menu modules. Bootstrap claims them before those modules are imported
+# later by bot.py, so their legacy run_polling hooks become no-ops. Their actual
+# preparation functions are called explicitly from prepare_application_runtime.
+LEGACY_POLLING_SENTINELS = (
+    "_yayceslav_sticker_patch_installed",
+    "_yayceslav_scoped_help_patch_installed",
+    "_yayceslav_post_sticker_runtime_installed",
+)
+
+
 # Exposed for a small contract test. This documents the critical ordering
 # without inspecting source text or depending on import implementation details.
 RUNTIME_LOAD_ORDER = (
@@ -106,8 +117,34 @@ def prepare_polling_runtime(kwargs: dict) -> None:
     ensure_chat_member_updates(kwargs)
 
 
+def _prepare_sticker_menu_runtime(application: Application) -> None:
+    """Prepare the old sticker/menu startup layer without polling wrappers."""
+    # Lazy imports are intentional. bot.py imports adaptation_cache (and thus
+    # this bootstrap) before the sticker/menu modules; importing them here at
+    # polling startup avoids changing bot.py import order or creating cycles.
+    import scoped_help_runtime
+    import sticker_post_runtime
+    import sticker_runtime
+
+    # Preserve the old wrapper execution order:
+    # sticker runtime -> scoped help -> post-answer send wrapper -> bootstrap.
+    sticker_runtime.prepare_application_runtime(application)
+    scoped_help_runtime.prepare_application_runtime(application)
+    sticker_post_runtime.install_send_answer_wrapper()
+
+    logging.warning(
+        "Yayceslav stickers runtime ready: pack=%s; own-pack=50%% semantic sticker/text; "
+        "foreign packs ignored; question<=5%% semantic-only; background<=2%%; "
+        "background cap=%s/hour",
+        len(sticker_runtime.sticker_engine.STICKER_ORDER),
+        sticker_runtime.STICKER_MAX_PER_WINDOW,
+    )
+    logging.warning("Scoped /help runtime ready: group/private/owner")
+
+
 def prepare_application_runtime(application: Application) -> None:
     """Prepare application-owned features from one explicit startup path."""
+    _prepare_sticker_menu_runtime(application)
     # Order is a runtime contract: monthly captures the unified scheduler and
     # appends its report after the daily-title run.
     unified_daily_title_runtime._prepare()
@@ -129,8 +166,15 @@ def prepare_application_runtime(application: Application) -> None:
     daily_content_runtime._prepare_application(application)
 
 
+def _claim_legacy_polling_ownership() -> None:
+    """Make later legacy sticker/menu hook installers harmless."""
+    for attribute in LEGACY_POLLING_SENTINELS:
+        setattr(Application, attribute, True)
+
+
 def _install_preflight_hook() -> None:
     """Install the single application polling wrapper owned by the bootstrap."""
+    _claim_legacy_polling_ownership()
     if getattr(Application, "_yayceslav_schema_preflight_installed", False):
         return
 

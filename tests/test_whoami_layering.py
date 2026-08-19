@@ -41,6 +41,11 @@ def test_v4_is_the_only_runtime_whoami_command_owner(monkeypatch):
 def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     application = object()
     calls = []
+    monkeypatch.setattr(
+        runtime_bootstrap,
+        "_prepare_sticker_menu_runtime",
+        lambda app: calls.append(("sticker_menu", app)),
+    )
     monkeypatch.setattr(unified_titles, "_prepare", lambda: calls.append(("unified", None)))
     monkeypatch.setattr(
         monthly,
@@ -69,6 +74,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     runtime_bootstrap.prepare_application_runtime(application)
 
     assert calls == [
+        ("sticker_menu", application),
         ("unified", None),
         ("monthly", application),
         ("relationship", application),
@@ -86,6 +92,11 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     assert not hasattr(v4, "install_runtime_hook")
     assert not hasattr(dialogue_guard, "install_runtime_hook")
     assert not hasattr(daily_content, "install_runtime_hook")
+
+
+def test_bootstrap_claims_legacy_sticker_menu_polling_hooks():
+    for attribute in runtime_bootstrap.LEGACY_POLLING_SENTINELS:
+        assert getattr(Application, attribute, False) is True
 
 
 def test_bootstrap_is_the_only_active_polling_wrapper():
