@@ -27,6 +27,35 @@ def known_active_group_chat_ids(bot_module) -> list[int]:
     return [int(row[0]) for row in rows]
 
 
+def known_content_group_chat_ids(bot_module) -> list[int]:
+    """Preserve daily-content discovery including its legacy chats fallback.
+
+    Current production databases normally have chat_membership_registry. Older
+    or partially initialized databases may not, so daily content historically
+    falls back to the chats table. Keep that behavior centralized here.
+    """
+    with bot_module.get_db_connection() as connection:
+        try:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT chat_id
+                FROM chat_membership_registry
+                WHERE is_active = 1 AND is_bot = 0
+                ORDER BY chat_id
+                """
+            ).fetchall()
+        except Exception:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT chat_id
+                FROM chats
+                WHERE chat_type IN ('group', 'supergroup')
+                ORDER BY chat_id
+                """
+            ).fetchall()
+    return [int(row[0]) for row in rows]
+
+
 def display_name(bot_module, chat_id: int, user_id: int) -> str:
     with bot_module.get_db_connection() as connection:
         row = connection.execute(
