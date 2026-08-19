@@ -89,6 +89,21 @@ def test_chat_member_update_preparation_appends_once():
     assert kwargs["allowed_updates"] == [UpdateType.MESSAGE, UpdateType.CHAT_MEMBER]
 
 
+def test_polling_runtime_preparation_installs_followup_mode_and_updates(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        runtime_bootstrap.dialogue_followup_mode_patch,
+        "install",
+        lambda: calls.append("followup") or True,
+    )
+    kwargs = {"allowed_updates": [UpdateType.MESSAGE]}
+
+    runtime_bootstrap.prepare_polling_runtime(kwargs)
+
+    assert calls == ["followup"]
+    assert kwargs["allowed_updates"] == [UpdateType.MESSAGE, UpdateType.CHAT_MEMBER]
+
+
 def test_schema_preflight_is_installed_as_central_bootstrap_hook():
     assert getattr(Application, "_yayceslav_schema_preflight_installed", False) is True
 
