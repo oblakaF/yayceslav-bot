@@ -23,6 +23,7 @@ import primitive_compact_guard  # noqa: F401
 import dialogue_guard_runtime
 import accountability_runtime
 import positive_runtime
+import reputation_runtime
 import member_profile_runtime
 import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch
@@ -51,6 +52,7 @@ RUNTIME_LOAD_ORDER = (
     "dialogue_guard_runtime",
     "accountability_runtime",
     "positive_runtime",
+    "reputation_runtime",
     "member_profile_runtime",
     "member_memory_safety_patch",
     "dialogue_followup_mode_patch",
@@ -172,6 +174,10 @@ def prepare_application_runtime(application: Application) -> None:
     # dialogue guard, so its grounded warmth is appended to the final composed
     # instruction. It adds only a group-9 observer; polling ownership stays here.
     positive_runtime._prepare_application(application)
+    # Lifetime reputation sits above short-term positive affinity. New users are
+    # exactly neutral (0), while repeated directed praise/abuse persists across
+    # days. It adds a group-10 observer and never owns run_polling.
+    reputation_runtime._prepare_application(application)
     # Rate-limit ВСЁ ТЛЕН must wrap the FINAL limiter, including the 12/min
     # group guard installed immediately above.
     import rate_limit_tlen_runtime
