@@ -13,6 +13,7 @@ def test_active_title_categories_are_the_approved_compact_pools():
         "profane",
         "street_memes",
         "legendary",
+        "positive",
     }
 
 
@@ -22,8 +23,8 @@ def test_each_active_title_pool_is_nonempty_and_unique():
         assert len(titles) == len(set(titles)), personality
 
 
-def test_all_approved_titles_are_globally_unique_and_total_66():
-    assert len(title_pools.ALL_TITLES) == 66
+def test_all_approved_titles_are_globally_unique_and_total_73():
+    assert len(title_pools.ALL_TITLES) == 73
     assert len(title_pools.ALL_TITLES) == len(set(title_pools.ALL_TITLES))
 
 

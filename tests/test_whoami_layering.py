@@ -1,9 +1,13 @@
 from telegram.ext import Application, CommandHandler
 
+import accountability_runtime as accountability
 import daily_content_runtime as daily_content
 import dialogue_guard_runtime as dialogue_guard
 import member_profile_runtime as member_profile
 import monthly_social_runtime as monthly
+import positive_runtime as positive
+import reputation_daily_runtime as reputation_daily
+import reputation_runtime as reputation
 import relationship_experience_runtime as relationship
 import runtime_bootstrap
 import scoped_help_runtime
@@ -68,6 +72,22 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     monkeypatch.setattr(v3, "_prepare_application", lambda app: calls.append(("v3", app)))
     monkeypatch.setattr(v4, "_prepare_application", lambda app: calls.append(("v4", app)))
     monkeypatch.setattr(dialogue_guard, "_prepare", lambda: calls.append(("dialogue", None)))
+    monkeypatch.setattr(accountability, "install", lambda: calls.append(("accountability", None)))
+    monkeypatch.setattr(
+        positive,
+        "_prepare_application",
+        lambda app: calls.append(("positive", app)),
+    )
+    monkeypatch.setattr(
+        reputation,
+        "_prepare_application",
+        lambda app: calls.append(("reputation", app)),
+    )
+    monkeypatch.setattr(
+        reputation_daily,
+        "_prepare_application",
+        lambda app: calls.append(("reputation_daily", app)),
+    )
     monkeypatch.setattr(
         daily_content,
         "_prepare_application",
@@ -85,6 +105,10 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("v3", application),
         ("v4", application),
         ("dialogue", None),
+        ("accountability", None),
+        ("positive", application),
+        ("reputation", application),
+        ("reputation_daily", application),
         ("daily_content", application),
     ]
     assert not hasattr(unified_titles, "install_runtime_hook")
@@ -94,6 +118,10 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     assert not hasattr(v3, "install_runtime_hook")
     assert not hasattr(v4, "install_runtime_hook")
     assert not hasattr(dialogue_guard, "install_runtime_hook")
+    assert not hasattr(accountability, "install_runtime_hook")
+    assert not hasattr(positive, "install_runtime_hook")
+    assert not hasattr(reputation, "install_runtime_hook")
+    assert not hasattr(reputation_daily, "install_runtime_hook")
     assert not hasattr(daily_content, "install_runtime_hook")
     assert not hasattr(scoped_help_runtime, "install_runtime_hook")
     assert not hasattr(sticker_post_runtime, "install_runtime_hook")

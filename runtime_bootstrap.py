@@ -21,6 +21,10 @@ import schema_migrations
 # when the application is built, but polling ownership stays centralized below.
 import primitive_compact_guard  # noqa: F401
 import dialogue_guard_runtime
+import accountability_runtime
+import positive_runtime
+import reputation_runtime
+import reputation_daily_runtime
 import member_profile_runtime
 import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch
@@ -47,6 +51,10 @@ import daily_content_source_patch  # noqa: F401
 RUNTIME_LOAD_ORDER = (
     "primitive_compact_guard",
     "dialogue_guard_runtime",
+    "accountability_runtime",
+    "positive_runtime",
+    "reputation_runtime",
+    "reputation_daily_runtime",
     "member_profile_runtime",
     "member_memory_safety_patch",
     "dialogue_followup_mode_patch",
@@ -111,9 +119,20 @@ def _prepare_sticker_menu_runtime(application: Application) -> None:
     # Lazy imports are intentional. bot.py imports adaptation_cache (and thus
     # this bootstrap) before the sticker/menu modules; importing them here at
     # polling startup avoids changing bot.py import order or creating cycles.
+    import praise_guard_runtime
+    import sticker_semantics_aug19
+
+    # Extend the pure semantic registry BEFORE sticker_runtime loads its cached
+    # ids. The runtime behavior hooks themselves are installed only after all
+    # three sticker/menu modules exist.
+    sticker_semantics_aug19.install_catalog_semantics()
+
     import scoped_help_runtime
     import sticker_post_runtime
     import sticker_runtime
+
+    praise_guard_runtime.install()
+    sticker_semantics_aug19.install_runtime_behavior()
 
     # Preserve the previous preparation order while keeping polling ownership
     # in this bootstrap only.
@@ -122,7 +141,7 @@ def _prepare_sticker_menu_runtime(application: Application) -> None:
     sticker_post_runtime.install_send_answer_wrapper()
 
     logging.warning(
-        "Yayceslav stickers runtime ready: pack=%s; own-pack=50%% semantic sticker/text; "
+        "Yayceslav stickers runtime ready: registry=%s; own-pack=50%% semantic sticker/text; "
         "foreign packs ignored; question<=5%% semantic-only; background<=2%%; "
         "background cap=%s/hour",
         len(sticker_runtime.sticker_engine.STICKER_ORDER),
@@ -150,6 +169,24 @@ def prepare_application_runtime(application: Application) -> None:
     # Dialogue guard patches bot-level Gemini/instruction/rate-limit functions;
     # keep it after the application-owned feature preparation as before.
     dialogue_guard_runtime._prepare()
+    # Accountability must wrap the already-composed instruction builder and
+    # must also block correction from proactive aggression.
+    accountability_runtime.install()
+    # Positive behavior is intentionally installed after accountability and the
+    # dialogue guard, so its grounded warmth is appended to the final composed
+    # instruction. It adds only a group-9 observer; polling ownership stays here.
+    positive_runtime._prepare_application(application)
+    # Lifetime explicit reputation sits above short-term positive affinity. New
+    # users are exactly neutral (0); directed praise/abuse persists across days.
+    reputation_runtime._prepare_application(application)
+    # Ordinary social behavior then adds one passive +1..+5 per clean active day.
+    # The group-11 observer can revoke that same-day passive bonus if hostility
+    # appears later, without altering explicit praise/abuse event counters.
+    reputation_daily_runtime._prepare_application(application)
+    # Rate-limit ВСЁ ТЛЕН must wrap the FINAL limiter, including the 12/min
+    # group guard installed immediately above.
+    import rate_limit_tlen_runtime
+    rate_limit_tlen_runtime.install()
     # Daily content captures the already-composed daily+monthly scheduler and
     # appends its own due checks; source-network logic is untouched.
     daily_content_runtime._prepare_application(application)

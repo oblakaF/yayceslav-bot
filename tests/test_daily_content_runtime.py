@@ -85,6 +85,40 @@ def test_scheduler_appends_daily_content_once(monkeypatch):
     assert calls == ["existing", "content"]
 
 
+def test_daily_content_must_wrap_final_unified_scheduler(monkeypatch):
+    """Regression for the old wrapper-order bug that silently killed delivery.
+
+    The pre-centralized runtime could prepare daily content first and then let
+    unified titles overwrite ``run_due_daily_titles``. Centralized startup must
+    do the opposite: finalize unified titles first, then append daily content.
+    """
+    calls = []
+
+    class FakeBotModule:
+        _yayceslav_daily_content_patch = False
+
+    fake = FakeBotModule()
+
+    async def final_unified_scheduler(application):
+        del application
+        calls.append("unified")
+
+    async def fake_daily_content(application):
+        del application
+        calls.append("daily_content")
+
+    # This assignment represents unified_daily_title_runtime._prepare() having
+    # already finalized the title scheduler.
+    fake.run_due_daily_titles = final_unified_scheduler
+    monkeypatch.setattr(runtime, "run_daily_content_if_due", fake_daily_content)
+
+    # Daily content MUST be the later/final scheduler patch.
+    runtime._patch_scheduler(fake)
+    asyncio.run(fake.run_due_daily_titles(object()))
+
+    assert calls == ["unified", "daily_content"]
+
+
 def test_prepare_application_initializes_once(monkeypatch):
     class FakeBotModule:
         _yayceslav_daily_content_patch = False
