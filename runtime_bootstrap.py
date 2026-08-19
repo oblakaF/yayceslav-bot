@@ -218,3 +218,4 @@ def _install_preflight_hook() -> None:
 _install_preflight_hook()
 
 # No runtime effect: this comment exists only to retrigger Railway's GitHub autodeploy webhook.
+# Second no-runtime-effect retrigger after toggling Railway Auto Deploy off/on.
