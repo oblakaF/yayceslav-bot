@@ -161,6 +161,10 @@ def prepare_application_runtime(application: Application) -> None:
     # Dialogue guard patches bot-level Gemini/instruction/rate-limit functions;
     # keep it after the application-owned feature preparation as before.
     dialogue_guard_runtime._prepare()
+    # Rate-limit ВСЁ ТЛЕН must wrap the FINAL limiter, including the 12/min
+    # group guard installed immediately above.
+    import rate_limit_tlen_runtime
+    rate_limit_tlen_runtime.install()
     # Daily content captures the already-composed daily+monthly scheduler and
     # appends its own due checks; source-network logic is untouched.
     daily_content_runtime._prepare_application(application)
