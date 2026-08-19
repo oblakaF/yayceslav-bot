@@ -5,18 +5,17 @@ import logging
 import re
 import sys
 from calendar import monthrange
-from datetime import date as date_type
+from datetime import date as date_type, timedelta
 from typing import Any
 
 from telegram.constants import ChatType
 from telegram.ext import Application, MessageHandler, filters
 
+import member_repository
 import relationship_experience_runtime as relationship_runtime
 
 
 _PREPARED_APPLICATION_IDS: set[int] = set()
-_RUNTIME_HOOK_INSTALLED = False
-_ORIGINAL_RUN_POLLING = None
 
 _NEGATIVE_RE = re.compile(
     r"(?:плох\w*|ужас\w*|бесит\w*|заеб\w*|заёб\w*|надоел\w*|"
@@ -70,6 +69,15 @@ def month_bounds(value: date_type) -> tuple[str, str]:
 
 def is_last_calendar_day(value: date_type) -> bool:
     return value.day == monthrange(value.year, value.month)[1]
+
+
+def _target_report_date(now):
+    """19:00 MSK on the last calendar day, with day-1 catch-up."""
+    if is_last_calendar_day(now.date()) and now.hour >= 19:
+        return now.date()
+    if now.day == 1:
+        return now.date() - timedelta(days=1)
+    return None
 
 
 def _initialize_tables(bot_module) -> None:
@@ -214,16 +222,7 @@ def _mark_report_sent_sync(bot_module, chat_id: int, month: str) -> None:
 
 
 def _known_chat_ids_sync(bot_module) -> list[int]:
-    with bot_module.get_db_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT DISTINCT chat_id
-            FROM chat_membership_registry
-            WHERE is_active = 1 AND is_bot = 0
-            ORDER BY chat_id
-            """
-        ).fetchall()
-    return [int(row[0]) for row in rows]
+    return member_repository.known_active_group_chat_ids(bot_module)
 
 
 def _monthly_stats_sync(bot_module, chat_id: int, current_date: date_type) -> dict[str, Any]:
@@ -365,22 +364,39 @@ async def run_monthly_report_if_due(application: Application) -> None:
         return
 
     now = bot_module.current_msk_datetime()
-    if now.hour < 18 or not is_last_calendar_day(now.date()):
+    target_date = _target_report_date(now)
+    if target_date is None:
         return
 
-    current_month = month_key(now.date())
+    target_month = month_key(target_date)
     chat_ids = await asyncio.to_thread(_known_chat_ids_sync, bot_module)
     for chat_id in chat_ids:
-        if await asyncio.to_thread(_report_already_sent_sync, bot_module, chat_id, current_month):
+        if await asyncio.to_thread(
+            _report_already_sent_sync,
+            bot_module,
+            chat_id,
+            target_month,
+        ):
             continue
-        stats = await asyncio.to_thread(_monthly_stats_sync, bot_module, chat_id, now.date())
-        text = format_monthly_report(stats, now.date())
+
+        stats = await asyncio.to_thread(
+            _monthly_stats_sync,
+            bot_module,
+            chat_id,
+            target_date,
+        )
+        text = format_monthly_report(stats, target_date)
         try:
             await application.bot.send_message(chat_id=chat_id, text=text)
         except Exception as error:
             logging.warning("Monthly chat report failed chat=%s: %s", chat_id, error)
             continue
-        await asyncio.to_thread(_mark_report_sent_sync, bot_module, chat_id, current_month)
+        await asyncio.to_thread(
+            _mark_report_sent_sync,
+            bot_module,
+            chat_id,
+            target_month,
+        )
 
 
 def _patch_scheduler(bot_module) -> None:
@@ -412,20 +428,3 @@ def _prepare_application(application: Application) -> None:
     )
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning("Monthly social season ready: calendar-month XP, final-day summary, monthly social memory")
-
-
-def install_runtime_hook() -> None:
-    global _RUNTIME_HOOK_INSTALLED, _ORIGINAL_RUN_POLLING
-    if _RUNTIME_HOOK_INSTALLED:
-        return
-    _ORIGINAL_RUN_POLLING = Application.run_polling
-
-    def run_polling_with_monthly_social(self, *args, **kwargs):
-        _prepare_application(self)
-        return _ORIGINAL_RUN_POLLING(self, *args, **kwargs)
-
-    Application.run_polling = run_polling_with_monthly_social
-    _RUNTIME_HOOK_INSTALLED = True
-
-
-install_runtime_hook()

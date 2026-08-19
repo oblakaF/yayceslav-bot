@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+from telegram.ext import Application, ChatMemberHandler, CommandHandler, MessageHandler
+
 import bot
 import member_profile_runtime as memory
 import monthly_memory_scope_patch as monthly_memory
@@ -59,6 +61,41 @@ def test_favorite_word_is_calendar_month_and_per_user(tmp_path, monkeypatch):
 
     assert monthly_memory._favorite_word_monthly(bot, -1001, 101) == ("steam", 3)
     assert monthly_memory._favorite_word_monthly(bot, -1001, 102) == ("гараж", 2)
+
+
+def test_monthly_themes_require_recurring_evidence_and_rank_by_count(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        bot,
+        "current_msk_datetime",
+        lambda: datetime(2026, 8, 19, 19, 0, tzinfo=MSK),
+    )
+
+    chat_id = -1003
+    user_id = 103
+    memory._upsert_member_sync(bot, chat_id, user_id, "Тематик", "themes")
+    with bot.get_db_connection() as connection:
+        connection.executemany(
+            """
+            INSERT INTO member_callback_terms
+                (chat_id, user_id, term, occurrences, first_seen, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (chat_id, user_id, "steam", 5, "2026-08-02", "2026-08-18"),
+                (chat_id, user_id, "гараж машина", 2, "2026-08-03", "2026-08-19"),
+                # One-word topic with only two mentions is deliberately weak.
+                (chat_id, user_id, "милфы", 2, "2026-08-04", "2026-08-19"),
+                # One-off noise cannot become a dossier theme just for recency.
+                (chat_id, user_id, "новинка", 1, "2026-08-19", "2026-08-19"),
+            ),
+        )
+        connection.commit()
+
+    assert monthly_memory._themes_monthly(bot, chat_id, user_id) == [
+        "steam",
+        "гараж машина",
+    ]
 
 
 def test_sensitive_topics_are_not_auto_stored(tmp_path, monkeypatch):
@@ -124,3 +161,44 @@ def test_silent_title_is_one_per_chat_per_day(tmp_path, monkeypatch):
 
     saved = memory._silent_assignment_sync(bot, chat_id, "2026-08-19")
     assert saved["title"] == "Куколд-наблюдатель"
+
+
+def test_prepare_application_registers_member_observers_once(monkeypatch):
+    fake_bot_module = object()
+    calls = []
+    monkeypatch.setattr(memory, "_find_bot_module", lambda: fake_bot_module)
+    monkeypatch.setattr(memory, "_initialize_tables", lambda bot: calls.append(("init", bot)))
+    monkeypatch.setattr(memory, "_augment_profile_functions", lambda bot: calls.append(("augment", bot)))
+    monkeypatch.setattr(memory, "_patch_daily_title_scheduler", lambda bot: calls.append(("scheduler", bot)))
+
+    application = Application.builder().token("123456:TESTTOKEN").build()
+    memory._PREPARED_APPLICATION_IDS.discard(id(application))
+    memory._prepare_application(application)
+    memory._prepare_application(application)
+
+    assert calls == [
+        ("init", fake_bot_module),
+        ("augment", fake_bot_module),
+        ("scheduler", fake_bot_module),
+    ]
+
+    whoami_handlers = application.handlers.get(-10, ())
+    assert len(whoami_handlers) == 1
+    assert isinstance(whoami_handlers[0], CommandHandler)
+    assert whoami_handlers[0].callback is memory._whoami_v2
+
+    membership_handlers = application.handlers.get(-9, ())
+    assert len(membership_handlers) == 2
+    assert any(
+        isinstance(handler, ChatMemberHandler) and handler.callback is memory._observe_chat_member
+        for handler in membership_handlers
+    )
+    assert any(
+        isinstance(handler, MessageHandler) and handler.callback is memory._observe_service_members
+        for handler in membership_handlers
+    )
+
+    text_handlers = application.handlers.get(5, ())
+    assert len(text_handlers) == 1
+    assert isinstance(text_handlers[0], MessageHandler)
+    assert text_handlers[0].callback is memory._observe_text

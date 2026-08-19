@@ -16,8 +16,8 @@ def test_application_post_init_is_mutable_in_pinned_ptb_version():
     assert application.post_init is callback
 
 
-def test_sticker_runtime_patch_is_installed_once():
-    assert getattr(Application, "_yayceslav_sticker_patch_installed", False) is True
+def test_sticker_runtime_has_no_polling_hook():
+    assert not hasattr(sticker_runtime, "install_runtime_hooks")
 
 
 def test_prepare_runtime_works_on_real_slotted_application_and_is_idempotent():

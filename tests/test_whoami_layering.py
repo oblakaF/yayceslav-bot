@@ -1,5 +1,19 @@
 from telegram.ext import Application, CommandHandler
 
+import accountability_runtime as accountability
+import daily_content_runtime as daily_content
+import dialogue_guard_runtime as dialogue_guard
+import member_profile_runtime as member_profile
+import monthly_social_runtime as monthly
+import positive_runtime as positive
+import reputation_daily_runtime as reputation_daily
+import reputation_runtime as reputation
+import relationship_experience_runtime as relationship
+import runtime_bootstrap
+import scoped_help_runtime
+import sticker_post_runtime
+import sticker_runtime
+import unified_daily_title_runtime as unified_titles
 import whoami_profile_v3_runtime as v3
 import whoami_profile_v4_runtime as v4
 
@@ -29,3 +43,91 @@ def test_v4_is_the_only_runtime_whoami_command_owner(monkeypatch):
     assert len(handlers) == 1
     assert isinstance(handlers[0], CommandHandler)
     assert handlers[0].callback is v4._whoami_v4
+
+
+def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
+    application = object()
+    calls = []
+    monkeypatch.setattr(
+        runtime_bootstrap,
+        "_prepare_sticker_menu_runtime",
+        lambda app: calls.append(("sticker_menu", app)),
+    )
+    monkeypatch.setattr(unified_titles, "_prepare", lambda: calls.append(("unified", None)))
+    monkeypatch.setattr(
+        monthly,
+        "_prepare_application",
+        lambda app: calls.append(("monthly", app)),
+    )
+    monkeypatch.setattr(
+        relationship,
+        "_prepare_application",
+        lambda app: calls.append(("relationship", app)),
+    )
+    monkeypatch.setattr(
+        member_profile,
+        "_prepare_application",
+        lambda app: calls.append(("member_profile", app)),
+    )
+    monkeypatch.setattr(v3, "_prepare_application", lambda app: calls.append(("v3", app)))
+    monkeypatch.setattr(v4, "_prepare_application", lambda app: calls.append(("v4", app)))
+    monkeypatch.setattr(dialogue_guard, "_prepare", lambda: calls.append(("dialogue", None)))
+    monkeypatch.setattr(accountability, "install", lambda: calls.append(("accountability", None)))
+    monkeypatch.setattr(
+        positive,
+        "_prepare_application",
+        lambda app: calls.append(("positive", app)),
+    )
+    monkeypatch.setattr(
+        reputation,
+        "_prepare_application",
+        lambda app: calls.append(("reputation", app)),
+    )
+    monkeypatch.setattr(
+        reputation_daily,
+        "_prepare_application",
+        lambda app: calls.append(("reputation_daily", app)),
+    )
+    monkeypatch.setattr(
+        daily_content,
+        "_prepare_application",
+        lambda app: calls.append(("daily_content", app)),
+    )
+
+    runtime_bootstrap.prepare_application_runtime(application)
+
+    assert calls == [
+        ("sticker_menu", application),
+        ("unified", None),
+        ("monthly", application),
+        ("relationship", application),
+        ("member_profile", application),
+        ("v3", application),
+        ("v4", application),
+        ("dialogue", None),
+        ("accountability", None),
+        ("positive", application),
+        ("reputation", application),
+        ("reputation_daily", application),
+        ("daily_content", application),
+    ]
+    assert not hasattr(unified_titles, "install_runtime_hook")
+    assert not hasattr(monthly, "install_runtime_hook")
+    assert not hasattr(relationship, "install_runtime_hook")
+    assert not hasattr(member_profile, "install_runtime_hook")
+    assert not hasattr(v3, "install_runtime_hook")
+    assert not hasattr(v4, "install_runtime_hook")
+    assert not hasattr(dialogue_guard, "install_runtime_hook")
+    assert not hasattr(accountability, "install_runtime_hook")
+    assert not hasattr(positive, "install_runtime_hook")
+    assert not hasattr(reputation, "install_runtime_hook")
+    assert not hasattr(reputation_daily, "install_runtime_hook")
+    assert not hasattr(daily_content, "install_runtime_hook")
+    assert not hasattr(scoped_help_runtime, "install_runtime_hook")
+    assert not hasattr(sticker_post_runtime, "install_runtime_hook")
+    assert not hasattr(sticker_runtime, "install_runtime_hooks")
+
+
+def test_bootstrap_is_the_only_active_polling_wrapper():
+    assert getattr(Application, "_yayceslav_schema_preflight_installed", False) is True
+    assert Application.run_polling.__name__ == "run_polling_with_schema_preflight"

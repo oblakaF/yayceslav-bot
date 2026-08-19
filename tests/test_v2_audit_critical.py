@@ -40,6 +40,8 @@ def _update_based_missing_ask_context():
 
 
 def test_every_update_based_ask_gemini_call_has_identity_context():
+    # Kept intentionally as a static safety audit until ask_gemini call-sites
+    # are routed through one typed wrapper. It protects cross-chat identity.
     assert _update_based_missing_ask_context() == []
 
 
@@ -111,9 +113,5 @@ def test_contextual_provocation_can_still_open_passive_slot():
     )
 
 
-def test_legacy_random_reply_fallback_removed_from_hard_listener():
-    source = Path("bot.py").read_text(encoding="utf-8")
-    start = source.index("async def hard_mode_listener(")
-    end = source.index("async def enforce_rate_limit(", start)
-    hard_listener = source[start:end]
-    assert "random.choice(HARD_RANDOM_REPLIES)" not in hard_listener
+def test_legacy_random_reply_pool_is_not_exposed_by_bot():
+    assert not hasattr(bot, "HARD_RANDOM_REPLIES")

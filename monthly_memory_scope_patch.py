@@ -192,6 +192,7 @@ def _favorite_word_monthly(bot_module, chat_id: int, user_id: int):
 
 
 def _themes_monthly(bot_module, chat_id: int, user_id: int) -> list[str]:
+    """Recurring meaningful current-month themes; recurrence beats recency."""
     month_start = _month_start(bot_module)
     with bot_module.get_db_connection() as connection:
         try:
@@ -201,26 +202,48 @@ def _themes_monthly(bot_module, chat_id: int, user_id: int) -> list[str]:
                 FROM member_callback_terms
                 WHERE chat_id = ? AND user_id = ?
                   AND date(last_seen) >= date(?)
-                ORDER BY last_seen DESC, occurrences DESC
-                LIMIT 30
+                  AND occurrences >= 2
+                ORDER BY occurrences DESC, last_seen DESC, term ASC
+                LIMIT 80
                 """,
                 (chat_id, user_id, month_start),
             ).fetchall()
         except Exception:
             rows = []
 
-    result: list[str] = []
+    candidates: list[tuple[float, str, str]] = []
     seen: set[str] = set()
-    for term, _count, _seen_at in rows:
-        clean = str(term).strip()
+    for term, occurrences, _last_seen in rows:
+        clean = str(term or "").strip()
         norm = profile_runtime._normalize_word(clean)
         if not profile_runtime._theme_ok(clean) or norm in seen:
             continue
-        result.append(clean)
+
+        words = [
+            profile_runtime._normalize_word(word)
+            for word in profile_runtime._WORD_RE.findall(clean)
+        ]
+        meaningful = [
+            word
+            for word in words
+            if len(word) >= 3 and word not in profile_runtime._THEME_NOISE
+        ]
+        if not meaningful:
+            continue
+
+        count = int(occurrences or 0)
+        # A single word needs three mentions; a recurring multi-word topic can
+        # qualify from two mentions. This prevents random swears/verbs becoming
+        # dossier themes while retaining useful phrases.
+        if len(meaningful) == 1 and count < 3:
+            continue
+
+        score = float(count) * (1.18 if len(meaningful) >= 2 else 1.0)
+        candidates.append((score, clean, norm))
         seen.add(norm)
-        if len(result) >= 3:
-            break
-    return result
+
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return [item[1] for item in candidates[:3]]
 
 
 def install() -> None:

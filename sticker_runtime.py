@@ -576,28 +576,3 @@ def prepare_application_runtime(application: Application) -> None:
 
         application.post_init = combined_post_init
         _MENU_WRAPPED_APPLICATION_IDS.add(app_id)
-
-
-def install_runtime_hooks() -> None:
-    if getattr(Application, "_yayceslav_sticker_patch_installed", False):
-        return
-
-    original_run_polling = Application.run_polling
-
-    def run_polling_with_yayceslav_runtime(self, *args, **kwargs):
-        prepare_application_runtime(self)
-        logging.warning(
-            "Yayceslav stickers runtime ready: pack=%s; own-pack=50%% semantic sticker/text; "
-            "foreign packs ignored; question<=5%% semantic-only; background<=2%%; "
-            "background cap=%s/hour",
-            len(sticker_engine.STICKER_ORDER),
-            STICKER_MAX_PER_WINDOW,
-        )
-        return original_run_polling(self, *args, **kwargs)
-
-    Application.run_polling = run_polling_with_yayceslav_runtime
-    # Class attribute is safe; the crash was from setting new INSTANCE attrs.
-    Application._yayceslav_sticker_patch_installed = True
-
-
-install_runtime_hooks()

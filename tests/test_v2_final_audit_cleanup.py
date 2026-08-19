@@ -42,10 +42,10 @@ def test_readme_names_current_model_only():
     assert "gemini-3.1-flash-lite" not in readme
 
 
-def test_bot_does_not_import_unused_v1_system_instruction():
-    source = Path("bot.py").read_text(encoding="utf-8")
-    import_block = source[source.index("from personality import ("):source.index(")", source.index("from personality import ("))]
-    assert "build_system_instruction" not in import_block
+def test_bot_does_not_expose_unused_v1_system_instruction():
+    # Test the imported module surface, not source-text formatting/import order.
+    assert not hasattr(bot, "build_system_instruction")
+
 
 def test_removed_familiarity_bonus_is_not_dead_api():
     import social_engine

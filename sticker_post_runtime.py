@@ -224,24 +224,3 @@ def install_send_answer_wrapper() -> bool:
         "semantic-only, chance<=5%%, shared anti-spam gate"
     )
     return True
-
-
-def install_runtime_hook() -> None:
-    """Patch Application.run_polling so send_answer is wrapped after bot.py loads."""
-
-    from telegram.ext import Application
-
-    if getattr(Application, "_yayceslav_post_sticker_runtime_installed", False):
-        return
-
-    original_run_polling = Application.run_polling
-
-    def run_polling_with_post_sticker_runtime(self, *args, **kwargs):
-        install_send_answer_wrapper()
-        return original_run_polling(self, *args, **kwargs)
-
-    Application.run_polling = run_polling_with_post_sticker_runtime
-    Application._yayceslav_post_sticker_runtime_installed = True
-
-
-install_runtime_hook()

@@ -1,10 +1,14 @@
 import sticker_engine
+import sticker_semantics_aug19
+
+
+sticker_semantics_aug19.install_catalog_semantics()
 
 
 def test_sticker_map_references_only_known_stickers():
     known = set(sticker_engine.STICKER_ORDER)
-    assert len(sticker_engine.STICKER_ORDER) == 37
-    assert len(known) == 37
+    assert len(sticker_engine.STICKER_ORDER) == 48
+    assert len(known) == 48
     assert set(sticker_engine.STICKER_LABELS) == known
     assert set(sticker_engine.STICKER_SEMANTICS) == known
     assert all(
@@ -12,9 +16,10 @@ def test_sticker_map_references_only_known_stickers():
         for pool in sticker_engine.EVENT_STICKERS.values()
         for key in pool
     )
+    sticker_engine.validate_map()
 
 
-def test_final_live_order_starts_with_new_nine_and_has_no_old_idi_lesom():
+def test_final_live_order_starts_with_old_nine_and_appends_aug19_batch():
     assert sticker_engine.STICKER_ORDER[:9] == (
         "ty_po_moemu_pereputal",
         "14_minut_blyat",
@@ -25,6 +30,19 @@ def test_final_live_order_starts_with_new_nine_and_has_no_old_idi_lesom():
         "nadel_tebya_na_suk",
         "doebu_do_ideala",
         "idi_nahui",
+    )
+    assert sticker_engine.STICKER_ORDER[-11:] == (
+        "milfa",
+        "prichina_tryaski",
+        "vozmi_telefon",
+        "cheremsha",
+        "vse_tlen",
+        "kto_opyat_ne_spravilsya",
+        "pereigral_i_unichtozhil_new",
+        "nu_i_suka_zhe_ty",
+        "a_zachem_eto",
+        "fa_watafa",
+        "delo_pahnet_ostrovom",
     )
     assert "idi_lesom" not in sticker_engine.STICKER_ORDER
     assert sticker_engine.STICKER_LABELS["idi_nahui"] == "ИДИ НА ХУЙ!"
@@ -42,6 +60,20 @@ def test_new_semantic_events_are_detected():
         "ещё чуть-чуть допилю до идеала": "perfection",
         "иди лесом": "hard_dismissal",
         "иди на хуй": "hard_dismissal",
+    }
+    for text, expected in cases.items():
+        assert sticker_engine.detect_event(text) == expected
+
+
+def test_aug19_semantic_events_are_detected():
+    cases = {
+        "в чате опять обсуждают милф": "milf",
+        "из-за такой мелочи меня уже трясёт": "shaking",
+        "вот объявят мобилизацию тогда будет причина": "shaking",
+        "это уже теория заговора, они что-то скрывают": "conspiracy",
+        "всё тлен и безысходность": "doom",
+        "это вообще без логики какой-то абсурд": "absurdity",
+        "можешь найти мне эту статью": "request_why",
     }
     for text, expected in cases.items():
         assert sticker_engine.detect_event(text) == expected
@@ -99,6 +131,16 @@ def test_aggressive_semantics_are_explicit_not_accidental():
         if meaning.strength >= 3
     }
     assert hard == {"idi_nahui", "vremya_zavalit_ebalo"}
+
+
+def test_topicless_phone_and_watafa_are_not_background_events():
+    outputs = {
+        key
+        for replies in sticker_engine.EVENT_STICKERS.values()
+        for key in replies
+    }
+    assert "vozmi_telefon" not in outputs
+    assert "fa_watafa" not in outputs
 
 
 def test_unknown_event_has_zero_background_chance():

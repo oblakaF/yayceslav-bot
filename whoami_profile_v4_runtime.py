@@ -11,8 +11,6 @@ from telegram.ext import Application, ApplicationHandlerStop, CommandHandler
 
 
 _PREPARED_APPLICATION_IDS: set[int] = set()
-_RUNTIME_HOOK_INSTALLED = False
-_ORIGINAL_RUN_POLLING = None
 
 
 def _find_bot_module():
@@ -41,22 +39,53 @@ def _friendliness_line(
     return f"{label} — {active_insults} наезда сегодня"
 
 
-def _relationship_label(chat_level: int, active_hostility: int) -> str:
+def _relationship_label(
+    chat_level: int,
+    active_hostility: int,
+    reputation_score: int = 0,
+) -> str:
+    del chat_level  # familiarity/XP is shown separately; relationship follows reputation.
     if active_hostility >= 11:
         return "Гига-хейтер"
     if active_hostility >= 3:
         return "Мега-хейтер"
     if active_hostility >= 1:
         return "Мини-хейтер"
-    if chat_level >= 4:
+
+    score = max(-100, min(100, int(reputation_score or 0)))
+    if score <= -70:
+        return "Токсичный знакомый"
+    if score <= -35:
+        return "Негативный знакомый"
+    if score <= -10:
+        return "Настороженно"
+    if score < 0:
+        return "Слегка настороженно"
+    if score == 0:
+        return "Нейтрально"
+    if score < 10:
+        return "Нормально"
+    if score >= 70:
         return "Любимчик"
-    if chat_level >= 3:
+    if score >= 35:
         return "Свой"
-    if chat_level >= 2:
-        return "Кореш"
-    if chat_level >= 1:
-        return "Знакомый"
-    return "Незнакомец"
+    return "Кореш"
+
+
+def _positive_line(profile) -> str:
+    level = max(0, min(int(profile.get("positive_affinity_level", 0) or 0), 4))
+    label = str(profile.get("positive_affinity_label") or "нейтрально")
+    points = max(0, int(profile.get("positive_affinity_points_30d", 0) or 0))
+    streak = max(0, int(profile.get("positive_streak", 0) or 0))
+    if points <= 0 and streak <= 0:
+        return f"{level}/4 — {label}"
+    return f"{level}/4 — {label}; {points} очк. за 30 дней, серия {streak}"
+
+
+def _reputation_line(profile) -> str:
+    score = max(-100, min(100, int(profile.get("reputation_score", 0) or 0)))
+    label = str(profile.get("reputation_label") or "нейтрально")
+    return f"{score:+d}/100 — {label}"
 
 
 def _next_level_progress(messages_month: int, chat_level: int, is_king: bool) -> str | None:
@@ -117,9 +146,12 @@ async def _whoami_v4(update, context) -> None:
     total_hostility = int(profile.get("hostility_total_today", active_hostility) or 0)
     apologies = int(profile.get("apologies_today", 0) or 0)
     penance_pending = bool(profile.get("penance_pending", False))
+    reputation_score = int(profile.get("reputation_score", 0) or 0)
 
-    relationship = _relationship_label(chat_level, active_hostility)
+    relationship = _relationship_label(chat_level, active_hostility, reputation_score)
     friendliness = _friendliness_line(active_hostility, total_hostility, apologies, penance_pending)
+    positive = _positive_line(profile)
+    reputation = _reputation_line(profile)
 
     try:
         favorite_word, favorite_count = await asyncio.to_thread(
@@ -142,6 +174,8 @@ async def _whoami_v4(update, context) -> None:
     lines = [
         f"🥚 ДОСЬЕ ЯЙЦЕСЛАВА НА {name}",
         f"🤝 Яйцеславу: {relationship}",
+        f"⭐ Репутация: {reputation}",
+        f"💚 Симпатия: {positive}",
         f"🌡 Отношение сегодня: {friendliness}",
         f"🏅 Титул: {title}",
         f"💬 Сообщений: {total} всего / {messages_month} в этом месяце",
@@ -194,6 +228,7 @@ async def _whoami_v4(update, context) -> None:
         logging.exception("/whoami Telegram send failed: %s", error)
         await message.reply_text(
             f"🥚 ДОСЬЕ ЯЙЦЕСЛАВА НА {name}\n"
+            f"⭐ Репутация: {reputation}\n"
             f"🏅 Титул: {title}\n"
             f"💬 Сообщений: {total} всего / {messages_month} в этом месяце\n"
             f"🏚 Уровень: {chat_level}/4 — {level_label}"
@@ -209,20 +244,3 @@ def _prepare_application(application: Application) -> None:
         return
     application.add_handler(CommandHandler("whoami", _whoami_v4), group=-30)
     _PREPARED_APPLICATION_IDS.add(app_id)
-
-
-def install_runtime_hook() -> None:
-    global _RUNTIME_HOOK_INSTALLED, _ORIGINAL_RUN_POLLING
-    if _RUNTIME_HOOK_INSTALLED:
-        return
-    _ORIGINAL_RUN_POLLING = Application.run_polling
-
-    def run_polling_with_profile_v4(self, *args, **kwargs):
-        _prepare_application(self)
-        return _ORIGINAL_RUN_POLLING(self, *args, **kwargs)
-
-    Application.run_polling = run_polling_with_profile_v4
-    _RUNTIME_HOOK_INSTALLED = True
-
-
-install_runtime_hook()
