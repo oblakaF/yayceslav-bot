@@ -6,6 +6,7 @@ import dialogue_guard_runtime as dialogue_guard
 import member_profile_runtime as member_profile
 import monthly_social_runtime as monthly
 import positive_runtime as positive
+import reputation_runtime as reputation
 import relationship_experience_runtime as relationship
 import runtime_bootstrap
 import scoped_help_runtime
@@ -77,6 +78,11 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         lambda app: calls.append(("positive", app)),
     )
     monkeypatch.setattr(
+        reputation,
+        "_prepare_application",
+        lambda app: calls.append(("reputation", app)),
+    )
+    monkeypatch.setattr(
         daily_content,
         "_prepare_application",
         lambda app: calls.append(("daily_content", app)),
@@ -95,6 +101,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("dialogue", None),
         ("accountability", None),
         ("positive", application),
+        ("reputation", application),
         ("daily_content", application),
     ]
     assert not hasattr(unified_titles, "install_runtime_hook")
@@ -106,6 +113,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     assert not hasattr(dialogue_guard, "install_runtime_hook")
     assert not hasattr(accountability, "install_runtime_hook")
     assert not hasattr(positive, "install_runtime_hook")
+    assert not hasattr(reputation, "install_runtime_hook")
     assert not hasattr(daily_content, "install_runtime_hook")
     assert not hasattr(scoped_help_runtime, "install_runtime_hook")
     assert not hasattr(sticker_post_runtime, "install_runtime_hook")
