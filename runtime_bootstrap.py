@@ -23,7 +23,7 @@ import primitive_compact_guard  # noqa: F401
 import dialogue_guard_runtime  # noqa: F401
 import member_profile_runtime  # noqa: F401
 import member_memory_safety_patch  # noqa: F401
-import dialogue_followup_mode_patch  # noqa: F401
+import dialogue_followup_mode_patch
 
 # Monthly social runtime owns its 19:00/catch-up timing directly. It must still
 # be imported BEFORE unified daily titles because both wrap run_polling and the
@@ -96,8 +96,17 @@ def ensure_chat_member_updates(kwargs: dict) -> None:
     kwargs["allowed_updates"] = allowed_list
 
 
+def prepare_polling_runtime(kwargs: dict) -> None:
+    """Apply small non-schema polling preparations without extra wrappers."""
+    # This used to be its own Application.run_polling wrapper. Keep the same
+    # best-effort behavior: install() may return False if the bot module is not
+    # ready, but that has never blocked polling.
+    dialogue_followup_mode_patch.install()
+    ensure_chat_member_updates(kwargs)
+
+
 def _install_preflight_hook() -> None:
-    """Make schema/update preparation the outermost run_polling wrapper."""
+    """Make schema/runtime preparation the outermost run_polling wrapper."""
     if getattr(Application, "_yayceslav_schema_preflight_installed", False):
         return
 
@@ -111,7 +120,7 @@ def _install_preflight_hook() -> None:
             # state is unknown or partially applied.
             logging.exception("Schema migration preflight failed; polling not started")
             raise
-        ensure_chat_member_updates(kwargs)
+        prepare_polling_runtime(kwargs)
         return original_run_polling(self, *args, **kwargs)
 
     Application.run_polling = run_polling_with_schema_preflight
