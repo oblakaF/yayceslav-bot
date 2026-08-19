@@ -3,6 +3,10 @@ import random
 import sticker_engine
 import sticker_interaction
 import sticker_post_runtime
+import sticker_semantics_aug19
+
+
+sticker_semantics_aug19.install_catalog_semantics()
 
 
 def test_question_sticker_probability_is_exactly_five_percent():
@@ -17,15 +21,18 @@ def test_post_answer_tag_probability_is_exactly_five_percent():
     assert sticker_post_runtime.POST_TEXT_TAG_CHANCE == 0.05
 
 
-def test_question_detector_handles_question_marks_and_russian_question_forms():
+def test_question_detector_handles_question_marks_russian_forms_and_requests():
     assert sticker_interaction.is_question("Яйцеслав, ты вообще живой?")
     assert sticker_interaction.is_question("почему не работает")
     assert sticker_interaction.is_question("скажи что думаешь")
+    assert sticker_interaction.is_question("можешь найти мне статью")
+    assert sticker_interaction.is_question("Яйцеслав, посмотри это")
     assert not sticker_interaction.is_question("просто утверждение")
 
 
 def test_own_pack_maps_cover_every_published_sticker():
     known = set(sticker_engine.STICKER_ORDER)
+    assert len(known) == 48
     assert set(sticker_interaction.OWN_STICKER_COMEBACKS) == known
     assert set(sticker_interaction.OWN_STICKER_TEXT_REPLIES) == known
 
@@ -42,6 +49,24 @@ def test_every_own_sticker_has_text_fallback():
         assert sticker_interaction.choose_own_pack_text_reply(
             key, rng=random.Random(1)
         ) in set(sticker_interaction.OWN_STICKER_TEXT_REPLIES[key])
+
+
+def test_milfa_always_falls_through_to_exact_text_reply():
+    assert sticker_interaction.choose_own_pack_comeback(
+        "milfa",
+        rng=random.Random(1),
+    ) is None
+    assert sticker_interaction.choose_own_pack_text_reply(
+        "milfa",
+        rng=random.Random(99),
+    ) == "О да. Я это люблю."
+
+
+def test_a_zachem_eto_can_replace_a_direct_find_request():
+    assert sticker_interaction.choose_question_sticker(
+        "можешь найти мне эту статью",
+        rng=random.Random(1),
+    ) == "a_zachem_eto"
 
 
 def test_skill_issue_gets_a_real_visual_comeback():
@@ -73,6 +98,9 @@ def test_minus_aura_counters_with_plus_aura():
 def test_pereigral_never_answers_za_dvizh():
     assert "za_dvizh" not in sticker_interaction.OWN_STICKER_COMEBACKS[
         "pereigral_i_unichtozhil"
+    ]
+    assert "za_dvizh" not in sticker_interaction.OWN_STICKER_COMEBACKS[
+        "pereigral_i_unichtozhil_new"
     ]
 
 
