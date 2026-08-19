@@ -58,7 +58,7 @@ def test_profile_enrichment_keeps_reputation_separate(tmp_path):
     profile = runtime._enrich_profile(bot, {"chat_level": 4}, 1, 2)
     assert profile["chat_level"] == 4
     assert profile["reputation_score"] == 5
-    assert profile["reputation_label"] == "нейтрально"
+    assert profile["reputation_label"] == "нормальный"
 
 
 def test_whoami_reputation_line_is_signed_and_bounded():
