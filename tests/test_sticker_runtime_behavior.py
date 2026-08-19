@@ -7,6 +7,10 @@ from telegram.ext import ApplicationHandlerStop, filters
 import sticker_engine
 import sticker_interaction
 import sticker_runtime
+import sticker_semantics_aug19
+
+
+sticker_semantics_aug19.install_catalog_semantics()
 
 
 class FakeBotNoCatalog:
@@ -29,10 +33,10 @@ def test_foreign_sticker_is_rejected_without_catalog_api_call():
     assert result is None
 
 
-def test_final_pack_catalog_maps_all_37_positions(monkeypatch):
+def test_aug19_pack_catalog_maps_all_48_registry_positions(monkeypatch):
     stickers = [
         SimpleNamespace(file_id=f"file-{i}", file_unique_id=f"unique-{i}")
-        for i in range(37)
+        for i in range(48)
     ]
 
     class FakeBot:
@@ -45,12 +49,14 @@ def test_final_pack_catalog_maps_all_37_positions(monkeypatch):
     monkeypatch.setattr(sticker_runtime, "_save_sticker_ids", lambda mapping: None)
 
     mapping = asyncio.run(sticker_runtime.ensure_sticker_catalog(FakeBot(), force=True))
-    assert len(mapping) == 37
+    assert len(mapping) == 48
     assert mapping["ty_po_moemu_pereputal"] == "file-0"
     assert mapping["idi_nahui"] == "file-8"
     assert mapping["krinzh"] == "file-36"
+    assert mapping["milfa"] == "file-37"
+    assert mapping["delo_pahnet_ostrovom"] == "file-47"
     assert sticker_runtime._STICKER_UNIQUE_IDS["unique-0"] == "ty_po_moemu_pereputal"
-    assert sticker_runtime._STICKER_UNIQUE_IDS["unique-36"] == "krinzh"
+    assert sticker_runtime._STICKER_UNIQUE_IDS["unique-47"] == "delo_pahnet_ostrovom"
 
 
 def test_own_sticker_fifty_percent_visual_branch_uses_semantic_counter(monkeypatch):
