@@ -4,34 +4,6 @@ import threading
 import time
 from typing import Any, Callable
 
-# Loaded early by bot.py, before thinking_engine installs its Gemini router.
-# Runtime guards only patch Application.run_polling here; they touch bot.py
-# functions later, when the application is fully built and run_polling starts.
-import primitive_compact_guard  # noqa: F401
-import dialogue_guard_runtime  # noqa: F401
-import member_profile_runtime  # noqa: F401
-import member_memory_safety_patch  # noqa: F401
-import dialogue_followup_mode_patch  # noqa: F401
-import chat_member_updates_patch  # noqa: F401
-
-# Monthly report must be imported BEFORE unified daily titles. Because each
-# runtime wraps Application.run_polling, this order ensures unified titles are
-# installed first at startup and the monthly report then wraps that final
-# scheduler instead of being overwritten.
-import monthly_social_runtime  # noqa: F401
-import monthly_report_timing_patch  # noqa: F401
-import unified_daily_title_runtime  # noqa: F401
-import relationship_experience_runtime  # noqa: F401
-import whoami_profile_v3_runtime  # noqa: F401
-import monthly_memory_scope_patch  # noqa: F401
-import monthly_theme_quality_patch  # noqa: F401
-import whoami_profile_v4_runtime  # noqa: F401
-
-# External daily content wraps the already assembled title/month scheduler, so
-# it is deliberately loaded after the social runtimes above.
-import daily_content_runtime  # noqa: F401
-import daily_content_source_patch  # noqa: F401
-
 
 _LOCK = threading.Lock()
 _CACHE: dict[tuple[str, int], tuple[float, Any]] = {}
@@ -79,3 +51,11 @@ def invalidate_chat(chat_id: int) -> None:
 def clear() -> None:
     with _LOCK:
         _CACHE.clear()
+
+
+# bot.py already imports adaptation_cache very early. Keep that public import
+# stable for compatibility, but make the unrelated side-effect runtime loader
+# explicit and separate. Loading it after the cache functions are defined also
+# makes circular imports safer: runtime modules can import adaptation_cache and
+# see a fully initialized utility module.
+import runtime_bootstrap as _runtime_bootstrap  # noqa: F401,E402
