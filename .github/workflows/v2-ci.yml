@@ -38,7 +38,7 @@ jobs:
           bot.py personality.py intent.py humor_engine.py vocabulary.py
           style_engine.py voice_packs.py voice_runtime.py verdict_engine.py historical_packs.py
           social_engine.py aggression_engine.py reaction_engine.py passive_engine.py
-          positive_engine.py positive_runtime.py
+          positive_engine.py positive_runtime.py reputation_engine.py reputation_runtime.py
           daily_title_engine.py state_engine.py thinking_engine.py title_pools.py runtime_config.py schema_migrations.py
           chat_native_engine.py feedback_engine.py humanizer_engine.py adaptation_cache.py runtime_bootstrap.py
           hostile_streak_engine.py sticker_engine.py sticker_interaction.py sticker_runtime.py
