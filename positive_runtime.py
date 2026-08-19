@@ -4,12 +4,14 @@ Non-destructive companion to relationship_experience_runtime:
 - records bounded positive events in separate tables;
 - keeps a real positive streak that directed hostility resets;
 - aggregates affinity over the last 30 calendar days;
+- exposes affinity separately from familiarity/XP in member profiles;
 - appends grounded warm behavior to the final system instruction;
 - never owns or wraps Application.run_polling.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 import time
@@ -231,6 +233,58 @@ def _state_sync(
     )
 
 
+def _enrich_profile(bot_module, profile, chat_id: int, user_id: int):
+    if profile is None:
+        return None
+    enriched = dict(profile)
+    state = _state_sync(bot_module, chat_id, user_id, _current_date(bot_module))
+    level = positive_engine.affinity_level(state.affinity_points_30d)
+    enriched.update(
+        {
+            "positive_affinity_points_30d": state.affinity_points_30d,
+            "positive_affinity_level": level,
+            "positive_affinity_label": positive_engine.affinity_label(level),
+            "positive_streak": state.positive_streak,
+            "positive_max_streak": state.max_streak_30d,
+            "positive_praise_events_30d": state.praise_events_30d,
+            "positive_affection_events_30d": state.affection_events_30d,
+            "positive_achievement_events_30d": state.achievement_events_30d,
+            "positive_support_events_30d": state.support_events_30d,
+            "positive_reconciliation_events_30d": state.reconciliation_events_30d,
+        }
+    )
+    return enriched
+
+
+def _augment_profile_functions(bot_module) -> None:
+    if getattr(bot_module, "_yayceslav_positive_profile_patch", False):
+        return
+    original_sync = getattr(bot_module, "get_member_profile_sync", None)
+    original_async = getattr(bot_module, "get_member_profile", None)
+    if not callable(original_sync) or not callable(original_async):
+        return
+
+    def get_member_profile_sync_with_positive(chat_id: int, user_id: int):
+        profile = original_sync(chat_id, user_id)
+        return _enrich_profile(bot_module, profile, int(chat_id), int(user_id))
+
+    async def get_member_profile_with_positive(chat_id: int, user_id: int):
+        profile = await original_async(chat_id, user_id)
+        if profile is None:
+            return None
+        return await asyncio.to_thread(
+            _enrich_profile,
+            bot_module,
+            profile,
+            int(chat_id),
+            int(user_id),
+        )
+
+    bot_module.get_member_profile_sync = get_member_profile_sync_with_positive
+    bot_module.get_member_profile = get_member_profile_with_positive
+    bot_module._yayceslav_positive_profile_patch = True
+
+
 def _relationship_snapshot_sync(
     bot_module,
     chat_id: int,
@@ -447,6 +501,7 @@ def _prepare_application(application: Application) -> None:
         return
 
     _initialize_tables(bot_module)
+    _augment_profile_functions(bot_module)
     _patch_build_instruction(bot_module)
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _observe_positive),
