@@ -14,7 +14,9 @@ import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch  # noqa: F401
 import chat_member_updates_patch  # noqa: F401
 import unified_daily_title_runtime  # noqa: F401
+import relationship_experience_runtime  # noqa: F401
 import whoami_profile_v3_runtime  # noqa: F401
+import whoami_profile_v4_runtime  # noqa: F401
 
 
 _LOCK = threading.Lock()
