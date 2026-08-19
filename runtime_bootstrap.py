@@ -8,6 +8,13 @@ covered by bootstrap tests; do not hide them in unrelated utility modules.
 
 from __future__ import annotations
 
+import logging
+import sys
+
+from telegram.ext import Application
+
+import schema_migrations
+
 # Loaded early by bot.py through adaptation_cache, before thinking_engine
 # installs its Gemini router. Runtime guards only patch Application.run_polling
 # here; they touch bot.py functions later when the application is built.
@@ -56,3 +63,46 @@ RUNTIME_LOAD_ORDER = (
     "daily_content_runtime",
     "daily_content_source_patch",
 )
+
+
+def _find_bot_module():
+    for name in ("__main__", "bot"):
+        module = sys.modules.get(name)
+        if module is not None and callable(getattr(module, "get_db_connection", None)):
+            return module
+    return None
+
+
+def run_schema_preflight() -> tuple[int, ...]:
+    """Apply pending schema migrations immediately before polling starts."""
+    bot_module = _find_bot_module()
+    if bot_module is None:
+        raise RuntimeError("Bot DB module is not ready for schema migration preflight")
+    applied = schema_migrations.run_pending(bot_module)
+    if applied:
+        logging.warning("Schema migrations applied at startup: %s", applied)
+    return applied
+
+
+def _install_preflight_hook() -> None:
+    """Make the migration preflight the outermost run_polling wrapper."""
+    if getattr(Application, "_yayceslav_schema_preflight_installed", False):
+        return
+
+    original_run_polling = Application.run_polling
+
+    def run_polling_with_schema_preflight(self, *args, **kwargs):
+        try:
+            run_schema_preflight()
+        except Exception:
+            # Fail closed: never start the bot against a schema whose migration
+            # state is unknown or partially applied.
+            logging.exception("Schema migration preflight failed; polling not started")
+            raise
+        return original_run_polling(self, *args, **kwargs)
+
+    Application.run_polling = run_polling_with_schema_preflight
+    Application._yayceslav_schema_preflight_installed = True
+
+
+_install_preflight_hook()
