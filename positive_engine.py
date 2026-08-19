@@ -1,6 +1,6 @@
 """Positive/social behavior policy for Yayceslav.
 
-This is the warm counterpart to the hostile/dokop engines.  It detects real
+This is the warm counterpart to the hostile/dokop engines. It detects real
 positive events, keeps praise grounded in something the user actually said,
 and deliberately caps warmth so the character never turns into a sycophantic
 cheerleader.
@@ -87,20 +87,26 @@ def event_weight(event: str | None) -> int:
     return int(_EVENT_WEIGHTS.get(str(event or ""), 0))
 
 
-def detect_event(text: str, *, reconciliation: bool = False) -> str | None:
+def detect_event(
+    text: str,
+    *,
+    directed_at_bot: bool = False,
+    reconciliation: bool = False,
+) -> str | None:
     """Return one strongest positive event for a message.
 
-    One event per message is intentional: a single enthusiastic sentence must
-    not inflate affinity by matching several overlapping regexes.
+    Praise/affection/reconciliation only count when directed at Yayceslav.
+    Achievements/support/result-sharing describe the user and may be recognized
+    without an explicit bot mention. One event per message prevents score spam.
     """
     value = str(text or "").strip()
     if not value:
         return None
-    if reconciliation and APOLOGY_RE.search(value):
+    if directed_at_bot and reconciliation and APOLOGY_RE.search(value):
         return "reconciliation"
-    if AFFECTION_RE.search(value):
+    if directed_at_bot and AFFECTION_RE.search(value):
         return "affection"
-    if PRAISE_RE.search(value):
+    if directed_at_bot and PRAISE_RE.search(value):
         return "praise"
     if SUPPORT_RE.search(value):
         return "support"
@@ -147,6 +153,7 @@ def decide(
     text: str,
     state: PositiveState,
     *,
+    directed_at_bot: bool = True,
     reconciliation: bool = False,
     cooldown_ready: bool = True,
     serious_topic: bool = False,
@@ -154,7 +161,11 @@ def decide(
     rng=random,
 ) -> PositiveDecision:
     level = affinity_level(state.affinity_points_30d)
-    event = detect_event(text, reconciliation=reconciliation)
+    event = detect_event(
+        text,
+        directed_at_bot=directed_at_bot,
+        reconciliation=reconciliation,
+    )
     if hostile:
         return PositiveDecision(event=None, affinity_level=level, affinity_label=affinity_label(level))
 
