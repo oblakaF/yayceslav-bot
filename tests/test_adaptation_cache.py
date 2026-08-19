@@ -1,4 +1,5 @@
 import adaptation_cache
+import runtime_bootstrap
 
 
 def test_cache_reuses_value_until_invalidated():
@@ -44,3 +45,16 @@ def test_cache_expires_and_isolated_by_chat():
     assert adaptation_cache.get_or_load(
         "native", -1, loader, ttl_seconds=5, now=lambda: 6.0
     ) == 3
+
+
+def test_runtime_bootstrap_documents_critical_wrapper_order():
+    order = runtime_bootstrap.RUNTIME_LOAD_ORDER
+
+    # These are semantic ordering constraints of the current wrapper chain,
+    # not source-text assertions. If the architecture is later consolidated,
+    # this contract can be removed together with the wrappers.
+    assert order.index("monthly_social_runtime") < order.index("unified_daily_title_runtime")
+    assert order.index("unified_daily_title_runtime") < order.index("whoami_profile_v4_runtime")
+    assert order.index("whoami_profile_v3_runtime") < order.index("monthly_memory_scope_patch")
+    assert order.index("monthly_memory_scope_patch") < order.index("whoami_profile_v4_runtime")
+    assert order.index("daily_content_runtime") < order.index("daily_content_source_patch")
