@@ -89,6 +89,7 @@ def test_repository_filters_members_and_preserves_daily_title_fields(tmp_path, m
         connection.commit()
 
     assert member_repository.known_active_group_chat_ids(bot) == [chat_id]
+    assert member_repository.known_content_group_chat_ids(bot) == [chat_id]
 
     candidates = member_repository.daily_title_candidates(
         bot,
@@ -106,6 +107,29 @@ def test_repository_filters_members_and_preserves_daily_title_fields(tmp_path, m
     ]
 
     assert member_repository.display_name(bot, chat_id, active_id) == "Серёга"
+
+
+def test_daily_content_chat_discovery_falls_back_to_chats_table(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    group_id = -1009101
+    supergroup_id = -1009102
+    private_id = 9103
+
+    with bot.get_db_connection() as connection:
+        connection.executemany(
+            "INSERT OR REPLACE INTO chats(chat_id, chat_type) VALUES (?, ?)",
+            (
+                (group_id, "group"),
+                (supergroup_id, "supergroup"),
+                (private_id, "private"),
+            ),
+        )
+        # Simulate an older/partially initialized DB where the registry is not
+        # available. Daily content historically falls back to chats in this case.
+        connection.execute("DROP TABLE chat_membership_registry")
+        connection.commit()
+
+    assert member_repository.known_content_group_chat_ids(bot) == [group_id, supergroup_id]
 
 
 def test_display_name_has_stable_fallback_for_unknown_member(tmp_path, monkeypatch):
