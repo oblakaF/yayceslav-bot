@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import bot
 import member_profile_runtime as memory
+import monthly_memory_scope_patch as monthly_memory
 
 
 MSK = timezone(timedelta(hours=3))
@@ -12,10 +13,11 @@ def _fresh_db(tmp_path, monkeypatch):
     monkeypatch.setattr(bot, "STATS_DB_PATH", db_path)
     bot.initialize_stats_database()
     memory._initialize_tables(bot)
+    monthly_memory._profile_init_monthly(bot)
     return db_path
 
 
-def test_personal_callback_memory_rotates_and_favorite_word_is_per_user(tmp_path, monkeypatch):
+def test_personal_callback_memory_rotates_per_user(tmp_path, monkeypatch):
     _fresh_db(tmp_path, monkeypatch)
     memory._upsert_member_sync(bot, -1001, 101, "Серёга", "serega")
 
@@ -24,12 +26,25 @@ def test_personal_callback_memory_rotates_and_favorite_word_is_per_user(tmp_path
 
     profile = memory._load_member_memory_sync(bot, -1001, 101)
     assert "steam" in profile["callback_terms"]
-    assert profile["favorite_word"] == "steam"
-    assert profile["favorite_word_count"] == 2
 
     memory.reserve_callback_term(-1001, 101, "steam")
     rotated = memory._load_member_memory_sync(bot, -1001, 101)
     assert "steam" not in rotated["callback_terms"]
+
+
+def test_favorite_word_is_calendar_month_and_per_user(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        bot,
+        "current_msk_datetime",
+        lambda: datetime(2026, 8, 19, 19, 0, tzinfo=MSK),
+    )
+
+    monthly_memory._record_words_monthly(bot, -1001, 101, "steam steam steam")
+    monthly_memory._record_words_monthly(bot, -1001, 102, "гараж гараж")
+
+    assert monthly_memory._favorite_word_monthly(bot, -1001, 101) == ("steam", 3)
+    assert monthly_memory._favorite_word_monthly(bot, -1001, 102) == ("гараж", 2)
 
 
 def test_sensitive_topics_are_not_auto_stored(tmp_path, monkeypatch):
