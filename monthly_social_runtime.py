@@ -16,8 +16,6 @@ import relationship_experience_runtime as relationship_runtime
 
 
 _PREPARED_APPLICATION_IDS: set[int] = set()
-_RUNTIME_HOOK_INSTALLED = False
-_ORIGINAL_RUN_POLLING = None
 
 _NEGATIVE_RE = re.compile(
     r"(?:плох\w*|ужас\w*|бесит\w*|заеб\w*|заёб\w*|надоел\w*|"
@@ -430,20 +428,3 @@ def _prepare_application(application: Application) -> None:
     )
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning("Monthly social season ready: calendar-month XP, final-day summary, monthly social memory")
-
-
-def install_runtime_hook() -> None:
-    global _RUNTIME_HOOK_INSTALLED, _ORIGINAL_RUN_POLLING
-    if _RUNTIME_HOOK_INSTALLED:
-        return
-    _ORIGINAL_RUN_POLLING = Application.run_polling
-
-    def run_polling_with_monthly_social(self, *args, **kwargs):
-        _prepare_application(self)
-        return _ORIGINAL_RUN_POLLING(self, *args, **kwargs)
-
-    Application.run_polling = run_polling_with_monthly_social
-    _RUNTIME_HOOK_INSTALLED = True
-
-
-install_runtime_hook()
