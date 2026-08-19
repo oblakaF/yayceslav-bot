@@ -392,6 +392,16 @@ def _patch_build_instruction(bot_module) -> None:
                 or relationship["penance_pending"] > 0
             )
         )
+        chat_type = str(kwargs.get("chat_type", ""))
+        group_prompt = chat_type in {
+            str(ChatType.GROUP),
+            str(ChatType.SUPERGROUP),
+            "group",
+            "supergroup",
+        }
+        explicitly_addresses_bot = "яйцеслав" in text.lower()
+        directed_for_prompt = (not group_prompt) or explicitly_addresses_bot or reconciliation
+
         key = (int(chat_id), int(user_id))
         now = time.monotonic()
         last = _LAST_SPONTANEOUS_MONO.get(key)
@@ -400,7 +410,7 @@ def _patch_build_instruction(bot_module) -> None:
         decision = positive_engine.decide(
             text,
             state,
-            directed_at_bot=True,
+            directed_at_bot=directed_for_prompt,
             reconciliation=reconciliation,
             cooldown_ready=cooldown_ready,
             serious_topic=serious,
