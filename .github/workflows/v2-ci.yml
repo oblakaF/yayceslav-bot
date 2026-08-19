@@ -41,6 +41,6 @@ jobs:
           unified_daily_title_runtime.py relationship_experience_runtime.py
           whoami_profile_v3_runtime.py whoami_profile_v4_runtime.py whoami_dynamic_verdict.py
           monthly_social_runtime.py monthly_report_timing_patch.py monthly_memory_scope_patch.py
-          monthly_theme_quality_patch.py whoami_verdict_style_patch.py
+          monthly_theme_quality_patch.py whoami_verdict_style_patch.py daily_content_runtime.py
       - name: Test
         run: pytest -q
