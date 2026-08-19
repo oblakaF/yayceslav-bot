@@ -9,7 +9,6 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from telegram.constants import ChatType
-from telegram.ext import Application
 
 import primitive_compact_guard
 
@@ -19,8 +18,6 @@ GROUP_GENERAL_LIMIT = 12
 GROUP_GENERAL_PERIOD_SECONDS = 60.0
 
 _RECENT: dict[tuple[int, int], deque[str]] = defaultdict(lambda: deque(maxlen=8))
-_RUNTIME_HOOK_INSTALLED = False
-_ORIGINAL_RUN_POLLING = None
 
 _WORD_RE = re.compile(r"[a-zа-яё]{4,}", re.IGNORECASE)
 _STOPWORDS = {
@@ -276,21 +273,3 @@ def _prepare() -> None:
     logging.warning(
         "Dialogue guard ready: hostile anti-repeat + group general limit 12/min"
     )
-
-
-def install_runtime_hook() -> None:
-    global _RUNTIME_HOOK_INSTALLED, _ORIGINAL_RUN_POLLING
-    if _RUNTIME_HOOK_INSTALLED:
-        return
-
-    _ORIGINAL_RUN_POLLING = Application.run_polling
-
-    def run_polling_with_dialogue_guard(self, *args, **kwargs):
-        _prepare()
-        return _ORIGINAL_RUN_POLLING(self, *args, **kwargs)
-
-    Application.run_polling = run_polling_with_dialogue_guard
-    _RUNTIME_HOOK_INSTALLED = True
-
-
-install_runtime_hook()

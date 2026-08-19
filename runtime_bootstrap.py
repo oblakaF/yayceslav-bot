@@ -20,7 +20,7 @@ import schema_migrations
 # installs its Gemini router. Runtime guards only patch Application.run_polling
 # here; they touch bot.py functions later when the application is built.
 import primitive_compact_guard  # noqa: F401
-import dialogue_guard_runtime  # noqa: F401
+import dialogue_guard_runtime
 import member_profile_runtime  # noqa: F401
 import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch
@@ -116,6 +116,9 @@ def prepare_application_runtime(application: Application) -> None:
     # calendar-month storage functions; import order above preserves that.
     whoami_profile_v3_runtime._prepare_application(application)
     whoami_profile_v4_runtime._prepare_application(application)
+    # Dialogue guard patches bot-level Gemini/instruction/rate-limit functions;
+    # keep it after the application-owned feature preparation as before.
+    dialogue_guard_runtime._prepare()
 
 
 def _install_preflight_hook() -> None:

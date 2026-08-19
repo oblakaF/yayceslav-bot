@@ -1,5 +1,6 @@
 from telegram.ext import Application, CommandHandler
 
+import dialogue_guard_runtime as dialogue_guard
 import monthly_social_runtime as monthly
 import relationship_experience_runtime as relationship
 import runtime_bootstrap
@@ -51,6 +52,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     )
     monkeypatch.setattr(v3, "_prepare_application", lambda app: calls.append(("v3", app)))
     monkeypatch.setattr(v4, "_prepare_application", lambda app: calls.append(("v4", app)))
+    monkeypatch.setattr(dialogue_guard, "_prepare", lambda: calls.append(("dialogue", None)))
 
     runtime_bootstrap.prepare_application_runtime(application)
 
@@ -60,9 +62,11 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("relationship", application),
         ("v3", application),
         ("v4", application),
+        ("dialogue", None),
     ]
     assert not hasattr(unified_titles, "install_runtime_hook")
     assert not hasattr(monthly, "install_runtime_hook")
     assert not hasattr(relationship, "install_runtime_hook")
     assert not hasattr(v3, "install_runtime_hook")
     assert not hasattr(v4, "install_runtime_hook")
+    assert not hasattr(dialogue_guard, "install_runtime_hook")
