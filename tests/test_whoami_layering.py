@@ -8,6 +8,7 @@ import relationship_experience_runtime as relationship
 import runtime_bootstrap
 import scoped_help_runtime
 import sticker_post_runtime
+import sticker_runtime
 import unified_daily_title_runtime as unified_titles
 import whoami_profile_v3_runtime as v3
 import whoami_profile_v4_runtime as v4
@@ -96,11 +97,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     assert not hasattr(daily_content, "install_runtime_hook")
     assert not hasattr(scoped_help_runtime, "install_runtime_hook")
     assert not hasattr(sticker_post_runtime, "install_runtime_hook")
-
-
-def test_bootstrap_claims_legacy_sticker_menu_polling_hooks():
-    for attribute in runtime_bootstrap.LEGACY_POLLING_SENTINELS:
-        assert getattr(Application, attribute, False) is True
+    assert not hasattr(sticker_runtime, "install_runtime_hooks")
 
 
 def test_bootstrap_is_the_only_active_polling_wrapper():
