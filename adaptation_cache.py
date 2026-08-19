@@ -27,6 +27,10 @@ import monthly_memory_scope_patch  # noqa: F401
 import monthly_theme_quality_patch  # noqa: F401
 import whoami_profile_v4_runtime  # noqa: F401
 
+# External daily content wraps the already assembled title/month scheduler, so
+# it is deliberately loaded after the social runtimes above.
+import daily_content_runtime  # noqa: F401
+
 
 _LOCK = threading.Lock()
 _CACHE: dict[tuple[str, int], tuple[float, Any]] = {}
