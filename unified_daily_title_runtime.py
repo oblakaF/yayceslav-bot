@@ -11,6 +11,7 @@ import title_pools
 from telegram.ext import Application
 
 import member_profile_runtime
+import member_repository
 
 
 _PREPARED = False
@@ -58,19 +59,7 @@ def _ensure_schema(bot_module) -> None:
 
 
 def _known_chat_ids_sync(bot_module) -> list[int]:
-    with bot_module.get_db_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT DISTINCT r.chat_id
-            FROM chat_membership_registry AS r
-            JOIN chats AS c ON c.chat_id = r.chat_id
-            WHERE r.is_active = 1
-              AND r.is_bot = 0
-              AND c.chat_type IN ('group', 'supergroup', 'ChatType.GROUP', 'ChatType.SUPERGROUP')
-            ORDER BY r.chat_id
-            """
-        ).fetchall()
-    return [int(row[0]) for row in rows]
+    return member_repository.known_active_group_chat_ids(bot_module)
 
 
 def _existing_assignment_sync(bot_module, chat_id: int, date: str):
@@ -125,43 +114,7 @@ def _previous_winner_sync(bot_module, chat_id: int, current_date: str) -> int | 
 
 
 def _candidate_rows_sync(bot_module, chat_id: int, current_date: str) -> list[dict[str, Any]]:
-    start_date = (date_type.fromisoformat(current_date) - timedelta(days=6)).isoformat()
-    with bot_module.get_db_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT
-                r.user_id,
-                COALESCE(NULLIF(r.display_name, ''), p.current_display_name, ''),
-                COALESCE(p.total_messages, 0),
-                p.current_title,
-                COALESCE(SUM(a.messages), 0) AS week_messages
-            FROM chat_membership_registry AS r
-            LEFT JOIN chat_member_profiles AS p
-              ON p.chat_id = r.chat_id AND p.user_id = r.user_id
-            LEFT JOIN chat_activity_daily AS a
-              ON a.chat_id = r.chat_id
-             AND a.user_id = r.user_id
-             AND a.date BETWEEN ? AND ?
-            WHERE r.chat_id = ?
-              AND r.is_active = 1
-              AND r.is_bot = 0
-            GROUP BY r.user_id, r.display_name, p.current_display_name,
-                     p.total_messages, p.current_title
-            ORDER BY r.user_id
-            """,
-            (start_date, current_date, chat_id),
-        ).fetchall()
-
-    return [
-        {
-            "user_id": int(row[0]),
-            "display_name": str(row[1] or f"участник {row[0]}"),
-            "total_messages": int(row[2] or 0),
-            "previous_title": (str(row[3]) if row[3] else None),
-            "week_messages": int(row[4] or 0),
-        }
-        for row in rows
-    ]
+    return member_repository.daily_title_candidates(bot_module, chat_id, current_date)
 
 
 def _pick_title_for(candidate: dict[str, Any], kind: str, *, rng=random) -> str:
@@ -196,18 +149,7 @@ def _save_kind_sync(bot_module, chat_id: int, current_date: str, kind: str) -> N
 
 
 def _display_name_sync(bot_module, chat_id: int, user_id: int) -> str:
-    with bot_module.get_db_connection() as connection:
-        row = connection.execute(
-            """
-            SELECT COALESCE(NULLIF(r.display_name, ''), p.current_display_name, '')
-            FROM chat_membership_registry AS r
-            LEFT JOIN chat_member_profiles AS p
-              ON p.chat_id = r.chat_id AND p.user_id = r.user_id
-            WHERE r.chat_id = ? AND r.user_id = ?
-            """,
-            (chat_id, user_id),
-        ).fetchone()
-    return str((row[0] if row else None) or f"участник {user_id}")
+    return member_repository.display_name(bot_module, chat_id, user_id)
 
 
 def _format_message(display_name: str, title: str, kind: str) -> str:
