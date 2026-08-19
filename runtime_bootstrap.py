@@ -30,7 +30,7 @@ import dialogue_followup_mode_patch
 # monthly scheduler wraps the unified title scheduler during preparation.
 import monthly_social_runtime  # noqa: F401
 import unified_daily_title_runtime  # noqa: F401
-import relationship_experience_runtime  # noqa: F401
+import relationship_experience_runtime
 import whoami_profile_v3_runtime
 # Monthly memory scope now also owns theme quality/ranking directly.
 import monthly_memory_scope_patch  # noqa: F401
@@ -107,6 +107,7 @@ def prepare_polling_runtime(kwargs: dict) -> None:
 
 def prepare_application_runtime(application: Application) -> None:
     """Prepare application-owned features that no longer need polling wrappers."""
+    relationship_experience_runtime._prepare_application(application)
     # v3 must prepare after monthly_memory_scope_patch has installed its
     # calendar-month storage functions; import order above preserves that.
     whoami_profile_v3_runtime._prepare_application(application)

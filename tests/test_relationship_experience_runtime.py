@@ -1,5 +1,7 @@
 import random
 
+from telegram.ext import Application, MessageHandler
+
 import relationship_experience_runtime as runtime
 import social_engine
 import whoami_dynamic_verdict as dynamic_verdict
@@ -118,3 +120,22 @@ def test_dynamic_verdict_is_one_short_line():
     assert "\n" not in verdict
     assert len(verdict) <= dynamic_verdict.MAX_VERDICT_CHARS
     assert not verdict.startswith("«")
+
+
+def test_prepare_application_initializes_augments_and_registers_once(monkeypatch):
+    fake_bot_module = object()
+    calls = []
+    monkeypatch.setattr(runtime, "_find_bot_module", lambda: fake_bot_module)
+    monkeypatch.setattr(runtime, "_initialize_tables", lambda bot: calls.append(("init", bot)))
+    monkeypatch.setattr(runtime, "_augment_profile_functions", lambda bot: calls.append(("augment", bot)))
+
+    application = Application.builder().token("123456:TESTTOKEN").build()
+    runtime._PREPARED_APPLICATION_IDS.discard(id(application))
+    runtime._prepare_application(application)
+    runtime._prepare_application(application)
+
+    assert calls == [("init", fake_bot_module), ("augment", fake_bot_module)]
+    handlers = application.handlers.get(7, ())
+    assert len(handlers) == 1
+    assert isinstance(handlers[0], MessageHandler)
+    assert handlers[0].callback is runtime._observe_relationship
