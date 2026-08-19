@@ -39,7 +39,7 @@ jobs:
           member_profile_runtime.py dialogue_guard_runtime.py member_memory_safety_patch.py
           dialogue_followup_mode_patch.py chat_member_updates_patch.py
           unified_daily_title_runtime.py relationship_experience_runtime.py
-          whoami_profile_v3_runtime.py whoami_profile_v4_runtime.py
+          whoami_profile_v3_runtime.py whoami_profile_v4_runtime.py whoami_verdict_style_patch.py
           monthly_social_runtime.py monthly_report_timing_patch.py monthly_memory_scope_patch.py
       - name: Test
         run: pytest -q
