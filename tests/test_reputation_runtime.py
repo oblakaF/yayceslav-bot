@@ -6,6 +6,7 @@ from telegram.ext import Application, MessageHandler
 
 import aggression_engine
 import reputation_runtime as runtime
+import whoami_profile_v4_runtime as whoami_v4
 
 
 def _db_bot(tmp_path):
@@ -14,12 +15,15 @@ def _db_bot(tmp_path):
     def get_db_connection():
         return sqlite3.connect(path)
 
+    async def get_member_profile(chat_id, user_id):
+        return {"user_id": user_id}
+
     return SimpleNamespace(
         get_db_connection=get_db_connection,
         current_msk_datetime=lambda: datetime(2026, 8, 20, 1, 0, 0),
         build_full_system_instruction=lambda *args, **kwargs: "BASE",
         get_member_profile_sync=lambda chat_id, user_id: {"user_id": user_id},
-        get_member_profile=lambda chat_id, user_id: None,
+        get_member_profile=get_member_profile,
         detect_conversation_mode=lambda text: "hostile" if "нахуй" in str(text) else "normal",
     )
 
@@ -55,6 +59,16 @@ def test_profile_enrichment_keeps_reputation_separate(tmp_path):
     assert profile["chat_level"] == 4
     assert profile["reputation_score"] == 5
     assert profile["reputation_label"] == "нейтрально"
+
+
+def test_whoami_reputation_line_is_signed_and_bounded():
+    assert whoami_v4._reputation_line({}) == "+0/100 — нейтрально"
+    assert (
+        whoami_v4._reputation_line(
+            {"reputation_score": -42, "reputation_label": "негативный"}
+        )
+        == "-42/100 — негативный"
+    )
 
 
 def test_neutral_instruction_explicitly_overrides_old_aggressive_default():
