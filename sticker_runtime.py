@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import random
-import sqlite3
+import sys
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
@@ -42,7 +42,6 @@ import sticker_interaction
 DATA_DIR = Path("/app/data") if Path("/app/data").exists() else Path("data")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 STICKER_ID_CACHE_PATH = DATA_DIR / "yayceslav_sticker_ids.json"
-STATS_DB_PATH = DATA_DIR / "yayceslav_stats.db"
 
 # Background stickers are deliberately much rarer than emoji reactions.
 STICKER_CHAT_COOLDOWN_SECONDS = 10 * 60.0
@@ -68,15 +67,30 @@ def _owner_id() -> int:
     return int(raw) if raw.isdigit() else 0
 
 
+def _shared_db_connection_factory():
+    """Return the already-loaded bot DB factory without importing bot twice."""
+    for module_name in ("__main__", "bot"):
+        module = sys.modules.get(module_name)
+        factory = getattr(module, "get_db_connection", None) if module else None
+        if callable(factory):
+            return factory
+    return None
+
+
 def _known_group_chat_ids() -> tuple[int, ...]:
-    if not STATS_DB_PATH.exists():
+    factory = _shared_db_connection_factory()
+    if factory is None:
+        # Startup menu publishing is best-effort. The owner-group listener will
+        # install the scope lazily later, so never open a separate raw SQLite
+        # connection just to discover groups.
+        logging.info("Shared DB connection factory is not ready for owner menu discovery")
         return ()
     try:
-        with sqlite3.connect(STATS_DB_PATH) as connection:
+        with factory() as connection:
             rows = connection.execute(
                 "SELECT chat_id FROM chats WHERE chat_type IN ('group', 'supergroup')"
             ).fetchall()
-    except (sqlite3.Error, OSError) as error:
+    except Exception as error:
         logging.warning("Could not read known group chats for owner menu: %s", error)
         return ()
     return tuple(int(row[0]) for row in rows)
