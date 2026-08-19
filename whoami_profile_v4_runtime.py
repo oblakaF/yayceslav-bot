@@ -59,13 +59,17 @@ def _relationship_label(
         return "Негативный знакомый"
     if score <= -10:
         return "Настороженно"
+    if score < 0:
+        return "Слегка настороженно"
+    if score == 0:
+        return "Нейтрально"
+    if score < 10:
+        return "Нормально"
     if score >= 70:
         return "Любимчик"
     if score >= 35:
         return "Свой"
-    if score >= 10:
-        return "Кореш"
-    return "Нейтрально"
+    return "Кореш"
 
 
 def _positive_line(profile) -> str:
