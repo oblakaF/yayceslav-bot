@@ -18,6 +18,18 @@ _APOLOGY_RE = re.compile(
     re.IGNORECASE,
 )
 
+_PENANCE_RE = re.compile(
+    r"(?:"
+    r"200\s+(?:виртуальн\w+\s+)?извин\w*|"
+    r"яйцеслав\s+(?:был\s+)?прав|"
+    r"мир\s*,?\s*дон|"
+    r"прости\s*,?\s*дон|"
+    r"извини\s*,?\s*дон|"
+    r"база\s*,?\s*яйцеслав"
+    r")",
+    re.IGNORECASE,
+)
+
 
 def _find_bot_module():
     for name in ("__main__", "bot"):
@@ -71,6 +83,12 @@ def hostility_label(active_insults: int) -> str:
     return "Не хейтер"
 
 
+def _ensure_column(connection, table: str, column: str, ddl: str) -> None:
+    columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
 def _initialize_tables(bot_module) -> None:
     with bot_module.get_db_connection() as connection:
         connection.execute(
@@ -82,11 +100,32 @@ def _initialize_tables(bot_module) -> None:
                 insults_total INTEGER NOT NULL DEFAULT 0,
                 active_insults INTEGER NOT NULL DEFAULT 0,
                 apologies INTEGER NOT NULL DEFAULT 0,
+                forgiveness_count INTEGER NOT NULL DEFAULT 0,
+                relapse_count INTEGER NOT NULL DEFAULT 0,
+                penance_pending INTEGER NOT NULL DEFAULT 0,
                 last_insult_at TEXT,
                 last_apology_at TEXT,
                 PRIMARY KEY (chat_id, user_id, date)
             )
             """
+        )
+        _ensure_column(
+            connection,
+            "member_hostility_daily",
+            "forgiveness_count",
+            "forgiveness_count INTEGER NOT NULL DEFAULT 0",
+        )
+        _ensure_column(
+            connection,
+            "member_hostility_daily",
+            "relapse_count",
+            "relapse_count INTEGER NOT NULL DEFAULT 0",
+        )
+        _ensure_column(
+            connection,
+            "member_hostility_daily",
+            "penance_pending",
+            "penance_pending INTEGER NOT NULL DEFAULT 0",
         )
         connection.commit()
 
@@ -134,49 +173,116 @@ def _hostility_today_sync(bot_module, chat_id: int, user_id: int, current_date: 
     with bot_module.get_db_connection() as connection:
         row = connection.execute(
             """
-            SELECT insults_total, active_insults, apologies
+            SELECT insults_total, active_insults, apologies,
+                   forgiveness_count, relapse_count, penance_pending
             FROM member_hostility_daily
             WHERE chat_id = ? AND user_id = ? AND date = ?
             """,
             (chat_id, user_id, current_date),
         ).fetchone()
     if not row:
-        return {"insults_total": 0, "active_insults": 0, "apologies": 0}
+        return {
+            "insults_total": 0,
+            "active_insults": 0,
+            "apologies": 0,
+            "forgiveness_count": 0,
+            "relapse_count": 0,
+            "penance_pending": 0,
+        }
     return {
         "insults_total": int(row[0] or 0),
         "active_insults": int(row[1] or 0),
         "apologies": int(row[2] or 0),
+        "forgiveness_count": int(row[3] or 0),
+        "relapse_count": int(row[4] or 0),
+        "penance_pending": int(row[5] or 0),
     }
 
 
 def _record_insult_sync(bot_module, chat_id: int, user_id: int, current_date: str) -> None:
     with bot_module.get_db_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT forgiveness_count, penance_pending
+            FROM member_hostility_daily
+            WHERE chat_id = ? AND user_id = ? AND date = ?
+            """,
+            (chat_id, user_id, current_date),
+        ).fetchone()
+        forgiven_before = bool(row and int(row[0] or 0) > 0)
+        already_pending = bool(row and int(row[1] or 0) > 0)
+
         connection.execute(
             """
             INSERT INTO member_hostility_daily
-                (chat_id, user_id, date, insults_total, active_insults, last_insult_at)
-            VALUES (?, ?, ?, 1, 1, datetime('now'))
+                (chat_id, user_id, date, insults_total, active_insults,
+                 relapse_count, penance_pending, last_insult_at)
+            VALUES (?, ?, ?, 1, 1, 0, 0, datetime('now'))
             ON CONFLICT(chat_id, user_id, date) DO UPDATE SET
                 insults_total = insults_total + 1,
                 active_insults = active_insults + 1,
+                relapse_count = relapse_count + ?,
+                penance_pending = CASE WHEN ? THEN 1 ELSE penance_pending END,
                 last_insult_at = datetime('now')
+            """,
+            (
+                chat_id,
+                user_id,
+                current_date,
+                1 if forgiven_before and not already_pending else 0,
+                1 if forgiven_before else 0,
+            ),
+        )
+        connection.commit()
+
+
+def _record_first_apology_sync(bot_module, chat_id: int, user_id: int, current_date: str) -> None:
+    with bot_module.get_db_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO member_hostility_daily
+                (chat_id, user_id, date, apologies, forgiveness_count,
+                 active_insults, penance_pending, last_apology_at)
+            VALUES (?, ?, ?, 1, 1, 0, 0, datetime('now'))
+            ON CONFLICT(chat_id, user_id, date) DO UPDATE SET
+                apologies = apologies + 1,
+                forgiveness_count = forgiveness_count + 1,
+                active_insults = 0,
+                penance_pending = 0,
+                last_apology_at = datetime('now')
             """,
             (chat_id, user_id, current_date),
         )
         connection.commit()
 
 
-def _record_apology_sync(bot_module, chat_id: int, user_id: int, current_date: str) -> None:
+def _record_relapse_apology_sync(bot_module, chat_id: int, user_id: int, current_date: str) -> None:
+    """After relapse, a plain apology softens the feud but cannot clear it."""
     with bot_module.get_db_connection() as connection:
         connection.execute(
             """
-            INSERT INTO member_hostility_daily
-                (chat_id, user_id, date, apologies, active_insults, last_apology_at)
-            VALUES (?, ?, ?, 1, 0, datetime('now'))
-            ON CONFLICT(chat_id, user_id, date) DO UPDATE SET
-                apologies = apologies + 1,
-                active_insults = 0,
+            UPDATE member_hostility_daily
+            SET apologies = apologies + 1,
+                active_insults = CASE WHEN active_insults > 1 THEN active_insults - 1 ELSE 1 END,
+                penance_pending = 1,
                 last_apology_at = datetime('now')
+            WHERE chat_id = ? AND user_id = ? AND date = ?
+            """,
+            (chat_id, user_id, current_date),
+        )
+        connection.commit()
+
+
+def _complete_penance_sync(bot_module, chat_id: int, user_id: int, current_date: str) -> None:
+    with bot_module.get_db_connection() as connection:
+        connection.execute(
+            """
+            UPDATE member_hostility_daily
+            SET forgiveness_count = forgiveness_count + 1,
+                active_insults = 0,
+                penance_pending = 0,
+                last_apology_at = datetime('now')
+            WHERE chat_id = ? AND user_id = ? AND date = ?
             """,
             (chat_id, user_id, current_date),
         )
@@ -224,7 +330,6 @@ def _augment_profile_functions(bot_module) -> None:
         enriched.update(
             {
                 "messages_month": messages_month,
-                # Compatibility key consumed by older social/dossier code.
                 "messages_30d": messages_month,
                 "chat_level": level,
                 "chat_level_label": chat_level_label(level),
@@ -233,6 +338,9 @@ def _augment_profile_functions(bot_module) -> None:
                 "hostility_today": hostility["active_insults"],
                 "hostility_total_today": hostility["insults_total"],
                 "apologies_today": hostility["apologies"],
+                "forgiveness_count_today": hostility["forgiveness_count"],
+                "relapse_count_today": hostility["relapse_count"],
+                "penance_pending": bool(hostility["penance_pending"]),
                 "friendliness_label": hostility_label(hostility["active_insults"]),
             }
         )
@@ -274,10 +382,22 @@ async def _observe_relationship(update, context) -> None:
         _hostility_today_sync, bot_module, chat.id, user.id, current_date
     )
 
-    if existing["active_insults"] > 0 and _APOLOGY_RE.search(text):
+    # One-line meme penance ends a relapse feud. No 200 actual messages needed.
+    if existing["penance_pending"] and _PENANCE_RE.search(text):
         await asyncio.to_thread(
-            _record_apology_sync, bot_module, chat.id, user.id, current_date
+            _complete_penance_sync, bot_module, chat.id, user.id, current_date
         )
+        return
+
+    if existing["active_insults"] > 0 and _APOLOGY_RE.search(text):
+        if existing["penance_pending"] or existing["forgiveness_count"] > 0:
+            await asyncio.to_thread(
+                _record_relapse_apology_sync, bot_module, chat.id, user.id, current_date
+            )
+        else:
+            await asyncio.to_thread(
+                _record_first_apology_sync, bot_module, chat.id, user.id, current_date
+            )
         return
 
     if not _directed_at_bot(update, context, text):
