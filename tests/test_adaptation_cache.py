@@ -62,6 +62,12 @@ def test_runtime_bootstrap_documents_critical_wrapper_order():
     assert order.index("daily_content_runtime") < order.index("daily_content_source_patch")
 
 
+def test_consolidated_monthly_patches_do_not_reenter_bootstrap():
+    order = runtime_bootstrap.RUNTIME_LOAD_ORDER
+    assert "monthly_report_timing_patch" not in order
+    assert "monthly_theme_quality_patch" not in order
+
+
 def test_schema_preflight_is_installed_as_central_bootstrap_hook():
     assert getattr(Application, "_yayceslav_schema_preflight_installed", False) is True
 
