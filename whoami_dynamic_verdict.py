@@ -11,6 +11,8 @@ from google.genai import types
 
 
 MAX_VERDICT_CHARS = 120
+MIN_VERDICT_CHARS = 12
+MIN_VERDICT_WORDS = 3
 
 
 def _signature_payload(
@@ -50,6 +52,32 @@ def _initialize_cache(bot_module) -> None:
         connection.commit()
 
 
+def _clean_verdict(text: str) -> str | None:
+    clean = re.sub(r"\s+", " ", str(text or "")).strip()
+    clean = clean.strip('"«»“”')
+    if not clean:
+        return None
+
+    # The dossier needs one complete punchline, not a model fragment such as
+    # the previously observed single word "набра".
+    first = re.split(r"[\r\n]+", clean, maxsplit=1)[0].strip()
+    words = re.findall(r"[A-Za-zА-Яа-яЁё0-9]+", first, flags=re.UNICODE)
+    if len(first) < MIN_VERDICT_CHARS or len(words) < MIN_VERDICT_WORDS:
+        return None
+
+    if len(first) > MAX_VERDICT_CHARS:
+        cut = first[: MAX_VERDICT_CHARS - 1].rstrip()
+        if " " in cut:
+            cut = cut.rsplit(" ", 1)[0].rstrip()
+        first = cut.rstrip(" ,;:-") + "…"
+
+    # A truncation marker is fine only if we created it above. Raw model
+    # fragments that end mid-word without punctuation are rejected when tiny.
+    if len(first) < 24 and not re.search(r"[.!?…]$", first):
+        return None
+    return first or None
+
+
 def _load_cached_sync(
     bot_module,
     chat_id: int,
@@ -69,8 +97,8 @@ def _load_cached_sync(
         ).fetchone()
     if not row or str(row[1]) != signature:
         return None
-    verdict = str(row[0] or "").strip()
-    return verdict or None
+    # Old bad cache rows are automatically ignored instead of resurfacing.
+    return _clean_verdict(str(row[0] or ""))
 
 
 def _save_cached_sync(
@@ -96,22 +124,6 @@ def _save_cached_sync(
             (chat_id, user_id, date, signature, verdict),
         )
         connection.commit()
-
-
-def _clean_verdict(text: str) -> str | None:
-    clean = re.sub(r"\s+", " ", str(text or "")).strip()
-    clean = clean.strip('"«»“”')
-    if not clean:
-        return None
-
-    # The dossier needs one punchline, not a mini monologue.
-    first = re.split(r"[\r\n]+", clean, maxsplit=1)[0].strip()
-    if len(first) > MAX_VERDICT_CHARS:
-        cut = first[: MAX_VERDICT_CHARS - 1].rstrip()
-        if " " in cut:
-            cut = cut.rsplit(" ", 1)[0].rstrip()
-        first = cut.rstrip(" ,;:-") + "…"
-    return first or None
 
 
 async def generate_verdict(
@@ -159,29 +171,38 @@ async def generate_verdict(
         f"Уровень в чате: {chat_level}/4 — {level_label}.\n"
         f"Отношения с Яйцеславом: {relationship}.\n"
         f"Текущий настрой к Яйцеславу: {friendliness}.\n\n"
-        "Правила: максимум 120 символов, одна фраза, без заголовка и без кавычек. "
-        "Это должен быть панчлайн, а не описание статистики. Мат разрешён и желателен, "
-        "только если реально делает шутку смешнее. Не перечисляй темы через запятую. "
-        "Не используй заготовки и не повторяй формулировки из входа. "
+        "Правила: максимум 120 символов, одна ЗАКОНЧЕННАЯ фраза, без заголовка и без кавычек. "
+        "Минимум три слова. Это должен быть панчлайн, а не описание статистики. "
+        "Мат разрешён и желателен, только если реально делает шутку смешнее. "
+        "Не перечисляй темы через запятую. Не используй заготовки и не повторяй формулировки из входа. "
         "Не выдумывай биографические факты, пол, профессию, диагнозы, отношения или предпочтения: "
         "шути только из данных выше. Если тема вроде «милфы» — это лишь тема сообщений, не вывод о личности."
     )
 
     try:
         client = genai.Client(api_key=api_key)
-        response = await client.aio.models.generate_content(
-            model=str(getattr(bot_module, "MODEL_NAME", "gemini-3.6-flash")),
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=1.15,
-                max_output_tokens=96,
-                system_instruction=(
-                    "Ты Яйцеслав: живой, мемный, острый персонаж Telegram-чата. "
-                    "Для досье выдаёшь только один свежий короткий панчлайн."
+        verdict = None
+        for attempt in range(2):
+            response = await client.aio.models.generate_content(
+                model=str(getattr(bot_module, "MODEL_NAME", "gemini-3.6-flash")),
+                contents=prompt + (
+                    "\nПредыдущая попытка оборвалась. Дай полноценную законченную фразу."
+                    if attempt else ""
                 ),
-            ),
-        )
-        verdict = _clean_verdict(getattr(response, "text", "") or "")
+                config=types.GenerateContentConfig(
+                    temperature=1.15,
+                    # Give the reasoning model room to think; visible output is
+                    # still hard-capped by _clean_verdict.
+                    max_output_tokens=256,
+                    system_instruction=(
+                        "Ты Яйцеслав: живой, мемный, острый персонаж Telegram-чата. "
+                        "Для досье выдаёшь только один свежий короткий и ЗАКОНЧЕННЫЙ панчлайн."
+                    ),
+                ),
+            )
+            verdict = _clean_verdict(getattr(response, "text", "") or "")
+            if verdict:
+                break
     except Exception as error:
         logging.warning("Dynamic /whoami verdict generation failed: %s", error)
         return None
