@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 from datetime import datetime
 from types import SimpleNamespace
@@ -68,6 +69,36 @@ def test_affinity_window_is_last_30_calendar_days(tmp_path):
     assert state.affinity_points_30d == 4
 
 
+def test_profile_enrichment_keeps_affinity_separate(tmp_path):
+    bot = _db_bot(tmp_path)
+    runtime._initialize_tables(bot)
+    runtime._record_event_sync(bot, 1, 2, "2026-08-20", "affection")
+    runtime._record_event_sync(bot, 1, 2, "2026-08-20", "achievement")
+
+    bot.get_member_profile_sync = lambda chat_id, user_id: {
+        "user_id": user_id,
+        "chat_level": 3,
+        "hostility_today": 0,
+    }
+
+    async def get_member_profile(chat_id, user_id):
+        return {"user_id": user_id, "chat_level": 3, "hostility_today": 0}
+
+    bot.get_member_profile = get_member_profile
+    runtime._augment_profile_functions(bot)
+
+    sync_profile = bot.get_member_profile_sync(1, 2)
+    assert sync_profile["chat_level"] == 3
+    assert sync_profile["positive_affinity_points_30d"] == 4
+    assert sync_profile["positive_affinity_level"] == 1
+    assert sync_profile["positive_affinity_label"] == "симпатия"
+    assert sync_profile["positive_streak"] == 2
+
+    async_profile = asyncio.run(bot.get_member_profile(1, 2))
+    assert async_profile["positive_affinity_points_30d"] == 4
+    assert async_profile["positive_streak"] == 2
+
+
 def test_instruction_patch_celebrates_real_success(tmp_path, monkeypatch):
     bot = _db_bot(tmp_path)
     runtime._initialize_tables(bot)
@@ -115,6 +146,7 @@ def test_prepare_application_registers_group9_once(monkeypatch):
     calls = []
     monkeypatch.setattr(runtime, "_find_bot_module", lambda: fake_bot)
     monkeypatch.setattr(runtime, "_initialize_tables", lambda bot: calls.append(("init", bot)))
+    monkeypatch.setattr(runtime, "_augment_profile_functions", lambda bot: calls.append(("augment", bot)))
     monkeypatch.setattr(runtime, "_patch_build_instruction", lambda bot: calls.append(("patch", bot)))
 
     application = Application.builder().token("123456:TESTTOKEN").build()
@@ -122,7 +154,11 @@ def test_prepare_application_registers_group9_once(monkeypatch):
     runtime._prepare_application(application)
     runtime._prepare_application(application)
 
-    assert calls == [("init", fake_bot), ("patch", fake_bot)]
+    assert calls == [
+        ("init", fake_bot),
+        ("augment", fake_bot),
+        ("patch", fake_bot),
+    ]
     handlers = application.handlers.get(9, ())
     assert len(handlers) == 1
     assert isinstance(handlers[0], MessageHandler)
