@@ -7,14 +7,17 @@ import whoami_profile_v3_runtime as profile_v3
 
 def test_monthly_chat_levels():
     assert runtime.chat_level_from_monthly_messages(0) == 0
-    assert runtime.chat_level_from_monthly_messages(99) == 0
-    assert runtime.chat_level_from_monthly_messages(100) == 1
-    assert runtime.chat_level_from_monthly_messages(299) == 1
-    assert runtime.chat_level_from_monthly_messages(300) == 2
-    assert runtime.chat_level_from_monthly_messages(499) == 2
-    assert runtime.chat_level_from_monthly_messages(500) == 3
-    assert runtime.chat_level_from_monthly_messages(999) == 3
-    assert runtime.chat_level_from_monthly_messages(1000) == 4
+    assert runtime.chat_level_from_monthly_messages(39) == 0
+    assert runtime.chat_level_from_monthly_messages(40) == 1
+    assert runtime.chat_level_from_monthly_messages(149) == 1
+    assert runtime.chat_level_from_monthly_messages(150) == 2
+    assert runtime.chat_level_from_monthly_messages(349) == 2
+    assert runtime.chat_level_from_monthly_messages(350) == 3
+    assert runtime.chat_level_from_monthly_messages(554) == 3
+    assert runtime.chat_level_from_monthly_messages(555) == 3
+    assert runtime.chat_level_from_monthly_messages(555, is_month_leader=True) == 4
+    assert runtime.chat_level_from_monthly_messages(1200, is_month_leader=False) == 3
+    assert runtime.chat_level_from_monthly_messages(1200, is_month_leader=True) == 4
 
 
 def test_hostility_labels():
@@ -26,36 +29,66 @@ def test_hostility_labels():
     assert runtime.hostility_label(11) == "Гига-хейтер"
 
 
-def test_level_zero_is_gentler():
+def test_level_zero_non_hater_is_gentler():
     ctx = social_engine.SocialContext(
         chat_level=0,
-        messages_30d=20,
+        messages_month=20,
         friendliness_label="Не хейтер",
     )
     text = social_engine.build_social_instruction(ctx, rng=random.Random(1))
     assert "Не еби его слишком жёстко" in text
 
 
+def test_low_level_hater_gets_angry_yaiceslav():
+    ctx = social_engine.SocialContext(
+        chat_level=0,
+        messages_month=20,
+        hostility_today=1,
+        friendliness_label="Мини-хейтер",
+    )
+    text = social_engine.build_social_instruction(ctx, rng=random.Random(5))
+    assert "отвечай зло" in text
+    assert "Тепло выключено" in text
+
+
 def test_non_hater_level_one_is_warm():
     ctx = social_engine.SocialContext(
         chat_level=1,
-        messages_30d=150,
+        messages_month=80,
         friendliness_label="Не хейтер",
     )
     text = social_engine.build_social_instruction(ctx, rng=random.Random(1))
     assert "добрее и теплее" in text
 
 
-def test_giga_hater_requires_apology_until_reset():
+def test_penance_pending_can_offer_one_message_ritual():
+    class AlwaysZero:
+        @staticmethod
+        def random():
+            return 0.0
+
+        @staticmethod
+        def choice(values):
+            return values[1] if len(values) > 1 else values[0]
+
     ctx = social_engine.SocialContext(
         chat_level=2,
-        messages_30d=350,
-        hostility_today=11,
-        friendliness_label="Гига-хейтер",
+        messages_month=250,
+        hostility_today=2,
+        friendliness_label="Мини-хейтер",
+        forgiveness_count_today=1,
+        relapse_count_today=1,
+        penance_pending=True,
     )
-    text = social_engine.build_social_instruction(ctx, rng=random.Random(1))
-    assert "до нормального извинения" in text
-    assert "потребовать извиниться" in text
+    text = social_engine.build_social_instruction(ctx, rng=AlwaysZero())
+    assert "дон-режим" in text or "200 виртуальных извинений" in text
+    assert "одним сообщением" in text.lower()
+
+
+def test_penance_phrases_are_lightweight():
+    assert runtime._PENANCE_RE.search("Яйцеслав был прав, дон")
+    assert runtime._PENANCE_RE.search("200 виртуальных извинений, дон")
+    assert runtime._PENANCE_RE.search("мир, дон")
 
 
 def test_theme_noise_is_filtered_but_milfs_survive():
