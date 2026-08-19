@@ -22,6 +22,7 @@ import schema_migrations
 import primitive_compact_guard  # noqa: F401
 import dialogue_guard_runtime
 import accountability_runtime
+import positive_runtime
 import member_profile_runtime
 import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch
@@ -49,6 +50,7 @@ RUNTIME_LOAD_ORDER = (
     "primitive_compact_guard",
     "dialogue_guard_runtime",
     "accountability_runtime",
+    "positive_runtime",
     "member_profile_runtime",
     "member_memory_safety_patch",
     "dialogue_followup_mode_patch",
@@ -166,6 +168,10 @@ def prepare_application_runtime(application: Application) -> None:
     # Accountability must wrap the already-composed instruction builder and
     # must also block correction from proactive aggression.
     accountability_runtime.install()
+    # Positive behavior is intentionally installed after accountability and the
+    # dialogue guard, so its grounded warmth is appended to the final composed
+    # instruction. It adds only a group-9 observer; polling ownership stays here.
+    positive_runtime._prepare_application(application)
     # Rate-limit ВСЁ ТЛЕН must wrap the FINAL limiter, including the 12/min
     # group guard installed immediately above.
     import rate_limit_tlen_runtime
