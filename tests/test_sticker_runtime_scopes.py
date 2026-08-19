@@ -41,6 +41,50 @@ def test_prepare_runtime_works_on_real_slotted_application_and_is_idempotent():
     assert not hasattr(application, "_yayceslav_command_menu_startup_added")
 
 
+def test_known_groups_use_shared_connection_factory(monkeypatch):
+    calls = []
+
+    class Result:
+        def fetchall(self):
+            return [(-1001,), (-1002,)]
+
+    class Connection:
+        def __enter__(self):
+            calls.append("enter")
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            calls.append("exit")
+
+        def execute(self, sql):
+            calls.append(sql)
+            return Result()
+
+    def factory():
+        calls.append("factory")
+        return Connection()
+
+    monkeypatch.setattr(
+        sticker_runtime,
+        "_shared_db_connection_factory",
+        lambda: factory,
+    )
+
+    assert sticker_runtime._known_group_chat_ids() == (-1001, -1002)
+    assert calls[0] == "factory"
+    assert "SELECT chat_id FROM chats" in calls[2]
+    assert calls[-1] == "exit"
+
+
+def test_known_groups_fail_safe_when_shared_factory_is_not_ready(monkeypatch):
+    monkeypatch.setattr(
+        sticker_runtime,
+        "_shared_db_connection_factory",
+        lambda: None,
+    )
+    assert sticker_runtime._known_group_chat_ids() == ()
+
+
 class FakeBot:
     def __init__(self):
         self.set_calls = []
