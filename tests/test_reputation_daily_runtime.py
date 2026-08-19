@@ -1,3 +1,4 @@
+import asyncio
 import random
 import sqlite3
 from datetime import datetime
@@ -26,6 +27,20 @@ def _db_bot(tmp_path):
 def _init(bot):
     lifetime._initialize_table(bot)
     daily._initialize_table(bot)
+
+
+def _update(text: str):
+    return SimpleNamespace(
+        effective_chat=SimpleNamespace(id=-100, type="group"),
+        effective_user=SimpleNamespace(id=20, is_bot=False),
+        effective_message=SimpleNamespace(text=text, reply_to_message=None),
+    )
+
+
+def _context():
+    return SimpleNamespace(
+        bot=SimpleNamespace(id=999, username="yayceslav_bot"),
+    )
 
 
 def test_first_clean_active_day_gets_one_random_bonus(tmp_path):
@@ -117,6 +132,36 @@ def test_hostility_as_first_message_blocks_daily_bonus(tmp_path):
         bot, 1, 2, "2026-08-20", rng=random.Random(4)
     ) == 0
     assert lifetime._state_sync(bot, 1, 2)["score"] == 0
+
+
+def test_background_normal_chat_earns_goodwill_without_addressing_bot(tmp_path, monkeypatch):
+    bot = _db_bot(tmp_path)
+    _init(bot)
+    monkeypatch.setattr(daily, "_find_bot_module", lambda: bot)
+
+    asyncio.run(daily._observe_daily_reputation(_update("всем привет, как дела"), _context()))
+    score = int(lifetime._state_sync(bot, -100, 20)["score"])
+    assert 1 <= score <= 5
+
+
+def test_background_hostility_revokes_goodwill_without_explicit_bot_penalty(tmp_path, monkeypatch):
+    bot = _db_bot(tmp_path)
+    _init(bot)
+    monkeypatch.setattr(daily, "_find_bot_module", lambda: bot)
+
+    bonus = daily._grant_normal_day_bonus_sync(
+        bot, -100, 20, "2026-08-20", rng=SimpleNamespace(randint=lambda a, b: 4)
+    )
+    assert bonus == 4
+
+    # Not addressed to Yayceslav: no explicit -9 should be created, but this is
+    # no longer a clean social day, so passive +4 is removed.
+    asyncio.run(daily._observe_daily_reputation(_update("пошёл нахуй"), _context()))
+    state = lifetime._state_sync(bot, -100, 20)
+    assert state["score"] == 0
+    assert state["negative_points"] == 0
+    assert state["negative_events"] == 0
+    assert daily._daily_state_sync(bot, -100, 20, "2026-08-20")["negative_seen"] == 1
 
 
 def test_bonus_respects_plus_100_cap_and_revokes_only_actual_gain(tmp_path):
