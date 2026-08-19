@@ -3,8 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
-from datetime import date as date_type, timedelta
-from typing import Any
+from datetime import date as date_type
 
 from telegram.constants import ChatType
 from telegram.ext import Application, MessageHandler, filters
@@ -28,17 +27,27 @@ def _find_bot_module():
     return None
 
 
-def chat_level_from_monthly_messages(messages_30d: int) -> int:
-    value = max(0, int(messages_30d or 0))
-    if value >= 1000:
-        return 4
-    if value >= 500:
+def base_chat_level_from_month_messages(messages_month: int) -> int:
+    value = max(0, int(messages_month or 0))
+    if value >= 350:
         return 3
-    if value >= 300:
+    if value >= 150:
         return 2
-    if value >= 100:
+    if value >= 40:
         return 1
     return 0
+
+
+def chat_level_from_monthly_messages(
+    messages_month: int,
+    *,
+    is_month_leader: bool = False,
+) -> int:
+    """Calendar-month XP. Level 4 is unique: only the monthly leader at 555+."""
+    value = max(0, int(messages_month or 0))
+    if is_month_leader and value >= 555:
+        return 4
+    return base_chat_level_from_month_messages(value)
 
 
 def chat_level_label(level: int) -> str:
@@ -82,8 +91,13 @@ def _initialize_tables(bot_module) -> None:
         connection.commit()
 
 
-def _messages_30d_sync(bot_module, chat_id: int, user_id: int, current_date: str) -> int:
-    start_date = (date_type.fromisoformat(current_date) - timedelta(days=29)).isoformat()
+def _month_bounds(current_date: str) -> tuple[str, str]:
+    current = date_type.fromisoformat(current_date)
+    return current.replace(day=1).isoformat(), current.isoformat()
+
+
+def _messages_month_sync(bot_module, chat_id: int, user_id: int, current_date: str) -> int:
+    month_start, month_end = _month_bounds(current_date)
     with bot_module.get_db_connection() as connection:
         row = connection.execute(
             """
@@ -92,9 +106,28 @@ def _messages_30d_sync(bot_module, chat_id: int, user_id: int, current_date: str
             WHERE chat_id = ? AND user_id = ?
               AND date BETWEEN ? AND ?
             """,
-            (chat_id, user_id, start_date, current_date),
+            (chat_id, user_id, month_start, month_end),
         ).fetchone()
     return int((row[0] if row else 0) or 0)
+
+
+def _month_leader_sync(bot_module, chat_id: int, current_date: str) -> tuple[int | None, int]:
+    month_start, month_end = _month_bounds(current_date)
+    with bot_module.get_db_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT user_id, COALESCE(SUM(messages), 0) AS total
+            FROM chat_activity_daily
+            WHERE chat_id = ? AND date BETWEEN ? AND ?
+            GROUP BY user_id
+            ORDER BY total DESC, user_id ASC
+            LIMIT 1
+            """,
+            (chat_id, month_start, month_end),
+        ).fetchone()
+    if not row:
+        return None, 0
+    return int(row[0]), int(row[1] or 0)
 
 
 def _hostility_today_sync(bot_module, chat_id: int, user_id: int, current_date: str) -> dict[str, int]:
@@ -180,14 +213,23 @@ def _augment_profile_functions(bot_module) -> None:
             return None
         enriched = dict(profile)
         current_date = bot_module.current_msk_datetime().date().isoformat()
-        messages_30d = _messages_30d_sync(bot_module, chat_id, user_id, current_date)
+        messages_month = _messages_month_sync(bot_module, chat_id, user_id, current_date)
+        leader_id, leader_messages = _month_leader_sync(bot_module, chat_id, current_date)
+        is_month_leader = leader_id == int(user_id) and leader_messages >= 555
         hostility = _hostility_today_sync(bot_module, chat_id, user_id, current_date)
-        level = chat_level_from_monthly_messages(messages_30d)
+        level = chat_level_from_monthly_messages(
+            messages_month,
+            is_month_leader=is_month_leader,
+        )
         enriched.update(
             {
-                "messages_30d": messages_30d,
+                "messages_month": messages_month,
+                # Compatibility key consumed by older social/dossier code.
+                "messages_30d": messages_month,
                 "chat_level": level,
                 "chat_level_label": chat_level_label(level),
+                "is_month_king": bool(is_month_leader),
+                "month_leader_messages": leader_messages,
                 "hostility_today": hostility["active_insults"],
                 "hostility_total_today": hostility["insults_total"],
                 "apologies_today": hostility["apologies"],
