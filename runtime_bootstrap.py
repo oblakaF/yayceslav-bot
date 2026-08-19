@@ -34,7 +34,7 @@ import relationship_experience_runtime  # noqa: F401
 import whoami_profile_v3_runtime  # noqa: F401
 # Monthly memory scope now also owns theme quality/ranking directly.
 import monthly_memory_scope_patch  # noqa: F401
-import whoami_profile_v4_runtime  # noqa: F401
+import whoami_profile_v4_runtime
 
 # External daily content wraps the already assembled title/month scheduler.
 import daily_content_runtime  # noqa: F401
@@ -105,6 +105,11 @@ def prepare_polling_runtime(kwargs: dict) -> None:
     ensure_chat_member_updates(kwargs)
 
 
+def prepare_application_runtime(application: Application) -> None:
+    """Prepare application-owned features that no longer need polling wrappers."""
+    whoami_profile_v4_runtime._prepare_application(application)
+
+
 def _install_preflight_hook() -> None:
     """Make schema/runtime preparation the outermost run_polling wrapper."""
     if getattr(Application, "_yayceslav_schema_preflight_installed", False):
@@ -120,6 +125,7 @@ def _install_preflight_hook() -> None:
             # state is unknown or partially applied.
             logging.exception("Schema migration preflight failed; polling not started")
             raise
+        prepare_application_runtime(self)
         prepare_polling_runtime(kwargs)
         return original_run_polling(self, *args, **kwargs)
 
