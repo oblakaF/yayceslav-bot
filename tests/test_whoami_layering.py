@@ -81,6 +81,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     assert not hasattr(unified_titles, "install_runtime_hook")
     assert not hasattr(monthly, "install_runtime_hook")
     assert not hasattr(relationship, "install_runtime_hook")
+    assert not hasattr(member_profile, "install_runtime_hook")
     assert not hasattr(v3, "install_runtime_hook")
     assert not hasattr(v4, "install_runtime_hook")
     assert not hasattr(dialogue_guard, "install_runtime_hook")
