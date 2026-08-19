@@ -4,6 +4,9 @@ import reputation_engine as reputation
 def test_everyone_starts_neutral_and_score_is_clamped():
     assert reputation.clamp_score(0) == 0
     assert reputation.reputation_label(0) == "нейтрально"
+    assert reputation.reputation_label(1) == "нормальный"
+    assert reputation.reputation_label(9) == "нормальный"
+    assert reputation.reputation_label(-1) == "слегка настороженно"
     assert reputation.clamp_score(150) == 100
     assert reputation.clamp_score(-150) == -100
 
@@ -24,7 +27,7 @@ def test_positive_gratitude_uses_one_to_ten_scale():
     assert reputation.positive_delta("обожаю тебя") == 10
 
 
-def test_only_messages_directed_at_yayceslav_move_reputation():
+def test_only_messages_directed_at_yayceslav_move_explicit_reputation():
     assert reputation.score_message("пошёл нахуй", directed_at_bot=False).delta == 0
     assert reputation.score_message("красава", directed_at_bot=False).delta == 0
     assert reputation.score_message("пошёл нахуй", directed_at_bot=True).delta == -9
