@@ -129,7 +129,11 @@ def test_daily_content_chat_discovery_falls_back_to_chats_table(tmp_path, monkey
         connection.execute("DROP TABLE chat_membership_registry")
         connection.commit()
 
-    assert member_repository.known_content_group_chat_ids(bot) == [group_id, supergroup_id]
+    # SQL uses ORDER BY chat_id ASC; Telegram group IDs are negative, so the
+    # numerically smaller (more negative) ID appears first.
+    assert member_repository.known_content_group_chat_ids(bot) == sorted(
+        [group_id, supergroup_id]
+    )
 
 
 def test_display_name_has_stable_fallback_for_unknown_member(tmp_path, monkeypatch):
