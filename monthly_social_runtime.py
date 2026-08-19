@@ -5,7 +5,7 @@ import logging
 import re
 import sys
 from calendar import monthrange
-from datetime import date as date_type
+from datetime import date as date_type, timedelta
 from typing import Any
 
 from telegram.constants import ChatType
@@ -71,6 +71,15 @@ def month_bounds(value: date_type) -> tuple[str, str]:
 
 def is_last_calendar_day(value: date_type) -> bool:
     return value.day == monthrange(value.year, value.month)[1]
+
+
+def _target_report_date(now):
+    """19:00 MSK on the last calendar day, with day-1 catch-up."""
+    if is_last_calendar_day(now.date()) and now.hour >= 19:
+        return now.date()
+    if now.day == 1:
+        return now.date() - timedelta(days=1)
+    return None
 
 
 def _initialize_tables(bot_module) -> None:
@@ -357,22 +366,39 @@ async def run_monthly_report_if_due(application: Application) -> None:
         return
 
     now = bot_module.current_msk_datetime()
-    if now.hour < 18 or not is_last_calendar_day(now.date()):
+    target_date = _target_report_date(now)
+    if target_date is None:
         return
 
-    current_month = month_key(now.date())
+    target_month = month_key(target_date)
     chat_ids = await asyncio.to_thread(_known_chat_ids_sync, bot_module)
     for chat_id in chat_ids:
-        if await asyncio.to_thread(_report_already_sent_sync, bot_module, chat_id, current_month):
+        if await asyncio.to_thread(
+            _report_already_sent_sync,
+            bot_module,
+            chat_id,
+            target_month,
+        ):
             continue
-        stats = await asyncio.to_thread(_monthly_stats_sync, bot_module, chat_id, now.date())
-        text = format_monthly_report(stats, now.date())
+
+        stats = await asyncio.to_thread(
+            _monthly_stats_sync,
+            bot_module,
+            chat_id,
+            target_date,
+        )
+        text = format_monthly_report(stats, target_date)
         try:
             await application.bot.send_message(chat_id=chat_id, text=text)
         except Exception as error:
             logging.warning("Monthly chat report failed chat=%s: %s", chat_id, error)
             continue
-        await asyncio.to_thread(_mark_report_sent_sync, bot_module, chat_id, current_month)
+        await asyncio.to_thread(
+            _mark_report_sent_sync,
+            bot_module,
+            chat_id,
+            target_month,
+        )
 
 
 def _patch_scheduler(bot_module) -> None:
