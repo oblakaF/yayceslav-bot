@@ -44,6 +44,28 @@ def test_dossier_relationship_labels_are_clear():
     assert profile_v4._relationship_label(4, 11) == "Гига-хейтер"
 
 
+def test_dossier_positive_affinity_is_separate_from_chat_level():
+    assert profile_v4._positive_line({}) == "0/4 — нейтрально"
+    assert profile_v4._positive_line(
+        {
+            "chat_level": 4,
+            "positive_affinity_level": 1,
+            "positive_affinity_label": "симпатия",
+            "positive_affinity_points_30d": 4,
+            "positive_streak": 2,
+        }
+    ) == "1/4 — симпатия; 4 очк. за 30 дней, серия 2"
+
+    # Familiarity/XP does not silently turn into affection.
+    assert profile_v4._positive_line(
+        {
+            "chat_level": 4,
+            "positive_affinity_level": 0,
+            "positive_affinity_label": "нейтрально",
+        }
+    ) == "0/4 — нейтрально"
+
+
 def test_level_zero_non_hater_is_gentler():
     ctx = social_engine.SocialContext(
         chat_level=0,
