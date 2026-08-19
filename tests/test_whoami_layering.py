@@ -1,5 +1,6 @@
 from telegram.ext import Application, CommandHandler
 
+import accountability_runtime as accountability
 import daily_content_runtime as daily_content
 import dialogue_guard_runtime as dialogue_guard
 import member_profile_runtime as member_profile
@@ -68,6 +69,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     monkeypatch.setattr(v3, "_prepare_application", lambda app: calls.append(("v3", app)))
     monkeypatch.setattr(v4, "_prepare_application", lambda app: calls.append(("v4", app)))
     monkeypatch.setattr(dialogue_guard, "_prepare", lambda: calls.append(("dialogue", None)))
+    monkeypatch.setattr(accountability, "install", lambda: calls.append(("accountability", None)))
     monkeypatch.setattr(
         daily_content,
         "_prepare_application",
@@ -85,6 +87,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("v3", application),
         ("v4", application),
         ("dialogue", None),
+        ("accountability", None),
         ("daily_content", application),
     ]
     assert not hasattr(unified_titles, "install_runtime_hook")
@@ -94,6 +97,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     assert not hasattr(v3, "install_runtime_hook")
     assert not hasattr(v4, "install_runtime_hook")
     assert not hasattr(dialogue_guard, "install_runtime_hook")
+    assert not hasattr(accountability, "install_runtime_hook")
     assert not hasattr(daily_content, "install_runtime_hook")
     assert not hasattr(scoped_help_runtime, "install_runtime_hook")
     assert not hasattr(sticker_post_runtime, "install_runtime_hook")
