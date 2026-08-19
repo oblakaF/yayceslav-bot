@@ -36,5 +36,6 @@ jobs:
           chat_native_engine.py feedback_engine.py humanizer_engine.py adaptation_cache.py
           hostile_streak_engine.py sticker_engine.py sticker_interaction.py sticker_runtime.py
           sticker_post_runtime.py primitive_compact_guard.py scoped_help_runtime.py command_menu.py
+          member_profile_runtime.py dialogue_guard_runtime.py
       - name: Test
         run: pytest -q
