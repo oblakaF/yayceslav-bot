@@ -3,12 +3,16 @@ from __future__ import annotations
 import re
 import sys
 
+from telegram.ext import Application
+
 
 _PATCHED = False
+_RUNTIME_HOOK_INSTALLED = False
+_ORIGINAL_RUN_POLLING = None
 
 # These are not standalone hostile facts; they are short ping-pong continuations
-# that should inherit the already-active banter/challenge controller instead of
-# slipping back to normal mode and repeating the previous comeback.
+# that should inherit the banter/challenge controller instead of slipping back
+# to normal mode and repeating the previous comeback.
 _BANTER_FOLLOWUP_RE = re.compile(
     r"^\s*(?:"
     r"нет\s+ты|"
@@ -55,3 +59,21 @@ def install() -> bool:
     bot_module.detect_conversation_mode = wrapped
     _PATCHED = True
     return True
+
+
+def install_runtime_hook() -> None:
+    global _RUNTIME_HOOK_INSTALLED, _ORIGINAL_RUN_POLLING
+    if _RUNTIME_HOOK_INSTALLED:
+        return
+
+    _ORIGINAL_RUN_POLLING = Application.run_polling
+
+    def run_polling_with_followup_mode(self, *args, **kwargs):
+        install()
+        return _ORIGINAL_RUN_POLLING(self, *args, **kwargs)
+
+    Application.run_polling = run_polling_with_followup_mode
+    _RUNTIME_HOOK_INSTALLED = True
+
+
+install_runtime_hook()
