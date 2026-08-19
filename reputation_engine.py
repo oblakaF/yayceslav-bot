@@ -20,12 +20,12 @@ MAX_REPUTATION = 100
 # deterministic instead of spending a Gemini call to judge every message.
 _NEGATIVE_RULES: tuple[tuple[int, re.Pattern[str]], ...] = (
     (-10, re.compile(r"\b(?:я\s+тебя\s+обоссу|убью\s+тебя)\b", re.IGNORECASE)),
-    (-9, re.compile(r"\b(?:пош[её]л\s+(?:ты\s+)?нахуй|иди\s+(?:ты\s+)?нахуй|соси)\b", re.IGNORECASE)),
+    (-9, re.compile(r"\b(?:пош[её]л\s+(?:ты\s+)?(?:нахуй|на\s+хуй)|иди\s+(?:ты\s+)?(?:нахуй|на\s+хуй)|соси)\b", re.IGNORECASE)),
     (-8, re.compile(r"\b(?:долбо[её]б\w*|еблан\w*|пиздабол\w*)\b", re.IGNORECASE)),
     (-7, re.compile(r"\b(?:мудак\w*|чмо|дебил\w*|идиот\w*)\b", re.IGNORECASE)),
     (-6, re.compile(r"\b(?:сука|сучка|урод\w*|кретин\w*)\b", re.IGNORECASE)),
-    (-5, re.compile(r"\b(?:заебал\w*|заткнись|иди\s+(?:ты\s+)?нахер|пош[её]л\s+(?:ты\s+)?нахер)\b", re.IGNORECASE)),
-    (-3, re.compile(r"\b(?:отвали|достал\w*|иди\s+отсюда|нахер\s+тебя)\b", re.IGNORECASE)),
+    (-5, re.compile(r"\b(?:заебал\w*|заткнись|иди\s+(?:ты\s+)?(?:нахер|на\s+хер)|пош[её]л\s+(?:ты\s+)?(?:нахер|на\s+хер))\b", re.IGNORECASE)),
+    (-3, re.compile(r"\b(?:отвали|достал\w*|иди\s+отсюда|нахер\s+тебя|на\s+хер\s+тебя)\b", re.IGNORECASE)),
     (-1, re.compile(r"\b(?:не\s+беси|отстань)\b", re.IGNORECASE)),
 )
 
