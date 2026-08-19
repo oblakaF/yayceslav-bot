@@ -25,12 +25,10 @@ import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch  # noqa: F401
 import chat_member_updates_patch  # noqa: F401
 
-# Monthly report must be imported BEFORE unified daily titles. Because each
-# runtime wraps Application.run_polling, this order ensures unified titles are
-# installed first at startup and the monthly report then wraps that final
-# scheduler instead of being overwritten.
+# Monthly social runtime owns its 19:00/catch-up timing directly. It must still
+# be imported BEFORE unified daily titles because both wrap run_polling and the
+# monthly scheduler wraps the unified title scheduler during preparation.
 import monthly_social_runtime  # noqa: F401
-import monthly_report_timing_patch  # noqa: F401
 import unified_daily_title_runtime  # noqa: F401
 import relationship_experience_runtime  # noqa: F401
 import whoami_profile_v3_runtime  # noqa: F401
@@ -53,7 +51,6 @@ RUNTIME_LOAD_ORDER = (
     "dialogue_followup_mode_patch",
     "chat_member_updates_patch",
     "monthly_social_runtime",
-    "monthly_report_timing_patch",
     "unified_daily_title_runtime",
     "relationship_experience_runtime",
     "whoami_profile_v3_runtime",
