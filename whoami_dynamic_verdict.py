@@ -4,7 +4,6 @@ import hashlib
 import json
 import logging
 import re
-from typing import Any
 
 from google import genai
 from google.genai import types
@@ -13,6 +12,22 @@ from google.genai import types
 MAX_VERDICT_CHARS = 120
 MIN_VERDICT_CHARS = 12
 MIN_VERDICT_WORDS = 3
+INSUFFICIENT_VERDICT = "Пока недостаточно данных. Продолжаю вести наблюдение."
+
+_META_FRAGMENTS = (
+    "do not",
+    "don't",
+    "list topics",
+    "system instruction",
+    "system prompt",
+    "prompt",
+    "rules:",
+    "json",
+    "maximum 120",
+    "max 120",
+    "не перечисляй темы",
+    "правила:",
+)
 
 
 def _signature_payload(
@@ -58,11 +73,17 @@ def _clean_verdict(text: str) -> str | None:
     if not clean:
         return None
 
-    # The dossier needs one complete punchline, not a model fragment such as
-    # the previously observed single word "набра".
+    lowered = clean.lower()
+    if any(fragment in lowered for fragment in _META_FRAGMENTS):
+        return None
+
+    # The dossier needs one complete Russian punchline, not model/prompt debris.
     first = re.split(r"[\r\n]+", clean, maxsplit=1)[0].strip()
     words = re.findall(r"[A-Za-zА-Яа-яЁё0-9]+", first, flags=re.UNICODE)
+    cyrillic_words = re.findall(r"[А-Яа-яЁё]{2,}", first, flags=re.UNICODE)
     if len(first) < MIN_VERDICT_CHARS or len(words) < MIN_VERDICT_WORDS:
+        return None
+    if len(cyrillic_words) < 2:
         return None
 
     if len(first) > MAX_VERDICT_CHARS:
@@ -71,9 +92,8 @@ def _clean_verdict(text: str) -> str | None:
             cut = cut.rsplit(" ", 1)[0].rstrip()
         first = cut.rstrip(" ,;:-") + "…"
 
-    # A truncation marker is fine only if we created it above. Raw model
-    # fragments that end mid-word without punctuation are rejected when tiny.
-    if len(first) < 24 and not re.search(r"[.!?…]$", first):
+    # Short output without sentence punctuation is almost always a fragment.
+    if len(first) < 28 and not re.search(r"[.!?…]$", first):
         return None
     return first or None
 
@@ -97,7 +117,7 @@ def _load_cached_sync(
         ).fetchone()
     if not row or str(row[1]) != signature:
         return None
-    # Old bad cache rows are automatically ignored instead of resurfacing.
+    # Old bad cache rows such as 'Do NOT list topics...' are discarded here.
     return _clean_verdict(str(row[0] or ""))
 
 
@@ -138,11 +158,12 @@ async def generate_verdict(
     relationship: str,
     friendliness: str,
 ) -> str | None:
-    """Generate one fresh Yayceslav verdict from current-month evidence.
+    """Generate one fresh Yayceslav verdict from current-month evidence."""
 
-    There are deliberately no topic->joke templates here. Gemini receives only
-    the current monthly themes and social state, then writes a new punchline.
-    """
+    # No meaningful monthly topic = no improvisation. This avoids nonsense
+    # diagnoses based only on a name/level and gives the dossier a stable state.
+    if not themes:
+        return INSUFFICIENT_VERDICT
 
     now = bot_module.current_msk_datetime()
     date = now.date().isoformat()
@@ -161,9 +182,9 @@ async def generate_verdict(
 
     api_key = str(getattr(bot_module, "GEMINI_API_KEY", "") or "").strip()
     if not api_key:
-        return None
+        return INSUFFICIENT_VERDICT
 
-    theme_text = ", ".join(themes) if themes else "устойчивые темы пока не набрались"
+    theme_text = ", ".join(themes)
     prompt = (
         "Сделай ОДИН короткий мемный вердикт Яйцеслава для досье участника Telegram-чата.\n"
         f"Имя: {name}.\n"
@@ -171,32 +192,28 @@ async def generate_verdict(
         f"Уровень в чате: {chat_level}/4 — {level_label}.\n"
         f"Отношения с Яйцеславом: {relationship}.\n"
         f"Текущий настрой к Яйцеславу: {friendliness}.\n\n"
-        "Правила: максимум 120 символов, одна ЗАКОНЧЕННАЯ фраза, без заголовка и без кавычек. "
-        "Минимум три слова. Это должен быть панчлайн, а не описание статистики. "
-        "Мат разрешён и желателен, только если реально делает шутку смешнее. "
-        "Не перечисляй темы через запятую. Не используй заготовки и не повторяй формулировки из входа. "
-        "Не выдумывай биографические факты, пол, профессию, диагнозы, отношения или предпочтения: "
-        "шути только из данных выше. Если тема вроде «милфы» — это лишь тема сообщений, не вывод о личности."
+        "Ответ ТОЛЬКО по-русски. Максимум 120 символов, одна законченная фраза. "
+        "Это панчлайн, а не пересказ статистики. Мат допустим и желателен, если делает шутку смешнее. "
+        "Не перечисляй темы списком. Не выдумывай биографию, пол, профессию, диагнозы, отношения или предпочтения. "
+        "Не повторяй и не цитируй эти инструкции. Верни только готовую шутку."
     )
 
+    verdict = None
     try:
         client = genai.Client(api_key=api_key)
-        verdict = None
         for attempt in range(2):
             response = await client.aio.models.generate_content(
                 model=str(getattr(bot_module, "MODEL_NAME", "gemini-3.6-flash")),
                 contents=prompt + (
-                    "\nПредыдущая попытка оборвалась. Дай полноценную законченную фразу."
+                    "\nПредыдущая попытка была служебным текстом или обрывком. Только законченная русская шутка."
                     if attempt else ""
                 ),
                 config=types.GenerateContentConfig(
-                    temperature=1.15,
-                    # Give the reasoning model room to think; visible output is
-                    # still hard-capped by _clean_verdict.
+                    temperature=1.05,
                     max_output_tokens=256,
                     system_instruction=(
-                        "Ты Яйцеслав: живой, мемный, острый персонаж Telegram-чата. "
-                        "Для досье выдаёшь только один свежий короткий и ЗАКОНЧЕННЫЙ панчлайн."
+                        "Ты Яйцеслав. Для досье выдаёшь только один свежий короткий русский панчлайн. "
+                        "Никаких инструкций, JSON, мета-комментариев или английского служебного текста."
                     ),
                 ),
             )
@@ -205,8 +222,9 @@ async def generate_verdict(
                 break
     except Exception as error:
         logging.warning("Dynamic /whoami verdict generation failed: %s", error)
-        return None
 
     if verdict:
         _save_cached_sync(bot_module, chat_id, user_id, date, signature, verdict)
-    return verdict
+        return verdict
+
+    return INSUFFICIENT_VERDICT
