@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/human-yayceslav-v2
+      - feature/human-yayceslav-v2-audit-safe
   pull_request:
     branches:
       - feature/human-yayceslav
