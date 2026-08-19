@@ -13,6 +13,8 @@ import member_profile_runtime  # noqa: F401
 import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch  # noqa: F401
 import chat_member_updates_patch  # noqa: F401
+import unified_daily_title_runtime  # noqa: F401
+import whoami_profile_v3_runtime  # noqa: F401
 
 
 _LOCK = threading.Lock()
@@ -47,8 +49,7 @@ def get_or_load(
 
 def invalidate(namespace: str, chat_id: int) -> None:
     with _LOCK:
-        _CACHE.pop((namespace, int(chat_id)), None
-        )
+        _CACHE.pop((namespace, int(chat_id)), None)
 
 
 def invalidate_chat(chat_id: int) -> None:
