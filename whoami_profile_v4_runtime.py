@@ -75,37 +75,6 @@ def _next_level_progress(messages_month: int, chat_level: int, is_king: bool) ->
     return None
 
 
-def _authoritative_counts_sync(bot_module, chat_id: int, user_id: int) -> tuple[int, int]:
-    """Read message counters directly from daily activity.
-
-    The profile counter is old/legacy state and can lag after migrations. The
-    daily activity table is append-only statistics, so /whoami uses it as the
-    authoritative non-decreasing source whenever it has data.
-    """
-    now = bot_module.current_msk_datetime()
-    month_start = now.date().replace(day=1).isoformat()
-    today = now.date().isoformat()
-    with bot_module.get_db_connection() as connection:
-        total_row = connection.execute(
-            """
-            SELECT COALESCE(SUM(messages), 0)
-            FROM chat_activity_daily
-            WHERE chat_id = ? AND user_id = ?
-            """,
-            (chat_id, user_id),
-        ).fetchone()
-        month_row = connection.execute(
-            """
-            SELECT COALESCE(SUM(messages), 0)
-            FROM chat_activity_daily
-            WHERE chat_id = ? AND user_id = ?
-              AND date BETWEEN ? AND ?
-            """,
-            (chat_id, user_id, month_start, today),
-        ).fetchone()
-    return int((total_row[0] if total_row else 0) or 0), int((month_row[0] if month_row else 0) or 0)
-
-
 async def _safe_member_profile(bot_module, chat_id: int, user_id: int):
     try:
         return await bot_module.get_member_profile(chat_id, user_id)
@@ -128,8 +97,6 @@ async def _whoami_v4(update, context) -> None:
 
     profile = await _safe_member_profile(bot_module, chat.id, user.id)
     if profile is None:
-        # Even a broken enrichment layer must not crash the command. Try the
-        # base row directly so the user still gets a dossier.
         try:
             profile = await asyncio.to_thread(bot_module.get_member_profile_sync, chat.id, user.id)
         except Exception:
@@ -138,21 +105,11 @@ async def _whoami_v4(update, context) -> None:
         await message.reply_text("Досье пока не собрано. Яйцеслав ещё не успел оформить компромат.")
         raise ApplicationHandlerStop
 
-    try:
-        activity_total, activity_month = await asyncio.to_thread(
-            _authoritative_counts_sync, bot_module, chat.id, user.id
-        )
-    except Exception as error:
-        logging.warning("/whoami activity counters failed: %s", error)
-        activity_total = activity_month = 0
-
-    profile_total = int(profile.get("total_messages", 0) or 0)
-    profile_month = int(profile.get("messages_month", profile.get("messages_30d", 0)) or 0)
-    total = max(profile_total, activity_total)
-    messages_month = max(profile_month, activity_month)
-
-    # Avoid impossible reports such as '51 total / 70 this month'.
-    total = max(total, messages_month)
+    # Both counters are explicitly scoped to THIS chat. Do not reconcile them
+    # with other chats or global totals: one person may have 145 messages in
+    # one group and 51 in another, and both values are correct.
+    total = int(profile.get("total_messages", 0) or 0)
+    messages_month = int(profile.get("messages_month", profile.get("messages_30d", 0)) or 0)
 
     chat_level = int(profile.get("chat_level", social_engine.chat_level_from_messages(messages_month)) or 0)
     is_king = bool(profile.get("is_month_king", False))
@@ -235,7 +192,6 @@ async def _whoami_v4(update, context) -> None:
         await message.reply_text("\n".join(lines))
     except Exception as error:
         logging.exception("/whoami Telegram send failed: %s", error)
-        # Minimal emergency output uses no optional DB/Gemini data.
         await message.reply_text(
             f"🥚 ДОСЬЕ ЯЙЦЕСЛАВА НА {name}\n"
             f"🏅 Титул: {title}\n"
