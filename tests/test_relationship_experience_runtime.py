@@ -2,7 +2,9 @@ import random
 
 import relationship_experience_runtime as runtime
 import social_engine
+import whoami_dynamic_verdict as dynamic_verdict
 import whoami_profile_v3_runtime as profile_v3
+import whoami_profile_v4_runtime as profile_v4
 
 
 def test_monthly_chat_levels():
@@ -27,6 +29,17 @@ def test_hostility_labels():
     assert runtime.hostility_label(3) == "Мега-хейтер"
     assert runtime.hostility_label(10) == "Мега-хейтер"
     assert runtime.hostility_label(11) == "Гига-хейтер"
+
+
+def test_dossier_relationship_labels_are_clear():
+    assert profile_v4._relationship_label(0, 0) == "Незнакомец"
+    assert profile_v4._relationship_label(1, 0) == "Знакомый"
+    assert profile_v4._relationship_label(2, 0) == "Кореш"
+    assert profile_v4._relationship_label(3, 0) == "Свой"
+    assert profile_v4._relationship_label(4, 0) == "Любимчик"
+    assert profile_v4._relationship_label(4, 1) == "Мини-хейтер"
+    assert profile_v4._relationship_label(4, 3) == "Мега-хейтер"
+    assert profile_v4._relationship_label(4, 11) == "Гига-хейтер"
 
 
 def test_level_zero_non_hater_is_gentler():
@@ -97,7 +110,11 @@ def test_theme_noise_is_filtered_but_milfs_survive():
     assert profile_v3._theme_ok("одобряет") is False
 
 
-def test_milf_verdict_is_short_and_thematic():
-    verdict = profile_v3.topical_verdict(["милфы"], rng=random.Random(0))
-    assert "милф" in verdict.lower()
-    assert len(verdict) < 100
+def test_dynamic_verdict_is_one_short_line():
+    verdict = dynamic_verdict._clean_verdict(
+        "«Весь месяц спорит с реальностью, а реальность, сука, даже не подписывалась.»\nВторая строка"
+    )
+    assert verdict is not None
+    assert "\n" not in verdict
+    assert len(verdict) <= dynamic_verdict.MAX_VERDICT_CHARS
+    assert not verdict.startswith("«")
