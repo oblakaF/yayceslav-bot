@@ -55,7 +55,11 @@ def test_first_clean_active_day_gets_one_random_bonus(tmp_path):
         rng=random.Random(5),
     )
     assert 1 <= bonus <= 5
-    assert lifetime._state_sync(bot, 10, 20)["score"] == bonus
+    state = lifetime._state_sync(bot, 10, 20)
+    assert state["score"] == bonus
+    # Passive daily goodwill is not fake explicit praise.
+    assert state["positive_points"] == 0
+    assert state["positive_events"] == 0
     assert daily._daily_state_sync(bot, 10, 20, "2026-08-20") == {
         "normal_bonus": bonus,
         "bonus_active": 1,
@@ -140,8 +144,11 @@ def test_background_normal_chat_earns_goodwill_without_addressing_bot(tmp_path, 
     monkeypatch.setattr(daily, "_find_bot_module", lambda: bot)
 
     asyncio.run(daily._observe_daily_reputation(_update("всем привет, как дела"), _context()))
-    score = int(lifetime._state_sync(bot, -100, 20)["score"])
+    state = lifetime._state_sync(bot, -100, 20)
+    score = int(state["score"])
     assert 1 <= score <= 5
+    assert state["positive_points"] == 0
+    assert state["positive_events"] == 0
 
 
 def test_background_hostility_revokes_goodwill_without_explicit_bot_penalty(tmp_path, monkeypatch):
