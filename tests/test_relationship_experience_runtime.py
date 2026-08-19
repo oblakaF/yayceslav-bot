@@ -37,6 +37,8 @@ def test_dossier_relationship_labels_are_reputation_based():
     # Familiarity is shown separately as chat level. Relationship starts neutral.
     assert profile_v4._relationship_label(0, 0, 0) == "Нейтрально"
     assert profile_v4._relationship_label(4, 0, 0) == "Нейтрально"
+    assert profile_v4._relationship_label(0, 0, 5) == "Нормально"
+    assert profile_v4._relationship_label(4, 0, -5) == "Слегка настороженно"
     assert profile_v4._relationship_label(4, 0, 12) == "Кореш"
     assert profile_v4._relationship_label(0, 0, 40) == "Свой"
     assert profile_v4._relationship_label(0, 0, 75) == "Любимчик"
