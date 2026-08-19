@@ -57,6 +57,16 @@ def _relationship_label(chat_level: int, active_hostility: int) -> str:
     return "Незнакомец"
 
 
+def _positive_line(profile) -> str:
+    level = max(0, min(int(profile.get("positive_affinity_level", 0) or 0), 4))
+    label = str(profile.get("positive_affinity_label") or "нейтрально")
+    points = max(0, int(profile.get("positive_affinity_points_30d", 0) or 0))
+    streak = max(0, int(profile.get("positive_streak", 0) or 0))
+    if points <= 0 and streak <= 0:
+        return f"{level}/4 — {label}"
+    return f"{level}/4 — {label}; {points} очк. за 30 дней, серия {streak}"
+
+
 def _next_level_progress(messages_month: int, chat_level: int, is_king: bool) -> str | None:
     if is_king:
         return None
@@ -118,6 +128,7 @@ async def _whoami_v4(update, context) -> None:
 
     relationship = _relationship_label(chat_level, active_hostility)
     friendliness = _friendliness_line(active_hostility, total_hostility, apologies, penance_pending)
+    positive = _positive_line(profile)
 
     try:
         favorite_word, favorite_count = await asyncio.to_thread(
@@ -140,6 +151,7 @@ async def _whoami_v4(update, context) -> None:
     lines = [
         f"🥚 ДОСЬЕ ЯЙЦЕСЛАВА НА {name}",
         f"🤝 Яйцеславу: {relationship}",
+        f"💚 Симпатия: {positive}",
         f"🌡 Отношение сегодня: {friendliness}",
         f"🏅 Титул: {title}",
         f"💬 Сообщений: {total} всего / {messages_month} в этом месяце",
