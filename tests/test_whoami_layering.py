@@ -86,3 +86,8 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     assert not hasattr(v4, "install_runtime_hook")
     assert not hasattr(dialogue_guard, "install_runtime_hook")
     assert not hasattr(daily_content, "install_runtime_hook")
+
+
+def test_bootstrap_is_the_only_active_polling_wrapper():
+    assert getattr(Application, "_yayceslav_schema_preflight_installed", False) is True
+    assert Application.run_polling.__name__ == "run_polling_with_schema_preflight"

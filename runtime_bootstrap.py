@@ -1,9 +1,9 @@
 """Ordered bootstrap for V2 runtime extensions.
 
-This module exists only to make the side-effect import chain explicit. Import
-order is part of the current runtime contract because several legacy runtime
-modules wrap ``Application.run_polling``. Keep additions here deliberate and
-covered by bootstrap tests; do not hide them in unrelated utility modules.
+This module makes the side-effect import chain and startup order explicit.
+``Application.run_polling`` ownership is centralized here; feature runtimes
+prepare through explicit functions instead of stacking polling wrappers.
+Keep additions deliberate and covered by bootstrap behavior tests.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from telegram.ext import Application
 import schema_migrations
 
 # Loaded early by bot.py through adaptation_cache, before thinking_engine
-# installs its Gemini router. Runtime guards only patch Application.run_polling
-# here; they touch bot.py functions later when the application is built.
+# installs its Gemini router. Runtime helpers can patch bot.py functions later
+# when the application is built, but polling ownership stays centralized below.
 import primitive_compact_guard  # noqa: F401
 import dialogue_guard_runtime
 import member_profile_runtime
@@ -130,7 +130,7 @@ def prepare_application_runtime(application: Application) -> None:
 
 
 def _install_preflight_hook() -> None:
-    """Make schema/runtime preparation the outermost run_polling wrapper."""
+    """Install the single application polling wrapper owned by the bootstrap."""
     if getattr(Application, "_yayceslav_schema_preflight_installed", False):
         return
 
