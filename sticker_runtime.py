@@ -14,7 +14,6 @@ import sys
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from telegram import (
     BotCommandScopeAllChatAdministrators,
@@ -35,13 +34,12 @@ from telegram.ext import (
 )
 
 import command_menu
+import runtime_config
 import sticker_engine
 import sticker_interaction
 
 
-DATA_DIR = Path("/app/data") if Path("/app/data").exists() else Path("data")
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-STICKER_ID_CACHE_PATH = DATA_DIR / "yayceslav_sticker_ids.json"
+STICKER_ID_CACHE_PATH = runtime_config.STICKER_ID_CACHE_PATH
 
 # Background stickers are deliberately much rarer than emoji reactions.
 STICKER_CHAT_COOLDOWN_SECONDS = 10 * 60.0
