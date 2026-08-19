@@ -111,9 +111,20 @@ def _prepare_sticker_menu_runtime(application: Application) -> None:
     # Lazy imports are intentional. bot.py imports adaptation_cache (and thus
     # this bootstrap) before the sticker/menu modules; importing them here at
     # polling startup avoids changing bot.py import order or creating cycles.
+    import praise_guard_runtime
+    import sticker_semantics_aug19
+
+    # Extend the pure semantic registry BEFORE sticker_runtime loads its cached
+    # ids. The runtime behavior hooks themselves are installed only after all
+    # three sticker/menu modules exist.
+    sticker_semantics_aug19.install_catalog_semantics()
+
     import scoped_help_runtime
     import sticker_post_runtime
     import sticker_runtime
+
+    praise_guard_runtime.install()
+    sticker_semantics_aug19.install_runtime_behavior()
 
     # Preserve the previous preparation order while keeping polling ownership
     # in this bootstrap only.
@@ -122,7 +133,7 @@ def _prepare_sticker_menu_runtime(application: Application) -> None:
     sticker_post_runtime.install_send_answer_wrapper()
 
     logging.warning(
-        "Yayceslav stickers runtime ready: pack=%s; own-pack=50%% semantic sticker/text; "
+        "Yayceslav stickers runtime ready: registry=%s; own-pack=50%% semantic sticker/text; "
         "foreign packs ignored; question<=5%% semantic-only; background<=2%%; "
         "background cap=%s/hour",
         len(sticker_runtime.sticker_engine.STICKER_ORDER),
