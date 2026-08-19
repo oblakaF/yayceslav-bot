@@ -2,13 +2,14 @@
 
 A person does not need to praise the bot to become well-regarded. Every active
 calendar day in a group can earn one small +1..+5 reputation bonus as long as
-that person does not direct hostility at Yayceslav that day. If hostility
-appears later on the same day, that passive bonus is revoked before the day is
-marked bad. Explicit praise/abuse remains owned by reputation_runtime.
+that person's day stays broadly non-hostile. General hostility only removes the
+passive clean-day bonus; explicit negative reputation points are still applied
+only when abuse is directed at Yayceslav by reputation_runtime.
 """
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 import random
@@ -121,7 +122,10 @@ def _grant_normal_day_bonus_sync(
     """Award one passive +1..+5 bonus for this active clean day, at most once."""
     requested = max(
         DAILY_NORMAL_BONUS_MIN,
-        min(DAILY_NORMAL_BONUS_MAX, int(rng.randint(DAILY_NORMAL_BONUS_MIN, DAILY_NORMAL_BONUS_MAX))),
+        min(
+            DAILY_NORMAL_BONUS_MAX,
+            int(rng.randint(DAILY_NORMAL_BONUS_MIN, DAILY_NORMAL_BONUS_MAX)),
+        ),
     )
 
     with bot_module.get_db_connection() as connection:
@@ -141,7 +145,10 @@ def _grant_normal_day_bonus_sync(
             return 0
 
         current_score = _score_on_connection(connection, chat_id, user_id)
-        applied = min(requested, max(0, reputation_engine.MAX_REPUTATION - current_score))
+        applied = min(
+            requested,
+            max(0, reputation_engine.MAX_REPUTATION - current_score),
+        )
         if applied > 0:
             _adjust_score_only_on_connection(
                 connection,
@@ -222,7 +229,12 @@ def _mark_negative_day_and_revoke_sync(
     return revoked
 
 
-def _daily_state_sync(bot_module, chat_id: int, user_id: int, current_date: str) -> dict[str, int]:
+def _daily_state_sync(
+    bot_module,
+    chat_id: int,
+    user_id: int,
+    current_date: str,
+) -> dict[str, int]:
     with bot_module.get_db_connection() as connection:
         row = connection.execute(
             """
@@ -261,24 +273,23 @@ async def _observe_daily_reputation(update, context) -> None:
 
     text = str(message.text or "")
     directed = reputation_runtime._directed_at_bot(update, context, text)
-    hostile = False
-    if directed:
-        try:
-            hostile = str(bot_module.detect_conversation_mode(text)) == "hostile"
-        except Exception:
-            hostile = False
+    try:
+        hostile_any = str(bot_module.detect_conversation_mode(text)) == "hostile"
+    except Exception:
+        hostile_any = False
 
     decision = reputation_engine.score_message(
         text,
         directed_at_bot=directed,
-        hostile_mode=hostile,
+        hostile_mode=hostile_any and directed,
     )
     current_date = _current_date(bot_module)
 
-    # Any directed hostile turn makes the day ineligible for passive goodwill,
-    # even if the conservative explicit severity table produced delta=0.
-    if directed and (hostile or decision.delta < 0):
-        await __import__("asyncio").to_thread(
+    # General hostile behavior makes the calendar day ineligible for passive
+    # goodwill. It does NOT create explicit -N reputation unless group-10's
+    # directed-at-bot scoring found a real negative event.
+    if hostile_any or decision.delta < 0:
+        await asyncio.to_thread(
             _mark_negative_day_and_revoke_sync,
             bot_module,
             int(chat.id),
@@ -288,8 +299,8 @@ async def _observe_daily_reputation(update, context) -> None:
         return
 
     # Any ordinary active text message counts as a normal social day. The user
-    # does not need to mention/praise Yayceslav to slowly build a good standing.
-    await __import__("asyncio").to_thread(
+    # does not need to mention or praise Yayceslav to slowly build good standing.
+    await asyncio.to_thread(
         _grant_normal_day_bonus_sync,
         bot_module,
         int(chat.id),
@@ -313,7 +324,13 @@ def _patch_instruction(bot_module) -> None:
         if chat_id is None or user_id is None:
             return instruction
         try:
-            score = int(reputation_runtime._state_sync(bot_module, int(chat_id), int(user_id))["score"])
+            score = int(
+                reputation_runtime._state_sync(
+                    bot_module,
+                    int(chat_id),
+                    int(user_id),
+                )["score"]
+            )
         except Exception:
             return instruction
 
@@ -346,5 +363,5 @@ def _prepare_application(application: Application) -> None:
     )
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning(
-        "Daily reputation runtime ready: one clean active day = +1..+5; same-day hostility revokes passive bonus"
+        "Daily reputation runtime ready: one clean active day = +1..+5; hostile day revokes passive bonus"
     )
