@@ -8,9 +8,17 @@ def test_member_profile_reaches_social_instruction():
     style_engine.reset_length_history()
     instruction = bot.build_full_system_instruction(
         "что думаешь?", chat_id=701, chat_type="group", user_id=77,
-        member_profile={"relationship_level": 3, "current_title": None, "joke_archetype": None, "total_messages": 120},
+        member_profile={
+            "relationship_level": 3,
+            "current_title": None,
+            "joke_archetype": None,
+            "total_messages": 420,
+            "messages_month": 420,
+            "chat_level": 3,
+        },
     )
-    assert "хорошо знакомый участник" in instruction
+    assert "хорошо знакомый Яйцеславу участник" in instruction
+    assert "старожил" in instruction.lower()
 
 
 def test_relationship_level_is_passed_to_humor_context(monkeypatch):

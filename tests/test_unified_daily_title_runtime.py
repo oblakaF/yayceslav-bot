@@ -43,3 +43,24 @@ def test_active_member_gets_normal_title_pool():
     candidate = {"previous_title": None}
     title = runtime._pick_title_for(candidate, "active", rng=random.Random(2))
     assert title in title_pools.ALL_TITLES
+
+
+def test_prepare_installs_unified_scheduler_once(monkeypatch):
+    class FakeBotModule:
+        run_due_daily_titles = None
+        _yayceslav_silent_title_patch = False
+
+    fake = FakeBotModule()
+    schema_calls = []
+    monkeypatch.setattr(runtime, "_PREPARED", False)
+    monkeypatch.setattr(runtime, "_find_bot_module", lambda: fake)
+    monkeypatch.setattr(runtime, "_ensure_schema", lambda bot_module: schema_calls.append(bot_module))
+
+    runtime._prepare()
+    runtime._prepare()
+
+    assert schema_calls == [fake]
+    assert fake.run_due_daily_titles is runtime.run_unified_daily_titles
+    assert fake._yayceslav_silent_title_patch is True
+    assert runtime._PREPARED is True
+    assert not hasattr(runtime, "install_runtime_hook")

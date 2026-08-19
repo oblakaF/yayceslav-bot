@@ -145,7 +145,7 @@ def test_award_templates_have_name_placeholder_and_no_duplicates():
 
 
 def test_joke_title_pool_matches_approved_titles_and_is_unique():
-    assert len(vocabulary.JOKE_TITLES) == 66
+    assert len(vocabulary.JOKE_TITLES) == 73
     assert len(vocabulary.JOKE_TITLES) == len(set(vocabulary.JOKE_TITLES))
     assert vocabulary.JOKE_TITLES == title_pools.ALL_TITLES
 
@@ -160,6 +160,7 @@ def test_joke_title_categories_are_current_compact_pools():
         "profane",
         "street_memes",
         "legendary",
+        "positive",
     }
     assert set(vocabulary.JOKE_TITLE_CATEGORIES) == expected_categories
     assert vocabulary.JOKE_TITLE_CATEGORIES is title_pools.TITLE_POOLS

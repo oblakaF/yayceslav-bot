@@ -1,5 +1,7 @@
 import random
 
+from telegram.ext import Application, MessageHandler
+
 import relationship_experience_runtime as runtime
 import social_engine
 import whoami_dynamic_verdict as dynamic_verdict
@@ -31,15 +33,44 @@ def test_hostility_labels():
     assert runtime.hostility_label(11) == "Гига-хейтер"
 
 
-def test_dossier_relationship_labels_are_clear():
-    assert profile_v4._relationship_label(0, 0) == "Незнакомец"
-    assert profile_v4._relationship_label(1, 0) == "Знакомый"
-    assert profile_v4._relationship_label(2, 0) == "Кореш"
-    assert profile_v4._relationship_label(3, 0) == "Свой"
-    assert profile_v4._relationship_label(4, 0) == "Любимчик"
-    assert profile_v4._relationship_label(4, 1) == "Мини-хейтер"
-    assert profile_v4._relationship_label(4, 3) == "Мега-хейтер"
-    assert profile_v4._relationship_label(4, 11) == "Гига-хейтер"
+def test_dossier_relationship_labels_are_reputation_based():
+    # Familiarity is shown separately as chat level. Relationship starts neutral.
+    assert profile_v4._relationship_label(0, 0, 0) == "Нейтрально"
+    assert profile_v4._relationship_label(4, 0, 0) == "Нейтрально"
+    assert profile_v4._relationship_label(0, 0, 5) == "Нормально"
+    assert profile_v4._relationship_label(4, 0, -5) == "Слегка настороженно"
+    assert profile_v4._relationship_label(4, 0, 12) == "Кореш"
+    assert profile_v4._relationship_label(0, 0, 40) == "Свой"
+    assert profile_v4._relationship_label(0, 0, 75) == "Любимчик"
+    assert profile_v4._relationship_label(4, 0, -20) == "Настороженно"
+    assert profile_v4._relationship_label(4, 0, -40) == "Негативный знакомый"
+    assert profile_v4._relationship_label(4, 0, -80) == "Токсичный знакомый"
+    # Today's active hostility still wins over the lifetime score.
+    assert profile_v4._relationship_label(4, 1, 100) == "Мини-хейтер"
+    assert profile_v4._relationship_label(4, 3, 100) == "Мега-хейтер"
+    assert profile_v4._relationship_label(4, 11, 100) == "Гига-хейтер"
+
+
+def test_dossier_positive_affinity_is_separate_from_chat_level():
+    assert profile_v4._positive_line({}) == "0/4 — нейтрально"
+    assert profile_v4._positive_line(
+        {
+            "chat_level": 4,
+            "positive_affinity_level": 1,
+            "positive_affinity_label": "симпатия",
+            "positive_affinity_points_30d": 4,
+            "positive_streak": 2,
+        }
+    ) == "1/4 — симпатия; 4 очк. за 30 дней, серия 2"
+
+    # Familiarity/XP does not silently turn into affection.
+    assert profile_v4._positive_line(
+        {
+            "chat_level": 4,
+            "positive_affinity_level": 0,
+            "positive_affinity_label": "нейтрально",
+        }
+    ) == "0/4 — нейтрально"
 
 
 def test_level_zero_non_hater_is_gentler():
@@ -118,3 +149,22 @@ def test_dynamic_verdict_is_one_short_line():
     assert "\n" not in verdict
     assert len(verdict) <= dynamic_verdict.MAX_VERDICT_CHARS
     assert not verdict.startswith("«")
+
+
+def test_prepare_application_initializes_augments_and_registers_once(monkeypatch):
+    fake_bot_module = object()
+    calls = []
+    monkeypatch.setattr(runtime, "_find_bot_module", lambda: fake_bot_module)
+    monkeypatch.setattr(runtime, "_initialize_tables", lambda bot: calls.append(("init", bot)))
+    monkeypatch.setattr(runtime, "_augment_profile_functions", lambda bot: calls.append(("augment", bot)))
+
+    application = Application.builder().token("123456:TESTTOKEN").build()
+    runtime._PREPARED_APPLICATION_IDS.discard(id(application))
+    runtime._prepare_application(application)
+    runtime._prepare_application(application)
+
+    assert calls == [("init", fake_bot_module), ("augment", fake_bot_module)]
+    handlers = application.handlers.get(7, ())
+    assert len(handlers) == 1
+    assert isinstance(handlers[0], MessageHandler)
+    assert handlers[0].callback is runtime._observe_relationship

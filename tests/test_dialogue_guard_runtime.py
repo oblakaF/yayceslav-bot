@@ -31,3 +31,21 @@ def test_different_short_counterpunch_is_allowed():
         maxlen=8,
     )
     assert not guard._too_similar("Заело пластинку. Следующую мысль рожай.", recent)
+
+
+def test_prepare_delegates_to_guard_patches(monkeypatch):
+    fake_bot_module = object()
+    calls = []
+    monkeypatch.setattr(guard, "_find_bot_module", lambda: fake_bot_module)
+    monkeypatch.setattr(guard, "_patch_build_instruction", lambda bot: calls.append(("instruction", bot)))
+    monkeypatch.setattr(guard, "_patch_ask_gemini", lambda bot: calls.append(("gemini", bot)))
+    monkeypatch.setattr(guard, "_patch_group_rate_limit", lambda bot: calls.append(("rate", bot)))
+
+    guard._prepare()
+
+    assert calls == [
+        ("instruction", fake_bot_module),
+        ("gemini", fake_bot_module),
+        ("rate", fake_bot_module),
+    ]
+    assert not hasattr(guard, "install_runtime_hook")

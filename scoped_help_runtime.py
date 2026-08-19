@@ -7,7 +7,6 @@ commands hidden from the current user/chat.
 
 from __future__ import annotations
 
-import logging
 import os
 
 from telegram.constants import ChatType
@@ -67,21 +66,3 @@ def prepare_application_runtime(application: Application) -> None:
         group=-4,
     )
     _PREPARED_APPLICATION_IDS.add(app_id)
-
-
-def install_runtime_hook() -> None:
-    if getattr(Application, "_yayceslav_scoped_help_patch_installed", False):
-        return
-
-    original_run_polling = Application.run_polling
-
-    def run_polling_with_scoped_help(self, *args, **kwargs):
-        prepare_application_runtime(self)
-        logging.warning("Scoped /help runtime ready: group/private/owner")
-        return original_run_polling(self, *args, **kwargs)
-
-    Application.run_polling = run_polling_with_scoped_help
-    Application._yayceslav_scoped_help_patch_installed = True
-
-
-install_runtime_hook()

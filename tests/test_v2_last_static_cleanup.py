@@ -1,15 +1,12 @@
-from pathlib import Path
-
 import bot
 
 
-def test_legacy_random_and_flat_title_imports_removed():
-    source = Path("bot.py").read_text(encoding="utf-8")
-    import_start = source.index("from vocabulary import (")
-    import_end = source.index("\n)", import_start)
-    block = source[import_start:import_end]
-    assert "HARD_RANDOM_REPLIES" not in block
-    assert "JOKE_TITLES" not in block
+def test_legacy_random_and_flat_title_names_are_not_exposed_by_bot():
+    # The runtime contract is that bot.py no longer imports/exports these
+    # legacy flat pools. Check the loaded module surface rather than parsing
+    # source text and depending on import formatting.
+    assert not hasattr(bot, "HARD_RANDOM_REPLIES")
+    assert not hasattr(bot, "JOKE_TITLES")
 
 
 def test_story_state_is_pruned_by_runtime_cleanup(monkeypatch):

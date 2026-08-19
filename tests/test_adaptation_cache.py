@@ -1,4 +1,8 @@
+from telegram.constants import UpdateType
+from telegram.ext import Application
+
 import adaptation_cache
+import runtime_bootstrap
 
 
 def test_cache_reuses_value_until_invalidated():
@@ -44,3 +48,75 @@ def test_cache_expires_and_isolated_by_chat():
     assert adaptation_cache.get_or_load(
         "native", -1, loader, ttl_seconds=5, now=lambda: 6.0
     ) == 3
+
+
+def test_runtime_bootstrap_documents_critical_wrapper_order():
+    order = runtime_bootstrap.RUNTIME_LOAD_ORDER
+
+    # These are semantic ordering constraints of the current wrapper chain,
+    # not source-text assertions. If the architecture is later consolidated,
+    # this contract can be removed together with the wrappers.
+    assert order.index("monthly_social_runtime") < order.index("unified_daily_title_runtime")
+    assert order.index("unified_daily_title_runtime") < order.index("whoami_profile_v4_runtime")
+    assert order.index("whoami_profile_v3_runtime") < order.index("monthly_memory_scope_patch")
+    assert order.index("monthly_memory_scope_patch") < order.index("whoami_profile_v4_runtime")
+    assert order.index("daily_content_runtime") < order.index("daily_content_source_patch")
+
+
+def test_consolidated_patches_do_not_reenter_bootstrap():
+    order = runtime_bootstrap.RUNTIME_LOAD_ORDER
+    assert "monthly_report_timing_patch" not in order
+    assert "monthly_theme_quality_patch" not in order
+    assert "chat_member_updates_patch" not in order
+
+
+def test_chat_member_update_preparation_preserves_ptb_default():
+    kwargs = {}
+    runtime_bootstrap.ensure_chat_member_updates(kwargs)
+    assert kwargs == {}
+
+    kwargs = {"allowed_updates": None}
+    runtime_bootstrap.ensure_chat_member_updates(kwargs)
+    assert kwargs == {"allowed_updates": None}
+
+
+def test_chat_member_update_preparation_appends_once():
+    kwargs = {"allowed_updates": [UpdateType.MESSAGE]}
+    runtime_bootstrap.ensure_chat_member_updates(kwargs)
+    assert kwargs["allowed_updates"] == [UpdateType.MESSAGE, UpdateType.CHAT_MEMBER]
+
+    runtime_bootstrap.ensure_chat_member_updates(kwargs)
+    assert kwargs["allowed_updates"] == [UpdateType.MESSAGE, UpdateType.CHAT_MEMBER]
+
+
+def test_polling_runtime_preparation_installs_followup_mode_and_updates(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        runtime_bootstrap.dialogue_followup_mode_patch,
+        "install",
+        lambda: calls.append("followup") or True,
+    )
+    kwargs = {"allowed_updates": [UpdateType.MESSAGE]}
+
+    runtime_bootstrap.prepare_polling_runtime(kwargs)
+
+    assert calls == ["followup"]
+    assert kwargs["allowed_updates"] == [UpdateType.MESSAGE, UpdateType.CHAT_MEMBER]
+
+
+def test_schema_preflight_is_installed_as_central_bootstrap_hook():
+    assert getattr(Application, "_yayceslav_schema_preflight_installed", False) is True
+
+
+def test_schema_preflight_delegates_to_versioned_migrations(monkeypatch):
+    fake_bot_module = object()
+    calls = []
+    monkeypatch.setattr(runtime_bootstrap, "_find_bot_module", lambda: fake_bot_module)
+    monkeypatch.setattr(
+        runtime_bootstrap.schema_migrations,
+        "run_pending",
+        lambda bot_module: calls.append(bot_module) or (1,),
+    )
+
+    assert runtime_bootstrap.run_schema_preflight() == (1,)
+    assert calls == [fake_bot_module]

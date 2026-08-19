@@ -30,6 +30,8 @@ def test_serious_topic_suppresses_social_jokes():
         relationship_level=4,
         current_title="Лорд простыней",
         joke_archetype="душнила",
+        chat_level=4,
+        messages_month=700,
     )
     assert social_engine.build_social_instruction(
         ctx,
@@ -38,20 +40,23 @@ def test_serious_topic_suppresses_social_jokes():
     ) == ""
 
 
-def test_familiar_participant_allows_familiarity_without_forcing_title():
+def test_familiar_old_contact_and_monthly_oldtimer_get_warm_social_instruction():
     ctx = social_engine.SocialContext(
         relationship_level=3,
         current_title="Воевода споров",
+        chat_level=3,
+        messages_month=420,
     )
     instruction = social_engine.build_social_instruction(
         ctx,
         rng=random.Random(2),
     )
-    assert "хорошо знакомый участник" in instruction
-    assert "чуть фамильярнее" in instruction
+    assert "хорошо знакомый Яйцеславу участник" in instruction
+    assert "старожил" in instruction.lower()
+    assert "по-дружески фамильярен" in instruction
 
 
-def test_archetype_is_explicitly_not_a_personality_fact():
+def test_archetype_is_explicitly_not_a_personality_fact_after_level_two_unlock():
     class AlwaysZero:
         @staticmethod
         def random():
@@ -59,6 +64,8 @@ def test_archetype_is_explicitly_not_a_personality_fact():
 
     ctx = social_engine.SocialContext(
         relationship_level=2,
+        chat_level=2,
+        messages_month=200,
         joke_archetype="диванный генерал",
     )
     instruction = social_engine.build_social_instruction(
@@ -66,4 +73,20 @@ def test_archetype_is_explicitly_not_a_personality_fact():
         rng=AlwaysZero(),
     )
     assert "диванный генерал" in instruction
-    assert "не выдавай за факт о личности" in instruction
+    assert "не факт о личности" in instruction
+
+
+def test_level_zero_does_not_unlock_archetype_callback():
+    class AlwaysZero:
+        @staticmethod
+        def random():
+            return 0.0
+
+    ctx = social_engine.SocialContext(
+        relationship_level=3,
+        chat_level=0,
+        messages_month=20,
+        joke_archetype="диванный генерал",
+    )
+    instruction = social_engine.build_social_instruction(ctx, rng=AlwaysZero())
+    assert "диванный генерал" not in instruction

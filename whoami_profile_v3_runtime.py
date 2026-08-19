@@ -12,8 +12,6 @@ from telegram.ext import Application, ApplicationHandlerStop, CommandHandler, Me
 
 
 _PREPARED_APPLICATION_IDS: set[int] = set()
-_RUNTIME_HOOK_INSTALLED = False
-_ORIGINAL_RUN_POLLING = None
 
 _WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9]+", re.UNICODE)
 
@@ -251,6 +249,7 @@ async def _observe_words(update, context) -> None:
 
 
 async def _whoami_v3(update, context) -> None:
+    """Legacy renderer kept for compatibility/tests; v4 owns /whoami runtime."""
     del context
     message = getattr(update, "effective_message", None)
     chat = getattr(update, "effective_chat", None)
@@ -308,6 +307,7 @@ async def _whoami_v3(update, context) -> None:
 
 
 def _prepare_application(application: Application) -> None:
+    """Initialize v3 data collectors only; v4 is the sole /whoami renderer."""
     app_id = id(application)
     if app_id in _PREPARED_APPLICATION_IDS:
         return
@@ -316,26 +316,11 @@ def _prepare_application(application: Application) -> None:
         return
 
     _initialize_tables(bot_module)
-    application.add_handler(CommandHandler("whoami", _whoami_v3), group=-20)
+    # Do NOT register legacy _whoami_v3. whoami_profile_v4_runtime owns the
+    # command at group=-30. v3 remains the stable data/helper layer used by
+    # monthly memory/theme patches and the text word observer below.
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _observe_words),
         group=6,
     )
     _PREPARED_APPLICATION_IDS.add(app_id)
-
-
-def install_runtime_hook() -> None:
-    global _RUNTIME_HOOK_INSTALLED, _ORIGINAL_RUN_POLLING
-    if _RUNTIME_HOOK_INSTALLED:
-        return
-    _ORIGINAL_RUN_POLLING = Application.run_polling
-
-    def run_polling_with_profile_v3(self, *args, **kwargs):
-        _prepare_application(self)
-        return _ORIGINAL_RUN_POLLING(self, *args, **kwargs)
-
-    Application.run_polling = run_polling_with_profile_v3
-    _RUNTIME_HOOK_INSTALLED = True
-
-
-install_runtime_hook()

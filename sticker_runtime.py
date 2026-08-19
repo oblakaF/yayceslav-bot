@@ -10,11 +10,10 @@ import json
 import logging
 import os
 import random
-import sqlite3
+import sys
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from telegram import (
     BotCommandScopeAllChatAdministrators,
@@ -35,14 +34,12 @@ from telegram.ext import (
 )
 
 import command_menu
+import runtime_config
 import sticker_engine
 import sticker_interaction
 
 
-DATA_DIR = Path("/app/data") if Path("/app/data").exists() else Path("data")
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-STICKER_ID_CACHE_PATH = DATA_DIR / "yayceslav_sticker_ids.json"
-STATS_DB_PATH = DATA_DIR / "yayceslav_stats.db"
+STICKER_ID_CACHE_PATH = runtime_config.STICKER_ID_CACHE_PATH
 
 # Background stickers are deliberately much rarer than emoji reactions.
 STICKER_CHAT_COOLDOWN_SECONDS = 10 * 60.0
@@ -68,15 +65,30 @@ def _owner_id() -> int:
     return int(raw) if raw.isdigit() else 0
 
 
+def _shared_db_connection_factory():
+    """Return the already-loaded bot DB factory without importing bot twice."""
+    for module_name in ("__main__", "bot"):
+        module = sys.modules.get(module_name)
+        factory = getattr(module, "get_db_connection", None) if module else None
+        if callable(factory):
+            return factory
+    return None
+
+
 def _known_group_chat_ids() -> tuple[int, ...]:
-    if not STATS_DB_PATH.exists():
+    factory = _shared_db_connection_factory()
+    if factory is None:
+        # Startup menu publishing is best-effort. The owner-group listener will
+        # install the scope lazily later, so never open a separate raw SQLite
+        # connection just to discover groups.
+        logging.info("Shared DB connection factory is not ready for owner menu discovery")
         return ()
     try:
-        with sqlite3.connect(STATS_DB_PATH) as connection:
+        with factory() as connection:
             rows = connection.execute(
                 "SELECT chat_id FROM chats WHERE chat_type IN ('group', 'supergroup')"
             ).fetchall()
-    except (sqlite3.Error, OSError) as error:
+    except Exception as error:
         logging.warning("Could not read known group chats for owner menu: %s", error)
         return ()
     return tuple(int(row[0]) for row in rows)
@@ -564,28 +576,3 @@ def prepare_application_runtime(application: Application) -> None:
 
         application.post_init = combined_post_init
         _MENU_WRAPPED_APPLICATION_IDS.add(app_id)
-
-
-def install_runtime_hooks() -> None:
-    if getattr(Application, "_yayceslav_sticker_patch_installed", False):
-        return
-
-    original_run_polling = Application.run_polling
-
-    def run_polling_with_yayceslav_runtime(self, *args, **kwargs):
-        prepare_application_runtime(self)
-        logging.warning(
-            "Yayceslav stickers runtime ready: pack=%s; own-pack=50%% semantic sticker/text; "
-            "foreign packs ignored; question<=5%% semantic-only; background<=2%%; "
-            "background cap=%s/hour",
-            len(sticker_engine.STICKER_ORDER),
-            STICKER_MAX_PER_WINDOW,
-        )
-        return original_run_polling(self, *args, **kwargs)
-
-    Application.run_polling = run_polling_with_yayceslav_runtime
-    # Class attribute is safe; the crash was from setting new INSTANCE attrs.
-    Application._yayceslav_sticker_patch_installed = True
-
-
-install_runtime_hooks()

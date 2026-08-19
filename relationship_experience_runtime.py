@@ -10,8 +10,6 @@ from telegram.ext import Application, MessageHandler, filters
 
 
 _PREPARED_APPLICATION_IDS: set[int] = set()
-_RUNTIME_HOOK_INSTALLED = False
-_ORIGINAL_RUN_POLLING = None
 
 _APOLOGY_RE = re.compile(
     r"(?:^|\b)(?:извини(?:сь|те)?|прости(?:те)?|сорян|сори|виноват|мир\??)(?:\b|$)",
@@ -428,20 +426,3 @@ def _prepare_application(application: Application) -> None:
         group=7,
     )
     _PREPARED_APPLICATION_IDS.add(app_id)
-
-
-def install_runtime_hook() -> None:
-    global _RUNTIME_HOOK_INSTALLED, _ORIGINAL_RUN_POLLING
-    if _RUNTIME_HOOK_INSTALLED:
-        return
-    _ORIGINAL_RUN_POLLING = Application.run_polling
-
-    def run_polling_with_relationship_experience(self, *args, **kwargs):
-        _prepare_application(self)
-        return _ORIGINAL_RUN_POLLING(self, *args, **kwargs)
-
-    Application.run_polling = run_polling_with_relationship_experience
-    _RUNTIME_HOOK_INSTALLED = True
-
-
-install_runtime_hook()
