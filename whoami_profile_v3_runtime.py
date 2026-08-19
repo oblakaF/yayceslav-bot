@@ -251,6 +251,7 @@ async def _observe_words(update, context) -> None:
 
 
 async def _whoami_v3(update, context) -> None:
+    """Legacy renderer kept for compatibility/tests; v4 owns /whoami runtime."""
     del context
     message = getattr(update, "effective_message", None)
     chat = getattr(update, "effective_chat", None)
@@ -308,6 +309,7 @@ async def _whoami_v3(update, context) -> None:
 
 
 def _prepare_application(application: Application) -> None:
+    """Initialize v3 data collectors only; v4 is the sole /whoami renderer."""
     app_id = id(application)
     if app_id in _PREPARED_APPLICATION_IDS:
         return
@@ -316,7 +318,9 @@ def _prepare_application(application: Application) -> None:
         return
 
     _initialize_tables(bot_module)
-    application.add_handler(CommandHandler("whoami", _whoami_v3), group=-20)
+    # Do NOT register legacy _whoami_v3. whoami_profile_v4_runtime owns the
+    # command at group=-30. v3 remains the stable data/helper layer used by
+    # monthly memory/theme patches and the text word observer below.
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _observe_words),
         group=6,
