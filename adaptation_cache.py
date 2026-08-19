@@ -24,8 +24,8 @@ import unified_daily_title_runtime  # noqa: F401
 import relationship_experience_runtime  # noqa: F401
 import whoami_profile_v3_runtime  # noqa: F401
 import monthly_memory_scope_patch  # noqa: F401
+import monthly_theme_quality_patch  # noqa: F401
 import whoami_profile_v4_runtime  # noqa: F401
-import whoami_verdict_style_patch  # noqa: F401
 
 
 _LOCK = threading.Lock()
