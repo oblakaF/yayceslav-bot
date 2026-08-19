@@ -39,22 +39,33 @@ def _friendliness_line(
     return f"{label} — {active_insults} наезда сегодня"
 
 
-def _relationship_label(chat_level: int, active_hostility: int) -> str:
+def _relationship_label(
+    chat_level: int,
+    active_hostility: int,
+    reputation_score: int = 0,
+) -> str:
+    del chat_level  # familiarity/XP is shown separately; relationship follows reputation.
     if active_hostility >= 11:
         return "Гига-хейтер"
     if active_hostility >= 3:
         return "Мега-хейтер"
     if active_hostility >= 1:
         return "Мини-хейтер"
-    if chat_level >= 4:
+
+    score = max(-100, min(100, int(reputation_score or 0)))
+    if score <= -70:
+        return "Токсичный знакомый"
+    if score <= -35:
+        return "Негативный знакомый"
+    if score <= -10:
+        return "Настороженно"
+    if score >= 70:
         return "Любимчик"
-    if chat_level >= 3:
+    if score >= 35:
         return "Свой"
-    if chat_level >= 2:
+    if score >= 10:
         return "Кореш"
-    if chat_level >= 1:
-        return "Знакомый"
-    return "Незнакомец"
+    return "Нейтрально"
 
 
 def _positive_line(profile) -> str:
@@ -131,8 +142,9 @@ async def _whoami_v4(update, context) -> None:
     total_hostility = int(profile.get("hostility_total_today", active_hostility) or 0)
     apologies = int(profile.get("apologies_today", 0) or 0)
     penance_pending = bool(profile.get("penance_pending", False))
+    reputation_score = int(profile.get("reputation_score", 0) or 0)
 
-    relationship = _relationship_label(chat_level, active_hostility)
+    relationship = _relationship_label(chat_level, active_hostility, reputation_score)
     friendliness = _friendliness_line(active_hostility, total_hostility, apologies, penance_pending)
     positive = _positive_line(profile)
     reputation = _reputation_line(profile)
