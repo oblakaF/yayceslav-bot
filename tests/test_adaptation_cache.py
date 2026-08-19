@@ -1,3 +1,5 @@
+from telegram.ext import Application
+
 import adaptation_cache
 import runtime_bootstrap
 
@@ -58,3 +60,21 @@ def test_runtime_bootstrap_documents_critical_wrapper_order():
     assert order.index("whoami_profile_v3_runtime") < order.index("monthly_memory_scope_patch")
     assert order.index("monthly_memory_scope_patch") < order.index("whoami_profile_v4_runtime")
     assert order.index("daily_content_runtime") < order.index("daily_content_source_patch")
+
+
+def test_schema_preflight_is_installed_as_central_bootstrap_hook():
+    assert getattr(Application, "_yayceslav_schema_preflight_installed", False) is True
+
+
+def test_schema_preflight_delegates_to_versioned_migrations(monkeypatch):
+    fake_bot_module = object()
+    calls = []
+    monkeypatch.setattr(runtime_bootstrap, "_find_bot_module", lambda: fake_bot_module)
+    monkeypatch.setattr(
+        runtime_bootstrap.schema_migrations,
+        "run_pending",
+        lambda bot_module: calls.append(bot_module) or (1,),
+    )
+
+    assert runtime_bootstrap.run_schema_preflight() == (1,)
+    assert calls == [fake_bot_module]
