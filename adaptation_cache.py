@@ -25,6 +25,7 @@ import relationship_experience_runtime  # noqa: F401
 import whoami_profile_v3_runtime  # noqa: F401
 import monthly_memory_scope_patch  # noqa: F401
 import whoami_profile_v4_runtime  # noqa: F401
+import whoami_verdict_style_patch  # noqa: F401
 
 
 _LOCK = threading.Lock()
