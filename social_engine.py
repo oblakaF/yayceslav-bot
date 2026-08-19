@@ -15,7 +15,7 @@ class SocialContext:
     current_title: str | None = None
     joke_archetype: str | None = None
     total_messages: int = 0
-    messages_30d: int = 0
+    messages_month: int = 0
     chat_level: int = 0
     hostility_today: int = 0
     friendliness_label: str = "Не хейтер"
@@ -27,16 +27,14 @@ class SocialContext:
     callback_terms: tuple[str, ...] = ()
 
 
-def chat_level_from_messages(messages_30d: int) -> int:
-    """Monthly chat XP: 0..4 from the last ~30 days of messages."""
-    value = max(0, int(messages_30d or 0))
-    if value >= 1000:
-        return 4
-    if value >= 500:
+def chat_level_from_messages(messages_month: int) -> int:
+    """Base month XP. Level 4 is assigned separately to the unique month leader."""
+    value = max(0, int(messages_month or 0))
+    if value >= 350:
         return 3
-    if value >= 300:
+    if value >= 150:
         return 2
-    if value >= 100:
+    if value >= 40:
         return 1
     return 0
 
@@ -66,7 +64,6 @@ def relationship_level_from_profile(profile: Mapping[str, Any] | None) -> int:
     if not profile:
         return 0
 
-    # This is familiarity WITH Yaiceslav, not generic chat activity.
     replies = max(0, int(profile.get("replies_to_bot", 0) or 0))
     insults = max(0, int(profile.get("insults_to_bot", 0) or 0))
     score = replies + min(insults, 20)
@@ -78,8 +75,6 @@ def relationship_level_from_profile(profile: Mapping[str, Any] | None) -> int:
         return 2
     if score >= 1:
         return 1
-
-    # Compatibility for old/lightweight test profiles.
     return max(0, int(profile.get("relationship_level", 0) or 0))
 
 
@@ -102,17 +97,17 @@ def relationship_status_label(chat_level: int, hostility_today: int) -> str:
 
 
 def unlocked_social_features(chat_level: int) -> tuple[str, ...]:
+    """Real behavior unlocks. Useful bot commands are never paywalled by XP."""
     level = max(0, min(int(chat_level), 4))
-    unlocked = ["базовый характер"]
-    if level >= 1:
-        unlocked.extend(("редкие callback-шутки", "обращения по титулу"))
-    if level >= 2:
-        unlocked.extend(("внутренние мемы", "тёплая фамильярность"))
-    if level >= 3:
-        unlocked.extend(("жёсткий дружеский стёб", "старые локальные callbacks"))
-    if level >= 4:
-        unlocked.append("царский social-mode")
-    return tuple(unlocked)
+    if level == 0:
+        return ("базовый Яйцеслав",)
+    if level == 1:
+        return ("тёплое узнавание", "редкие обращения по титулу")
+    if level == 2:
+        return ("персональные callbacks", "внутренние мемы", "тёплая фамильярность")
+    if level == 3:
+        return ("старые callbacks", "жёсткий дружеский стёб", "локальные мемы")
+    return ("царский social-mode", "максимум внутренних мемов", "максимум дружеской фамильярности")
 
 
 def from_profile(profile: Mapping[str, Any] | None) -> SocialContext:
@@ -120,11 +115,11 @@ def from_profile(profile: Mapping[str, Any] | None) -> SocialContext:
         return SocialContext()
 
     total_messages = max(0, int(profile.get("total_messages", 0) or 0))
-    messages_30d = max(
+    messages_month = max(
         0,
-        int(profile.get("messages_30d", total_messages) or 0),
+        int(profile.get("messages_month", profile.get("messages_30d", total_messages)) or 0),
     )
-    chat_level = int(profile.get("chat_level", chat_level_from_messages(messages_30d)) or 0)
+    chat_level = int(profile.get("chat_level", chat_level_from_messages(messages_month)) or 0)
     hostility = max(0, int(profile.get("hostility_today", 0) or 0))
     replies = max(0, int(profile.get("replies_to_bot", 0) or 0))
     insults = max(0, int(profile.get("insults_to_bot", 0) or 0))
@@ -134,7 +129,7 @@ def from_profile(profile: Mapping[str, Any] | None) -> SocialContext:
         current_title=(str(profile["current_title"]) if profile.get("current_title") else None),
         joke_archetype=(str(profile["joke_archetype"]) if profile.get("joke_archetype") else None),
         total_messages=total_messages,
-        messages_30d=messages_30d,
+        messages_month=messages_month,
         chat_level=chat_level,
         hostility_today=hostility,
         friendliness_label=str(profile.get("friendliness_label") or hostility_label(hostility)),
@@ -172,7 +167,6 @@ def _reserve_callback(ctx: SocialContext, term: str) -> None:
         return
     try:
         import member_profile_runtime
-
         member_profile_runtime.reserve_callback_term(
             ctx.memory_chat_id,
             ctx.user_id,
@@ -183,8 +177,7 @@ def _reserve_callback(ctx: SocialContext, term: str) -> None:
 
 
 def _callback_chance(ctx: SocialContext) -> float:
-    # Level 0 deliberately gets no automatic personal callback memory.
-    return (0.0, 0.07, 0.13, 0.19, 0.25)[min(max(ctx.chat_level, 0), 4)]
+    return (0.0, 0.04, 0.12, 0.20, 0.28)[min(max(ctx.chat_level, 0), 4)]
 
 
 def build_social_instruction(
@@ -199,68 +192,67 @@ def build_social_instruction(
     lines = [
         "Социальный контекст участника: " + familiarity_label(ctx.relationship_level) + ".",
         (
-            f"Опыт в чате: {ctx.chat_level}/4 — {chat_level_label(ctx.chat_level)}; "
-            f"за последние 30 дней около {ctx.messages_30d} сообщений."
+            f"Опыт текущего календарного месяца: {ctx.chat_level}/4 — {chat_level_label(ctx.chat_level)}; "
+            f"с 1-го числа около {ctx.messages_month} сообщений."
         ),
         f"Текущее отношение к Яйцеславу сегодня: {ctx.friendliness_label}.",
     ]
 
-    # Experience changes the bot's attitude. It is not just a decorative number.
-    if ctx.chat_level == 0:
+    # Hostility wins over experience. A low-level stranger who starts insulting
+    # Yaiceslav does NOT receive the gentle-newcomer treatment.
+    if ctx.hostility_today > 0 and ctx.chat_level <= 2:
         lines.append(
-            "Это новичок/редкий участник. Не еби его слишком жёстко: меньше личных подколов, никаких старых внутренних мемов без явного контекста."
+            "ВАЖНО: это ещё не свой человек, но уже полез на Яйцеслава. В любой несерьёзной прямой беседе отвечай зло, раздражённо и заметно жёстче обычного; допускается грубый мат и беспощадный стёб. Тепло выключено до нормального извинения. Периодически можно коротко требовать извиниться, но не повторяй одну фразу как бот-заготовку."
         )
-    elif ctx.friendliness_label == "Не хейтер":
-        if ctx.chat_level >= 3:
-            lines.append(
-                "Это свой старожил и не хейтер: будь заметно теплее, по-дружески фамильярен, можно иногда обращаться как к своему и любя подкалывать."
-            )
-        else:
-            lines.append(
-                "Он уже прижился и не хейтер: Яйцеслав к нему расположен, отвечает добрее и теплее, иногда почти ласково, но без приторности."
-            )
-    elif ctx.friendliness_label == "Мини-хейтер":
+    elif ctx.friendliness_label == "Гига-хейтер":
         lines.append(
-            "Сегодня он уже один-два раза наехал на Яйцеслава. Отвечай с лёгким ворчанием и недоверием, но не раздувай войну."
+            "Сегодня это ГИГА-ХЕЙТЕР: до нормального извинения Яйцеслав раздражён на него в каждой несерьёзной прямой беседе. Отвечай жёстко и периодически требуй извиниться, но меняй формулировки."
         )
     elif ctx.friendliness_label == "Мега-хейтер":
         lines.append(
-            "Сегодня он системно хейтит Яйцеслава. В несерьёзном разговоре держи раздражённую дистанцию и отвечай колче; тепло временно убери."
+            "Сегодня он системно хейтит Яйцеслава. В несерьёзном разговоре держи раздражённую дистанцию, отвечай колче и не изображай дружелюбие до примирения."
+        )
+    elif ctx.friendliness_label == "Мини-хейтер":
+        lines.append(
+            "Сегодня он уже наехал на Яйцеслава. Если это старый свой — ворчи и подкалывай; если продолжит, быстро повышай жёсткость."
+        )
+    elif ctx.chat_level == 0:
+        lines.append(
+            "Это новичок/редкий участник и он не хейтер. Не еби его слишком жёстко: меньше личных подколов и никаких старых внутренних мемов."
+        )
+    elif ctx.chat_level >= 4:
+        lines.append(
+            "Это Царь чата и не хейтер: максимально свой человек. Можно тепло, фамильярно, с внутренними мемами и дружеским стёбом; не превращай это в лизоблюдство."
+        )
+    elif ctx.chat_level >= 3:
+        lines.append(
+            "Это старожил и не хейтер: будь заметно теплее и по-дружески фамильярен, можно любя подкалывать и вспоминать локальные мемы."
         )
     else:
         lines.append(
-            "Сегодня это ГИГА-ХЕЙТЕР: до нормального извинения Яйцеслав раздражён на него в КАЖДОЙ несерьёзной прямой беседе. Не притворяйся добрым. Периодически уместно коротко потребовать извиниться или сказать, что сначала пусть извинится. Не повторяй одну и ту же формулировку."
+            "Он уже прижился и не хейтер: Яйцеслав к нему расположен, отвечает добрее и теплее, иногда почти ласково, но без приторности."
         )
 
-    if ctx.chat_level >= 1 and ctx.current_title and rng.random() < (0.08 + 0.03 * ctx.chat_level):
+    if ctx.chat_level >= 1 and ctx.current_title and rng.random() < (0.06 + 0.03 * ctx.chat_level):
         lines.append(
-            "Редкий допустимый callback на его шуточный титул: "
-            + repr(ctx.current_title)
-            + ". Используй только если подходит текущей реплике."
+            "Редкий callback на его шуточный титул: " + repr(ctx.current_title) + ". Только если к месту."
         )
 
-    if ctx.chat_level >= 2 and ctx.joke_archetype and rng.random() < (0.05 + 0.02 * ctx.chat_level):
+    if ctx.chat_level >= 2 and ctx.joke_archetype and rng.random() < (0.04 + 0.02 * ctx.chat_level):
         lines.append(
-            "Админ чата задал ему шуточный архетип: "
-            + repr(ctx.joke_archetype)
-            + ". Это шутливый ярлык, не факт о личности."
+            "Админ задал ему шуточный архетип: " + repr(ctx.joke_archetype) + ". Это ярлык для шуток, не факт о личности."
         )
 
     if ctx.self_reported_facts and rng.random() < min(0.20, 0.08 + 0.025 * ctx.chat_level):
         fact = rng.choice(ctx.self_reported_facts)
         lines.append(
-            "Пользователь сам раньше попросил запомнить факт о себе: "
-            + repr(fact)
-            + ". Можно редко и естественно сослаться на него, если к месту."
+            "Пользователь сам раньше попросил запомнить факт о себе: " + repr(fact) + ". Можно редко сослаться на него, если к месту."
         )
 
     if ctx.callback_terms and rng.random() < _callback_chance(ctx):
         term = rng.choice(ctx.callback_terms)
         lines.append(
-            "Этот же пользователь недавно сам упоминал тему/слово: "
-            + repr(term)
-            + ". Можно один раз естественно припомнить это в шутке. "
-            "Это НЕ доказательство постоянного факта или предпочтения."
+            "Этот же пользователь недавно сам упоминал тему/слово: " + repr(term) + ". Можно один раз естественно припомнить это в шутке. Это НЕ доказательство постоянного факта или предпочтения."
         )
         _reserve_callback(ctx, term)
 
