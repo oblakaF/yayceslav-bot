@@ -21,7 +21,7 @@ import schema_migrations
 # here; they touch bot.py functions later when the application is built.
 import primitive_compact_guard  # noqa: F401
 import dialogue_guard_runtime
-import member_profile_runtime  # noqa: F401
+import member_profile_runtime
 import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch
 
@@ -107,12 +107,16 @@ def prepare_polling_runtime(kwargs: dict) -> None:
 
 
 def prepare_application_runtime(application: Application) -> None:
-    """Prepare application-owned features that no longer need polling wrappers."""
+    """Prepare application-owned features from one explicit startup path."""
     # Order is a runtime contract: monthly captures the unified scheduler and
     # appends its report after the daily-title run.
     unified_daily_title_runtime._prepare()
     monthly_social_runtime._prepare_application(application)
+    # Relationship must wrap the base profile before member-profile memory
+    # augmentation wraps that enriched profile. Safety/monthly-memory patches
+    # are already installed by the import chain above before this runs.
     relationship_experience_runtime._prepare_application(application)
+    member_profile_runtime._prepare_application(application)
     # v3 must prepare after monthly_memory_scope_patch has installed its
     # calendar-month storage functions; import order above preserves that.
     whoami_profile_v3_runtime._prepare_application(application)
