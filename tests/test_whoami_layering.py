@@ -6,6 +6,8 @@ import member_profile_runtime as member_profile
 import monthly_social_runtime as monthly
 import relationship_experience_runtime as relationship
 import runtime_bootstrap
+import scoped_help_runtime
+import sticker_post_runtime
 import unified_daily_title_runtime as unified_titles
 import whoami_profile_v3_runtime as v3
 import whoami_profile_v4_runtime as v4
@@ -92,6 +94,8 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     assert not hasattr(v4, "install_runtime_hook")
     assert not hasattr(dialogue_guard, "install_runtime_hook")
     assert not hasattr(daily_content, "install_runtime_hook")
+    assert not hasattr(scoped_help_runtime, "install_runtime_hook")
+    assert not hasattr(sticker_post_runtime, "install_runtime_hook")
 
 
 def test_bootstrap_claims_legacy_sticker_menu_polling_hooks():
