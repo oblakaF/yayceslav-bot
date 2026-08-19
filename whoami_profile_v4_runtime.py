@@ -67,6 +67,12 @@ def _positive_line(profile) -> str:
     return f"{level}/4 — {label}; {points} очк. за 30 дней, серия {streak}"
 
 
+def _reputation_line(profile) -> str:
+    score = max(-100, min(100, int(profile.get("reputation_score", 0) or 0)))
+    label = str(profile.get("reputation_label") or "нейтрально")
+    return f"{score:+d}/100 — {label}"
+
+
 def _next_level_progress(messages_month: int, chat_level: int, is_king: bool) -> str | None:
     if is_king:
         return None
@@ -129,6 +135,7 @@ async def _whoami_v4(update, context) -> None:
     relationship = _relationship_label(chat_level, active_hostility)
     friendliness = _friendliness_line(active_hostility, total_hostility, apologies, penance_pending)
     positive = _positive_line(profile)
+    reputation = _reputation_line(profile)
 
     try:
         favorite_word, favorite_count = await asyncio.to_thread(
@@ -151,6 +158,7 @@ async def _whoami_v4(update, context) -> None:
     lines = [
         f"🥚 ДОСЬЕ ЯЙЦЕСЛАВА НА {name}",
         f"🤝 Яйцеславу: {relationship}",
+        f"⭐ Репутация: {reputation}",
         f"💚 Симпатия: {positive}",
         f"🌡 Отношение сегодня: {friendliness}",
         f"🏅 Титул: {title}",
@@ -204,6 +212,7 @@ async def _whoami_v4(update, context) -> None:
         logging.exception("/whoami Telegram send failed: %s", error)
         await message.reply_text(
             f"🥚 ДОСЬЕ ЯЙЦЕСЛАВА НА {name}\n"
+            f"⭐ Репутация: {reputation}\n"
             f"🏅 Титул: {title}\n"
             f"💬 Сообщений: {total} всего / {messages_month} в этом месяце\n"
             f"🏚 Уровень: {chat_level}/4 — {level_label}"
