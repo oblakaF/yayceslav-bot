@@ -1,3 +1,4 @@
+from telegram.constants import UpdateType
 from telegram.ext import Application
 
 import adaptation_cache
@@ -62,10 +63,30 @@ def test_runtime_bootstrap_documents_critical_wrapper_order():
     assert order.index("daily_content_runtime") < order.index("daily_content_source_patch")
 
 
-def test_consolidated_monthly_patches_do_not_reenter_bootstrap():
+def test_consolidated_patches_do_not_reenter_bootstrap():
     order = runtime_bootstrap.RUNTIME_LOAD_ORDER
     assert "monthly_report_timing_patch" not in order
     assert "monthly_theme_quality_patch" not in order
+    assert "chat_member_updates_patch" not in order
+
+
+def test_chat_member_update_preparation_preserves_ptb_default():
+    kwargs = {}
+    runtime_bootstrap.ensure_chat_member_updates(kwargs)
+    assert kwargs == {}
+
+    kwargs = {"allowed_updates": None}
+    runtime_bootstrap.ensure_chat_member_updates(kwargs)
+    assert kwargs == {"allowed_updates": None}
+
+
+def test_chat_member_update_preparation_appends_once():
+    kwargs = {"allowed_updates": [UpdateType.MESSAGE]}
+    runtime_bootstrap.ensure_chat_member_updates(kwargs)
+    assert kwargs["allowed_updates"] == [UpdateType.MESSAGE, UpdateType.CHAT_MEMBER]
+
+    runtime_bootstrap.ensure_chat_member_updates(kwargs)
+    assert kwargs["allowed_updates"] == [UpdateType.MESSAGE, UpdateType.CHAT_MEMBER]
 
 
 def test_schema_preflight_is_installed_as_central_bootstrap_hook():
