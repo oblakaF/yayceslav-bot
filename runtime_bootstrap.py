@@ -32,8 +32,8 @@ import monthly_social_runtime  # noqa: F401
 import unified_daily_title_runtime  # noqa: F401
 import relationship_experience_runtime  # noqa: F401
 import whoami_profile_v3_runtime  # noqa: F401
+# Monthly memory scope now also owns theme quality/ranking directly.
 import monthly_memory_scope_patch  # noqa: F401
-import monthly_theme_quality_patch  # noqa: F401
 import whoami_profile_v4_runtime  # noqa: F401
 
 # External daily content wraps the already assembled title/month scheduler.
@@ -55,7 +55,6 @@ RUNTIME_LOAD_ORDER = (
     "relationship_experience_runtime",
     "whoami_profile_v3_runtime",
     "monthly_memory_scope_patch",
-    "monthly_theme_quality_patch",
     "whoami_profile_v4_runtime",
     "daily_content_runtime",
     "daily_content_source_patch",
