@@ -11,6 +11,7 @@ from typing import Any
 from telegram.constants import ChatType
 from telegram.ext import Application, MessageHandler, filters
 
+import member_repository
 import relationship_experience_runtime as relationship_runtime
 
 
@@ -214,16 +215,7 @@ def _mark_report_sent_sync(bot_module, chat_id: int, month: str) -> None:
 
 
 def _known_chat_ids_sync(bot_module) -> list[int]:
-    with bot_module.get_db_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT DISTINCT chat_id
-            FROM chat_membership_registry
-            WHERE is_active = 1 AND is_bot = 0
-            ORDER BY chat_id
-            """
-        ).fetchall()
-    return [int(row[0]) for row in rows]
+    return member_repository.known_active_group_chat_ids(bot_module)
 
 
 def _monthly_stats_sync(bot_module, chat_id: int, current_date: date_type) -> dict[str, Any]:
