@@ -1,0 +1,97 @@
+from datetime import datetime, timedelta, timezone
+
+import bot
+import member_profile_runtime as memory
+
+
+MSK = timezone(timedelta(hours=3))
+
+
+def _fresh_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "member-memory.db"
+    monkeypatch.setattr(bot, "STATS_DB_PATH", db_path)
+    bot.initialize_stats_database()
+    memory._initialize_tables(bot)
+    return db_path
+
+
+def test_personal_callback_memory_rotates_and_favorite_word_is_per_user(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    memory._upsert_member_sync(bot, -1001, 101, "Серёга", "serega")
+
+    memory._record_member_terms_sync(bot, -1001, 101, "steam")
+    memory._record_member_terms_sync(bot, -1001, 101, "steam")
+
+    profile = memory._load_member_memory_sync(bot, -1001, 101)
+    assert "steam" in profile["callback_terms"]
+    assert profile["favorite_word"] == "steam"
+    assert profile["favorite_word_count"] == 2
+
+    memory.reserve_callback_term(-1001, 101, "steam")
+    rotated = memory._load_member_memory_sync(bot, -1001, 101)
+    assert "steam" not in rotated["callback_terms"]
+
+
+def test_sensitive_topics_are_not_auto_stored(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    memory._upsert_member_sync(bot, -1002, 102, "Вася", "vasya")
+    memory._record_member_terms_sync(bot, -1002, 102, "зарплата банк кредит")
+    profile = memory._load_member_memory_sync(bot, -1002, 102)
+    assert not profile["callback_terms"]
+
+
+def test_silent_candidates_include_week_silent_and_never_spoke(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        bot,
+        "current_msk_datetime",
+        lambda: datetime(2026, 8, 19, 19, 0, tzinfo=MSK),
+    )
+
+    chat_id = -2001
+    memory._upsert_member_sync(bot, chat_id, 201, "Активный", "active")
+    memory._upsert_member_sync(bot, chat_id, 202, "Молчун", "silent")
+    memory._upsert_member_sync(bot, chat_id, 203, "Никогда", "never")
+
+    with bot.get_db_connection() as connection:
+        connection.execute(
+            """
+            UPDATE chat_member_profiles
+            SET total_messages = 20
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (chat_id, 202),
+        )
+        connection.execute(
+            """
+            INSERT INTO chat_activity_daily (chat_id, user_id, date, messages)
+            VALUES (?, ?, ?, 3)
+            """,
+            (chat_id, 201, "2026-08-19"),
+        )
+        connection.commit()
+
+    candidates = memory._silent_candidate_rows_sync(
+        bot, chat_id, "2026-08-19"
+    )
+    by_id = {item["user_id"]: item for item in candidates}
+
+    assert 201 not in by_id
+    assert by_id[202]["total_messages"] == 20
+    assert by_id[203]["total_messages"] == 0
+
+
+def test_silent_title_is_one_per_chat_per_day(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    chat_id = -3001
+    memory._upsert_member_sync(bot, chat_id, 301, "Молчун", "silent")
+
+    assert memory._save_silent_assignment_sync(
+        bot, chat_id, "2026-08-19", 301, "Куколд-наблюдатель", "silent_week"
+    )
+    assert not memory._save_silent_assignment_sync(
+        bot, chat_id, "2026-08-19", 301, "NPC в режиме AFK", "silent_week"
+    )
+
+    saved = memory._silent_assignment_sync(bot, chat_id, "2026-08-19")
+    assert saved["title"] == "Куколд-наблюдатель"
