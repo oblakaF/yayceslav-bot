@@ -10,6 +10,8 @@ from typing import Any, Callable
 import primitive_compact_guard  # noqa: F401
 import dialogue_guard_runtime  # noqa: F401
 import member_profile_runtime  # noqa: F401
+import member_memory_safety_patch  # noqa: F401
+import dialogue_followup_mode_patch  # noqa: F401
 
 
 _LOCK = threading.Lock()
