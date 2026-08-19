@@ -5,9 +5,11 @@ import time
 from typing import Any, Callable
 
 # Loaded early by bot.py, before thinking_engine installs its Gemini router.
-# This lets the primitive compact guard sit underneath the router and apply
-# equally to the primary and fallback chat models.
+# Runtime guards only patch Application.run_polling here; they touch bot.py
+# functions later, when the application is fully built and run_polling starts.
 import primitive_compact_guard  # noqa: F401
+import dialogue_guard_runtime  # noqa: F401
+import member_profile_runtime  # noqa: F401
 
 
 _LOCK = threading.Lock()
