@@ -12,8 +12,6 @@ from telegram.ext import Application, ApplicationHandlerStop, CommandHandler, Me
 
 
 _PREPARED_APPLICATION_IDS: set[int] = set()
-_RUNTIME_HOOK_INSTALLED = False
-_ORIGINAL_RUN_POLLING = None
 
 _WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9]+", re.UNICODE)
 
@@ -326,20 +324,3 @@ def _prepare_application(application: Application) -> None:
         group=6,
     )
     _PREPARED_APPLICATION_IDS.add(app_id)
-
-
-def install_runtime_hook() -> None:
-    global _RUNTIME_HOOK_INSTALLED, _ORIGINAL_RUN_POLLING
-    if _RUNTIME_HOOK_INSTALLED:
-        return
-    _ORIGINAL_RUN_POLLING = Application.run_polling
-
-    def run_polling_with_profile_v3(self, *args, **kwargs):
-        _prepare_application(self)
-        return _ORIGINAL_RUN_POLLING(self, *args, **kwargs)
-
-    Application.run_polling = run_polling_with_profile_v3
-    _RUNTIME_HOOK_INSTALLED = True
-
-
-install_runtime_hook()
