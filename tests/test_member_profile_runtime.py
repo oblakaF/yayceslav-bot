@@ -17,6 +17,20 @@ def _fresh_db(tmp_path, monkeypatch):
     return db_path
 
 
+def test_monthly_runtime_creates_only_live_word_count_table(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    with bot.get_db_connection() as connection:
+        names = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+
+    assert "member_word_counts_monthly" in names
+    assert "member_word_counts" not in names
+
+
 def test_personal_callback_memory_rotates_per_user(tmp_path, monkeypatch):
     _fresh_db(tmp_path, monkeypatch)
     memory._upsert_member_sync(bot, -1001, 101, "Серёга", "serega")
