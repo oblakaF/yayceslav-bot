@@ -15,6 +15,12 @@ def test_user_success_support_and_result_are_real_positive_events():
     assert positive.detect_event("меня взяли на работу") == "achievement"
     assert positive.detect_event("пожелай мне удачи, завтра экзамен") == "support"
     assert positive.detect_event("зацени, вот мой проект") == "show_result"
+    assert positive.detect_event("оцени мой код") == "show_result"
+
+
+def test_generic_evaluation_request_is_not_fake_self_praise():
+    assert positive.detect_event("оцени курс доллара") is None
+    assert positive.detect_event("оцени этот ресторан") is None
 
 
 def test_reconciliation_requires_direction_and_context_flag():
