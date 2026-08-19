@@ -6,6 +6,10 @@ import whoami_profile_v3_runtime as profile_runtime
 
 
 _PATCHED = False
+# Kept as a compatibility reference only. The calendar-month runtime no longer
+# calls the legacy initializer because it would create the unused all-time
+# member_word_counts table. Existing production tables are intentionally not
+# dropped or migrated in this safe cleanup.
 _ORIGINAL_PROFILE_INIT = profile_runtime._initialize_tables
 
 
@@ -112,7 +116,11 @@ def _load_member_memory_monthly(bot_module, chat_id: int, user_id: int):
 
 
 def _profile_init_monthly(bot_module) -> None:
-    _ORIGINAL_PROFILE_INIT(bot_module)
+    """Initialize only the live calendar-month word-count schema.
+
+    The old all-time member_word_counts table is deliberately left untouched if
+    it already exists in a production DB, but new databases no longer create it.
+    """
     with bot_module.get_db_connection() as connection:
         connection.execute(
             """
