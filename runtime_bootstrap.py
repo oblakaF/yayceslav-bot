@@ -21,6 +21,7 @@ import schema_migrations
 # when the application is built, but polling ownership stays centralized below.
 import primitive_compact_guard  # noqa: F401
 import dialogue_guard_runtime
+import accountability_runtime
 import member_profile_runtime
 import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch
@@ -47,6 +48,7 @@ import daily_content_source_patch  # noqa: F401
 RUNTIME_LOAD_ORDER = (
     "primitive_compact_guard",
     "dialogue_guard_runtime",
+    "accountability_runtime",
     "member_profile_runtime",
     "member_memory_safety_patch",
     "dialogue_followup_mode_patch",
@@ -161,6 +163,9 @@ def prepare_application_runtime(application: Application) -> None:
     # Dialogue guard patches bot-level Gemini/instruction/rate-limit functions;
     # keep it after the application-owned feature preparation as before.
     dialogue_guard_runtime._prepare()
+    # Accountability must wrap the already-composed instruction builder and
+    # must also block correction from proactive aggression.
+    accountability_runtime.install()
     # Rate-limit ВСЁ ТЛЕН must wrap the FINAL limiter, including the 12/min
     # group guard installed immediately above.
     import rate_limit_tlen_runtime
