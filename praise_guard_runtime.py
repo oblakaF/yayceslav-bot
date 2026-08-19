@@ -1,15 +1,14 @@
-"""Keep gratitude/praise out of Yayceslav's hostile or dismissive modes.
+"""Keep gratitude/praise short, warm and outside Yayceslav's hostile modes.
 
-The legacy bot still owns the main Gemini call path, so this runtime installs a
-small explicit guard at polling startup instead of editing bot.py. Pure praise
-is classified as praise, cannot activate proactive aggression, and receives a
-strong instruction to answer warmly/self-confidently rather than with a generic
-"чё?"-style direct-ping response.
+Pure praise is handled locally: no Gemini round-trip, no long answer, no
+aggression. Praise followed by a real question/request stays on the normal path
+so Yayceslav still does the requested work.
 """
 
 from __future__ import annotations
 
 import functools
+import random
 import re
 import sys
 
@@ -17,10 +16,13 @@ import sys
 _PRAISE_RE = re.compile(
     r"(?:"
     r"\bспасибо\b|\bспс\b|\bблагодар\w*\b|"
+    r"\bуважух\w*\b|\bреспект\b|"
+    r"\bмолодец\b|\bкрасав(?:а|чик)\b|"
+    r"\bты\s+(?:лучший|молодец|красав(?:а|чик))\b|"
     r"\b(?:мы\s+)?тебя\s+любим\b|\bлюблю\s+тебя\b|"
     r"\bобожаю\s+тебя\b|\bобожаем\s+тебя\b|"
-    r"\bты\s+(?:лучший|красавчик|молодец)\b|"
-    r"\bхорошая\s+работа\b|\bотлично\s+сделал\b"
+    r"\bхорошая\s+работа\b|\bотлично\s+сделал\b|"
+    r"\bкруто\s+сделал\b|\bклассно\s+сделал\b"
     r")",
     re.IGNORECASE,
 )
@@ -32,18 +34,18 @@ _FOLLOWUP_RE = re.compile(
     re.IGNORECASE,
 )
 
-_PRAISE_INSTRUCTION = """
-
-КРИТИЧЕСКОЕ ПРАВИЛО ДЛЯ ЭТОЙ РЕПЛИКИ:
-Пользователь благодарит или хвалит Яйцеслава. Не агрись, не докапывайся,
-не отвечай «чё?», «чего надо?» и не делай вид, что тебя раздражает похвала.
-Ответь коротко, по-человечески и в характере: тепло, самодовольно или мемно.
-Допустим тон вроде «Да ладно, я знаю, что хорош» / «Любовь принята» /
-«Всегда пожалуйста», но не копируй один шаблон постоянно.
-"""
+SHORT_PRAISE_REPLIES = (
+    "Спс.",
+    "Класс.",
+    "Я ценю.",
+    "Уважуха.",
+    "Любовь принята.",
+    "Красавцы.",
+)
 
 _INSTALLED = False
 _ORIGINAL_CLASSIFY = None
+_ORIGINAL_ASK_GEMINI = None
 
 
 def is_pure_praise(text: str) -> bool:
@@ -54,17 +56,26 @@ def is_pure_praise(text: str) -> bool:
     return not bool(_FOLLOWUP_RE.search(stripped))
 
 
+def choose_short_praise_reply(rng=None) -> str:
+    chooser = rng or random
+    return chooser.choice(SHORT_PRAISE_REPLIES)
+
+
 def _find_bot_module():
     for name in ("__main__", "bot"):
         module = sys.modules.get(name)
-        if module is not None and callable(getattr(module, "build_v2_base_instruction", None)):
+        if (
+            module is not None
+            and callable(getattr(module, "build_v2_base_instruction", None))
+            and callable(getattr(module, "ask_gemini", None))
+        ):
             return module
     return None
 
 
 def install() -> bool:
     """Install the praise guard once, after bot.py has finished defining globals."""
-    global _INSTALLED, _ORIGINAL_CLASSIFY
+    global _INSTALLED, _ORIGINAL_CLASSIFY, _ORIGINAL_ASK_GEMINI
     if _INSTALLED:
         return True
 
@@ -93,17 +104,27 @@ def install() -> bool:
     if bot_module is None:
         return False
 
-    original_builder = bot_module.build_v2_base_instruction
-    if not getattr(original_builder, "_yayceslav_praise_guard", False):
-        @functools.wraps(original_builder)
-        def build_with_praise(user_text="", *args, **kwargs):
-            base = original_builder(user_text, *args, **kwargs)
-            if is_pure_praise(str(user_text or "")):
-                return str(base) + _PRAISE_INSTRUCTION
-            return base
+    # Pure praise should not spend a Gemini call or produce a paragraph.
+    if _ORIGINAL_ASK_GEMINI is None:
+        _ORIGINAL_ASK_GEMINI = bot_module.ask_gemini
 
-        build_with_praise._yayceslav_praise_guard = True
-        bot_module.build_v2_base_instruction = build_with_praise
+    original_ask_gemini = _ORIGINAL_ASK_GEMINI
+    if not getattr(bot_module.ask_gemini, "_yayceslav_short_praise", False):
+        @functools.wraps(original_ask_gemini)
+        async def ask_gemini_with_short_praise(*args, **kwargs):
+            contents = kwargs.get("contents", args[0] if args else "")
+            try:
+                import thinking_engine
+                current_text = thinking_engine.latest_user_text(contents)
+            except Exception:
+                current_text = str(contents or "")
+
+            if is_pure_praise(current_text):
+                return choose_short_praise_reply()
+            return await original_ask_gemini(*args, **kwargs)
+
+        ask_gemini_with_short_praise._yayceslav_short_praise = True
+        bot_module.ask_gemini = ask_gemini_with_short_praise
 
     _INSTALLED = True
     return True
