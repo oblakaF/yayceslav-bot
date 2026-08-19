@@ -4,6 +4,7 @@ import asyncio
 import sys
 
 import social_engine
+import whoami_dynamic_verdict
 import whoami_profile_v3_runtime as v3
 from telegram.ext import Application, ApplicationHandlerStop, CommandHandler
 
@@ -37,6 +38,25 @@ def _friendliness_line(
     if active_insults == 1:
         return f"{label} — 1 наезд сегодня"
     return f"{label} — {active_insults} наезда сегодня"
+
+
+def _relationship_label(chat_level: int, active_hostility: int) -> str:
+    """Clear social label: no vague 'симпатичный знакомый'."""
+    if active_hostility >= 11:
+        return "Гига-хейтер"
+    if active_hostility >= 3:
+        return "Мега-хейтер"
+    if active_hostility >= 1:
+        return "Мини-хейтер"
+    if chat_level >= 4:
+        return "Любимчик"
+    if chat_level >= 3:
+        return "Свой"
+    if chat_level >= 2:
+        return "Кореш"
+    if chat_level >= 1:
+        return "Знакомый"
+    return "Незнакомец"
 
 
 def _next_level_progress(messages_month: int, chat_level: int, is_king: bool) -> str | None:
@@ -81,7 +101,7 @@ async def _whoami_v4(update, context) -> None:
     apologies = int(profile.get("apologies_today", 0) or 0)
     penance_pending = bool(profile.get("penance_pending", False))
 
-    relationship = social_engine.relationship_status_label(chat_level, active_hostility)
+    relationship = _relationship_label(chat_level, active_hostility)
     friendliness = _friendliness_line(
         active_hostility,
         total_hostility,
@@ -96,15 +116,15 @@ async def _whoami_v4(update, context) -> None:
 
     name = profile.get("current_display_name") or user.full_name or user.username or str(user.id)
     title = profile.get("current_title") or "пока без регалий"
+    level_label = social_engine.chat_level_label(chat_level)
 
     lines = [
-        "🥚 ДОСЬЕ ЯЙЦЕСЛАВА",
-        str(name),
-        f"🤝 Кто Яйцеславу: {relationship}",
-        f"❤️ Дружелюбность: {friendliness}",
+        f"🥚 ДОСЬЕ ЯЙЦЕСЛАВА НА {name}",
+        f"🤝 Яйцеславу: {relationship}",
+        f"🌡 Отношение сегодня: {friendliness}",
         f"🏅 Титул: {title}",
-        f"💬 Наболтал: {total} всего / {messages_month} в этом месяце",
-        f"🏚 Уровень: {chat_level}/4 — {social_engine.chat_level_label(chat_level)}",
+        f"💬 Сообщений: {total} всего / {messages_month} в этом месяце",
+        f"🏚 Уровень: {chat_level}/4 — {level_label}",
     ]
 
     progress = _next_level_progress(messages_month, chat_level, is_king)
@@ -117,12 +137,25 @@ async def _whoami_v4(update, context) -> None:
         lines.append("🗣 Любимое слово месяца: пока не определилось")
 
     if themes:
-        lines.append("👀 Видит вокруг: " + ", ".join(themes))
+        lines.append("🧠 Темы месяца: " + ", ".join(themes))
+    else:
+        lines.append("🧠 Темы месяца: ещё не набрались")
 
-    verdict = v3.topical_verdict(themes, fallback_level=chat_level)
-    if penance_pending:
-        verdict = verdict.rstrip(".") + ". Амнистия пока на рассмотрении, дон."
-    lines.append("🎯 Вердикт: " + verdict)
+    verdict = await whoami_dynamic_verdict.generate_verdict(
+        bot_module,
+        chat_id=chat.id,
+        user_id=user.id,
+        name=str(name),
+        themes=themes,
+        chat_level=chat_level,
+        level_label=level_label,
+        relationship=relationship,
+        friendliness=friendliness,
+    )
+    if verdict:
+        if penance_pending:
+            verdict = verdict.rstrip(".!?") + ". Амнистия пока на рассмотрении, дон."
+        lines.append("🎯 Вердикт: " + verdict)
 
     await message.reply_text("\n".join(lines))
     raise ApplicationHandlerStop
