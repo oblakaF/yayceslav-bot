@@ -16,7 +16,7 @@ on:
 
 jobs:
   test:
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: self-hosted
     strategy:
       fail-fast: false
       matrix:
