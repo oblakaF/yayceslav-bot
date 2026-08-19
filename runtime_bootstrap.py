@@ -36,8 +36,9 @@ import whoami_profile_v3_runtime
 import monthly_memory_scope_patch  # noqa: F401
 import whoami_profile_v4_runtime
 
-# External daily content wraps the already assembled title/month scheduler.
-import daily_content_runtime  # noqa: F401
+# External daily-content source selection remains an import-time patch, but its
+# runtime scheduler preparation is centralized here like the other safe layers.
+import daily_content_runtime
 import daily_content_source_patch  # noqa: F401
 
 
@@ -119,6 +120,9 @@ def prepare_application_runtime(application: Application) -> None:
     # Dialogue guard patches bot-level Gemini/instruction/rate-limit functions;
     # keep it after the application-owned feature preparation as before.
     dialogue_guard_runtime._prepare()
+    # Daily content captures the already-composed daily+monthly scheduler and
+    # appends its own due checks; source-network logic is untouched.
+    daily_content_runtime._prepare_application(application)
 
 
 def _install_preflight_hook() -> None:

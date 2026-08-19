@@ -31,8 +31,6 @@ _HTTP_HEADERS = {
     "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.7",
 }
 
-_RUNTIME_HOOK_INSTALLED = False
-_ORIGINAL_RUN_POLLING = None
 _PREPARED_APPLICATION_IDS: set[int] = set()
 
 
@@ -556,20 +554,3 @@ def _prepare_application(application: Application) -> None:
     logging.warning(
         "Daily external content ready: joke=19:30 MSK (JokeAPI ru/en); news=20:00 MSK (government.ru/kremlin.ru)"
     )
-
-
-def install_runtime_hook() -> None:
-    global _RUNTIME_HOOK_INSTALLED, _ORIGINAL_RUN_POLLING
-    if _RUNTIME_HOOK_INSTALLED:
-        return
-    _ORIGINAL_RUN_POLLING = Application.run_polling
-
-    def run_polling_with_daily_content(self, *args, **kwargs):
-        _prepare_application(self)
-        return _ORIGINAL_RUN_POLLING(self, *args, **kwargs)
-
-    Application.run_polling = run_polling_with_daily_content
-    _RUNTIME_HOOK_INSTALLED = True
-
-
-install_runtime_hook()

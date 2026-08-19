@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 import daily_content_runtime as runtime
@@ -55,3 +56,51 @@ def test_official_news_parser_accepts_only_article_links():
 def test_broken_whoami_fragment_is_rejected():
     assert whoami_dynamic_verdict._clean_verdict("набра") is None
     assert whoami_dynamic_verdict._clean_verdict("Ну и хуй с ним.") == "Ну и хуй с ним."
+
+
+def test_scheduler_appends_daily_content_once(monkeypatch):
+    calls = []
+
+    class FakeBotModule:
+        _yayceslav_daily_content_patch = False
+
+        async def run_due_daily_titles(self, application):
+            del application
+            calls.append("existing")
+
+    fake = FakeBotModule()
+
+    async def fake_daily_content(application):
+        del application
+        calls.append("content")
+
+    monkeypatch.setattr(runtime, "run_daily_content_if_due", fake_daily_content)
+
+    runtime._patch_scheduler(fake)
+    wrapped = fake.run_due_daily_titles
+    runtime._patch_scheduler(fake)
+
+    assert fake.run_due_daily_titles is wrapped
+    asyncio.run(fake.run_due_daily_titles(object()))
+    assert calls == ["existing", "content"]
+
+
+def test_prepare_application_initializes_once(monkeypatch):
+    class FakeBotModule:
+        _yayceslav_daily_content_patch = False
+
+        async def run_due_daily_titles(self, application):
+            del application
+
+    fake = FakeBotModule()
+    init_calls = []
+    monkeypatch.setattr(runtime, "_find_bot_module", lambda: fake)
+    monkeypatch.setattr(runtime, "_initialize_tables", lambda bot: init_calls.append(bot))
+
+    application = object()
+    runtime._PREPARED_APPLICATION_IDS.discard(id(application))
+    runtime._prepare_application(application)
+    runtime._prepare_application(application)
+
+    assert init_calls == [fake]
+    assert not hasattr(runtime, "install_runtime_hook")
