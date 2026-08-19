@@ -25,11 +25,11 @@ import member_profile_runtime  # noqa: F401
 import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch
 
-# Monthly social runtime owns its 19:00/catch-up timing directly. It must still
-# be imported BEFORE unified daily titles because both wrap run_polling and the
-# monthly scheduler wraps the unified title scheduler during preparation.
+# Monthly social still owns a legacy polling wrapper. Unified daily titles no
+# longer does: bootstrap prepares unified first at polling time, then the legacy
+# monthly wrapper can safely wrap that scheduler without it being overwritten.
 import monthly_social_runtime  # noqa: F401
-import unified_daily_title_runtime  # noqa: F401
+import unified_daily_title_runtime
 import relationship_experience_runtime
 import whoami_profile_v3_runtime
 # Monthly memory scope now also owns theme quality/ranking directly.
@@ -107,6 +107,9 @@ def prepare_polling_runtime(kwargs: dict) -> None:
 
 def prepare_application_runtime(application: Application) -> None:
     """Prepare application-owned features that no longer need polling wrappers."""
+    # This must precede monthly_social_runtime's legacy wrapper execution: its
+    # _patch_scheduler() captures and wraps the unified scheduler installed here.
+    unified_daily_title_runtime._prepare()
     relationship_experience_runtime._prepare_application(application)
     # v3 must prepare after monthly_memory_scope_patch has installed its
     # calendar-month storage functions; import order above preserves that.

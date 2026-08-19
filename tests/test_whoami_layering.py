@@ -2,6 +2,7 @@ from telegram.ext import Application, CommandHandler
 
 import relationship_experience_runtime as relationship
 import runtime_bootstrap
+import unified_daily_title_runtime as unified_titles
 import whoami_profile_v3_runtime as v3
 import whoami_profile_v4_runtime as v4
 
@@ -36,6 +37,7 @@ def test_v4_is_the_only_runtime_whoami_command_owner(monkeypatch):
 def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     application = object()
     calls = []
+    monkeypatch.setattr(unified_titles, "_prepare", lambda: calls.append(("unified", None)))
     monkeypatch.setattr(
         relationship,
         "_prepare_application",
@@ -47,10 +49,12 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
     runtime_bootstrap.prepare_application_runtime(application)
 
     assert calls == [
+        ("unified", None),
         ("relationship", application),
         ("v3", application),
         ("v4", application),
     ]
+    assert not hasattr(unified_titles, "install_runtime_hook")
     assert not hasattr(relationship, "install_runtime_hook")
     assert not hasattr(v3, "install_runtime_hook")
     assert not hasattr(v4, "install_runtime_hook")

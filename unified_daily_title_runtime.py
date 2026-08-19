@@ -15,8 +15,6 @@ import member_repository
 
 
 _PREPARED = False
-_RUNTIME_HOOK_INSTALLED = False
-_ORIGINAL_RUN_POLLING = None
 
 
 def _find_bot_module():
@@ -268,20 +266,3 @@ def _prepare() -> None:
     logging.warning(
         "Unified daily titles ready: one random member/day, silent pool by 7d activity, no same winner two days in a row"
     )
-
-
-def install_runtime_hook() -> None:
-    global _RUNTIME_HOOK_INSTALLED, _ORIGINAL_RUN_POLLING
-    if _RUNTIME_HOOK_INSTALLED:
-        return
-    _ORIGINAL_RUN_POLLING = Application.run_polling
-
-    def run_polling_with_unified_titles(self, *args, **kwargs):
-        _prepare()
-        return _ORIGINAL_RUN_POLLING(self, *args, **kwargs)
-
-    Application.run_polling = run_polling_with_unified_titles
-    _RUNTIME_HOOK_INSTALLED = True
-
-
-install_runtime_hook()
