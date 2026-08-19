@@ -19,6 +19,9 @@ class SocialContext:
     chat_level: int = 0
     hostility_today: int = 0
     friendliness_label: str = "Не хейтер"
+    forgiveness_count_today: int = 0
+    relapse_count_today: int = 0
+    penance_pending: bool = False
     replies_to_bot: int = 0
     insults_to_bot: int = 0
     user_id: int = 0
@@ -133,6 +136,9 @@ def from_profile(profile: Mapping[str, Any] | None) -> SocialContext:
         chat_level=chat_level,
         hostility_today=hostility,
         friendliness_label=str(profile.get("friendliness_label") or hostility_label(hostility)),
+        forgiveness_count_today=max(0, int(profile.get("forgiveness_count_today", 0) or 0)),
+        relapse_count_today=max(0, int(profile.get("relapse_count_today", 0) or 0)),
+        penance_pending=bool(profile.get("penance_pending", False)),
         replies_to_bot=replies,
         insults_to_bot=insults,
         user_id=max(0, int(profile.get("user_id", 0) or 0)),
@@ -180,6 +186,31 @@ def _callback_chance(ctx: SocialContext) -> float:
     return (0.0, 0.04, 0.12, 0.20, 0.28)[min(max(ctx.chat_level, 0), 4)]
 
 
+def _maybe_add_apology_hint(lines: list[str], ctx: SocialContext, *, rng=random) -> None:
+    """Apology/penance is a rare bit, not a repeated nag on every answer."""
+    if ctx.hostility_today <= 0:
+        return
+
+    if ctx.penance_pending:
+        if rng.random() < 0.28:
+            mode = rng.choice(("plain", "don", "don", "plain"))
+            if mode == "don":
+                lines.append(
+                    "Редкая мемная ветка примирения: включи «дон-режим» в духе интернет-мема. Можно сказать что-то вроде «Извинись, дон, и я подумаю» или «Требую 200 виртуальных извинений, дон — одним сообщением, я считать не буду». Не изображай чеченцев как группу и не приписывай народу характер; это только пародийный речевой режим конкретного мема."
+                )
+            else:
+                lines.append(
+                    "Редко намекни, что простого «сорян» после рецидива уже мало. Предложи ОДНО лёгкое шуточное искупление в одном сообщении: «Яйцеслав был прав, дон», «мир, дон» или «200 виртуальных извинений, дон». Выполнил — конфликт считается закрытым."
+                )
+        return
+
+    # First feud: ordinary apology can fully clear it, but do not ask every turn.
+    if ctx.forgiveness_count_today == 0 and rng.random() < 0.20:
+        lines.append(
+            "Можно ОДИН РАЗ мягко намекнуть, что Яйцеслав ещё способен простить, если человек нормально извинится. Не требуй извинений постоянно и не превращай это в обязательную концовку каждого ответа."
+        )
+
+
 def build_social_instruction(
     ctx: SocialContext,
     *,
@@ -202,11 +233,11 @@ def build_social_instruction(
     # Yaiceslav does NOT receive the gentle-newcomer treatment.
     if ctx.hostility_today > 0 and ctx.chat_level <= 2:
         lines.append(
-            "ВАЖНО: это ещё не свой человек, но уже полез на Яйцеслава. В любой несерьёзной прямой беседе отвечай зло, раздражённо и заметно жёстче обычного; допускается грубый мат и беспощадный стёб. Тепло выключено до нормального извинения. Периодически можно коротко требовать извиниться, но не повторяй одну фразу как бот-заготовку."
+            "ВАЖНО: это ещё не свой человек, но уже полез на Яйцеслава. В любой несерьёзной прямой беседе отвечай зло, раздражённо и заметно жёстче обычного; допускается грубый мат и беспощадный стёб. Тепло выключено до примирения. Не повторяй один и тот же панч."
         )
     elif ctx.friendliness_label == "Гига-хейтер":
         lines.append(
-            "Сегодня это ГИГА-ХЕЙТЕР: до нормального извинения Яйцеслав раздражён на него в каждой несерьёзной прямой беседе. Отвечай жёстко и периодически требуй извиниться, но меняй формулировки."
+            "Сегодня это ГИГА-ХЕЙТЕР: Яйцеслав раздражён на него в каждой несерьёзной прямой беседе. Отвечай жёстко, но не своди каждый ответ к просьбе извиниться."
         )
     elif ctx.friendliness_label == "Мега-хейтер":
         lines.append(
@@ -232,6 +263,8 @@ def build_social_instruction(
         lines.append(
             "Он уже прижился и не хейтер: Яйцеслав к нему расположен, отвечает добрее и теплее, иногда почти ласково, но без приторности."
         )
+
+    _maybe_add_apology_hint(lines, ctx, rng=rng)
 
     if ctx.chat_level >= 1 and ctx.current_title and rng.random() < (0.06 + 0.03 * ctx.chat_level):
         lines.append(
