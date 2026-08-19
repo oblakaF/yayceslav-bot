@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import sys
 
+from telegram.constants import UpdateType
 from telegram.ext import Application
 
 import schema_migrations
@@ -23,7 +24,6 @@ import dialogue_guard_runtime  # noqa: F401
 import member_profile_runtime  # noqa: F401
 import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch  # noqa: F401
-import chat_member_updates_patch  # noqa: F401
 
 # Monthly social runtime owns its 19:00/catch-up timing directly. It must still
 # be imported BEFORE unified daily titles because both wrap run_polling and the
@@ -49,7 +49,6 @@ RUNTIME_LOAD_ORDER = (
     "member_profile_runtime",
     "member_memory_safety_patch",
     "dialogue_followup_mode_patch",
-    "chat_member_updates_patch",
     "monthly_social_runtime",
     "unified_daily_title_runtime",
     "relationship_experience_runtime",
@@ -80,8 +79,25 @@ def run_schema_preflight() -> tuple[int, ...]:
     return applied
 
 
+def ensure_chat_member_updates(kwargs: dict) -> None:
+    """Preserve explicit allowed_updates while ensuring member events arrive.
+
+    If PTB is left to choose its default update set (allowed_updates is absent
+    or None), keep it untouched. If the caller supplied an explicit iterable,
+    append CHAT_MEMBER exactly once. This is the behavior previously provided
+    by chat_member_updates_patch.py, now centralized in the bootstrap wrapper.
+    """
+    allowed = kwargs.get("allowed_updates")
+    if allowed is None:
+        return
+    allowed_list = list(allowed)
+    if UpdateType.CHAT_MEMBER not in allowed_list:
+        allowed_list.append(UpdateType.CHAT_MEMBER)
+    kwargs["allowed_updates"] = allowed_list
+
+
 def _install_preflight_hook() -> None:
-    """Make the migration preflight the outermost run_polling wrapper."""
+    """Make schema/update preparation the outermost run_polling wrapper."""
     if getattr(Application, "_yayceslav_schema_preflight_installed", False):
         return
 
@@ -95,6 +111,7 @@ def _install_preflight_hook() -> None:
             # state is unknown or partially applied.
             logging.exception("Schema migration preflight failed; polling not started")
             raise
+        ensure_chat_member_updates(kwargs)
         return original_run_polling(self, *args, **kwargs)
 
     Application.run_polling = run_polling_with_schema_preflight
