@@ -27,6 +27,12 @@ _PREPARED_APPLICATION_IDS: set[int] = set()
 DAILY_NORMAL_BONUS_MIN = 1
 DAILY_NORMAL_BONUS_MAX = 5
 
+_NEUTRAL_RELATION_TEXT = (
+    "Это нейтральный человек. ВАЖНО: нейтральность имеет приоритет над старым generic «aggressive by default». "
+    "Не начинай агрессию, докоп, оскорбление или токсичный подкол первым. Отвечай нормально и по делу; "
+    "характер можно сохранить сухой/мемной подачей без нападения на человека."
+)
+
 
 def _find_bot_module():
     for name in ("__main__", "bot"):
@@ -310,7 +316,7 @@ async def _observe_daily_reputation(update, context) -> None:
 
 
 def _patch_instruction(bot_module) -> None:
-    """Make a small positive score visibly warmer than the exact neutral zero."""
+    """Make exact zero neutral, small positive goodwill warm, small negative wary."""
     if getattr(bot_module, "_yayceslav_daily_reputation_instruction_patch", False):
         return
 
@@ -318,7 +324,7 @@ def _patch_instruction(bot_module) -> None:
 
     @functools.wraps(original)
     def wrapped(*args, **kwargs):
-        instruction = original(*args, **kwargs)
+        instruction = str(original(*args, **kwargs))
         chat_id = kwargs.get("chat_id")
         user_id = kwargs.get("user_id")
         if chat_id is None or user_id is None:
@@ -335,11 +341,24 @@ def _patch_instruction(bot_module) -> None:
             return instruction
 
         if 1 <= score <= 9:
-            return str(instruction) + (
-                "\n\nNATURAL GOODWILL OVERRIDE:\n"
-                f"Репутация уже {score:+d}/100: это не нулевой незнакомец, а человек, который пока общается нормально. "
-                "Относись базово доброжелательно и спокойно. Не хвали без повода, не льсти и не соглашайся автоматически."
+            replacement = (
+                f"Репутация уже {score:+d}/100: это уже нормальный человек, а не нулевой незнакомец. "
+                "Относись базово доброжелательно и спокойно. Не начинай агрессию или докоп первым; "
+                "не хвали без повода, не льсти и не соглашайся автоматически."
             )
+            if _NEUTRAL_RELATION_TEXT in instruction:
+                return instruction.replace(_NEUTRAL_RELATION_TEXT, replacement, 1)
+            return instruction + "\n\nNATURAL GOODWILL OVERRIDE:\n" + replacement
+
+        if -9 <= score <= -1:
+            replacement = (
+                f"Репутация {score:+d}/100: человек слегка испортил впечатление, поэтому Яйцеслав насторожен. "
+                "Не начинай травлю или докоп первым, но можешь быть прохладнее нейтрального."
+            )
+            if _NEUTRAL_RELATION_TEXT in instruction:
+                return instruction.replace(_NEUTRAL_RELATION_TEXT, replacement, 1)
+            return instruction + "\n\nMILD REPUTATION OVERRIDE:\n" + replacement
+
         return instruction
 
     bot_module.build_full_system_instruction = wrapped
