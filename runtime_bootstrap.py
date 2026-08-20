@@ -29,6 +29,7 @@ import reputation_decay_runtime
 import daily_mood_runtime
 import member_profile_runtime
 import episodic_memory_runtime
+import pairwise_relationship_runtime
 import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch
 
@@ -62,6 +63,7 @@ RUNTIME_LOAD_ORDER = (
     "daily_mood_runtime",
     "member_profile_runtime",
     "episodic_memory_runtime",
+    "pairwise_relationship_runtime",
     "member_memory_safety_patch",
     "dialogue_followup_mode_patch",
     "monthly_social_runtime",
@@ -172,6 +174,9 @@ def prepare_application_runtime(application: Application) -> None:
     # callback-term memory, adding a disjoint "episodic_notes" key; order
     # between the two memory layers does not matter to each other.
     episodic_memory_runtime._prepare_application(application)
+    # Data-only for now: records reply-chain interaction between two ordinary
+    # members, nothing reads it into a live prompt yet.
+    pairwise_relationship_runtime._prepare_application(application)
     # v3 must prepare after monthly_memory_scope_patch has installed its
     # calendar-month storage functions; import order above preserves that.
     whoami_profile_v3_runtime._prepare_application(application)
