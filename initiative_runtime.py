@@ -10,6 +10,12 @@ only has a daily count, not a last-message timestamp), so this cannot
 avoid interrupting a live conversation -- only reduce how often that
 can happen at all.
 
+The fire probability escalates with consecutive silent days: 15% the
+first day, +15% for every day since it last actually sent a message
+(30% on day 2, 45% on day 3, ... capped at 100%), then resets back to
+15% once it sends. Tracked as a single upserted row per chat
+(chat_initiative_streak) -- no unbounded growth, just current state.
+
 Extends the SAME scheduler tick daily titles/jokes/news already use
 (wraps bot_module.run_due_daily_titles again) instead of starting a
 second polling loop.
@@ -66,7 +72,54 @@ def _initialize_table(bot_module) -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_initiative_streak (
+                chat_id INTEGER PRIMARY KEY,
+                miss_streak INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
         connection.commit()
+
+
+def _current_miss_streak_sync(bot_module, chat_id: int) -> int:
+    with bot_module.get_db_connection() as connection:
+        row = connection.execute(
+            "SELECT miss_streak FROM chat_initiative_streak WHERE chat_id = ?",
+            (int(chat_id),),
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _record_miss_sync(bot_module, chat_id: int) -> None:
+    with bot_module.get_db_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO chat_initiative_streak (chat_id, miss_streak)
+            VALUES (?, 1)
+            ON CONFLICT(chat_id) DO UPDATE SET miss_streak = miss_streak + 1
+            """,
+            (int(chat_id),),
+        )
+        connection.commit()
+
+
+def _reset_streak_sync(bot_module, chat_id: int) -> None:
+    with bot_module.get_db_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO chat_initiative_streak (chat_id, miss_streak)
+            VALUES (?, 0)
+            ON CONFLICT(chat_id) DO UPDATE SET miss_streak = 0
+            """,
+            (int(chat_id),),
+        )
+        connection.commit()
+
+
+def fire_probability_for_streak(miss_streak: int) -> float:
+    return min(1.0, INITIATIVE_FIRE_PROBABILITY * (max(0, int(miss_streak or 0)) + 1))
 
 
 def _eligible_chat_ids_sync(bot_module, current_date: str) -> list[int]:
@@ -89,11 +142,13 @@ def _eligible_chat_ids_sync(bot_module, current_date: str) -> list[int]:
 def _ensure_today_decision_sync(
     bot_module, chat_id: int, current_date: str, *, rng=random
 ) -> dict:
-    will_fire = 1 if rng.random() < INITIATIVE_FIRE_PROBABILITY else 0
+    miss_streak = _current_miss_streak_sync(bot_module, chat_id)
+    probability = fire_probability_for_streak(miss_streak)
+    will_fire = 1 if rng.random() < probability else 0
     fire_at_hour = rng.randint(INITIATIVE_EARLIEST_HOUR_MSK, INITIATIVE_LATEST_HOUR_MSK)
 
     with bot_module.get_db_connection() as connection:
-        connection.execute(
+        cursor = connection.execute(
             """
             INSERT OR IGNORE INTO chat_initiative_log
                 (chat_id, date, will_fire, fire_at_hour)
@@ -101,6 +156,7 @@ def _ensure_today_decision_sync(
             """,
             (int(chat_id), str(current_date), will_fire, fire_at_hour),
         )
+        won_todays_decision = int(cursor.rowcount or 0) == 1
         connection.execute(
             "DELETE FROM chat_initiative_log WHERE chat_id = ? AND date < date(?, ?)",
             (int(chat_id), str(current_date), f"-{INITIATIVE_LOG_KEEP_DAYS} days"),
@@ -113,6 +169,11 @@ def _ensure_today_decision_sync(
             (int(chat_id), str(current_date)),
         ).fetchone()
         connection.commit()
+
+    # Only the call that actually decided today counts as a miss; a losing
+    # concurrent roll's outcome is discarded along with its INSERT OR IGNORE.
+    if won_todays_decision and not row[0]:
+        _record_miss_sync(bot_module, chat_id)
 
     return {"will_fire": bool(row[0]), "fire_at_hour": int(row[1]), "sent_at": row[2]}
 
@@ -180,6 +241,7 @@ async def _run_initiative(application: Application) -> None:
                 continue
             line = await asyncio.to_thread(_pick_line_sync, bot_module, chat_id, current_date)
             await application.bot.send_message(chat_id=chat_id, text=line)
+            await asyncio.to_thread(_reset_streak_sync, bot_module, chat_id)
         except Exception:
             logging.exception("Initiative: send failed chat=%s", chat_id)
 
@@ -211,7 +273,9 @@ def _prepare_application(application: Application) -> None:
     _patch_scheduler(bot_module)
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning(
-        "Initiative runtime ready: p=%s/day, window %s-%s MSK, >=%s msgs/day to qualify",
+        "Initiative runtime ready: p=%s/day (+%s per silent day since last send, capped at 100%%), "
+        "window %s-%s MSK, >=%s msgs/day to qualify",
+        INITIATIVE_FIRE_PROBABILITY,
         INITIATIVE_FIRE_PROBABILITY,
         INITIATIVE_EARLIEST_HOUR_MSK,
         INITIATIVE_LATEST_HOUR_MSK,

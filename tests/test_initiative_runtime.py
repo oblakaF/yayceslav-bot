@@ -3,6 +3,8 @@ import sqlite3
 from datetime import datetime
 from types import SimpleNamespace
 
+import pytest
+
 import initiative_runtime as initiative
 
 
@@ -130,6 +132,80 @@ def test_ttl_sweep_removes_old_rows(tmp_path):
             ).fetchall()
         ]
     assert dates == ["2026-08-20"]
+
+
+def test_fire_probability_scales_with_miss_streak():
+    assert initiative.fire_probability_for_streak(0) == pytest.approx(0.15)
+    assert initiative.fire_probability_for_streak(1) == pytest.approx(0.30)
+    assert initiative.fire_probability_for_streak(2) == pytest.approx(0.45)
+
+
+def test_fire_probability_caps_at_one():
+    assert initiative.fire_probability_for_streak(100) == 1.0
+
+
+def test_a_miss_raises_next_days_probability(tmp_path):
+    bot = _db_bot(tmp_path)
+    initiative._initialize_table(bot)
+
+    class NeverFireExactly30Percent:
+        """Rolls just above 15% (misses day 1) but below 30% (fires day 2)."""
+
+        def random(self):
+            return 0.20
+
+        def randint(self, a, b):
+            return a
+
+    day1 = initiative._ensure_today_decision_sync(
+        bot, -100, "2026-08-20", rng=NeverFireExactly30Percent()
+    )
+    assert day1["will_fire"] is False
+    assert initiative._current_miss_streak_sync(bot, -100) == 1
+
+    day2 = initiative._ensure_today_decision_sync(
+        bot, -100, "2026-08-21", rng=NeverFireExactly30Percent()
+    )
+    assert day2["will_fire"] is True  # 0.20 < 30% (streak-scaled), unlike day 1's 15%
+
+
+def test_two_consecutive_misses_double_streak(tmp_path):
+    bot = _db_bot(tmp_path)
+    initiative._initialize_table(bot)
+
+    class NeverRolls:
+        def random(self):
+            return 0.99
+
+        def randint(self, a, b):
+            return a
+
+    initiative._ensure_today_decision_sync(bot, -100, "2026-08-20", rng=NeverRolls())
+    initiative._ensure_today_decision_sync(bot, -100, "2026-08-21", rng=NeverRolls())
+    assert initiative._current_miss_streak_sync(bot, -100) == 2
+
+
+def test_successful_send_resets_streak(tmp_path):
+    now = datetime(2026, 8, 20, 15, 0, 0)
+    bot = _db_bot(tmp_path, now=now)
+    initiative._initialize_table(bot)
+    initiative._record_miss_sync(bot, -100)
+    initiative._record_miss_sync(bot, -100)
+    assert initiative._current_miss_streak_sync(bot, -100) == 2
+
+    _seed_activity(bot, -100, "2026-08-20", 20)
+    _seed_decision(bot, -100, "2026-08-20", will_fire=True, fire_at_hour=12)
+
+    application = _FakeApplication()
+    original_find = initiative._find_bot_module
+    initiative._find_bot_module = lambda: bot
+    try:
+        asyncio.run(initiative._run_initiative(application))
+    finally:
+        initiative._find_bot_module = original_find
+
+    assert len(application.sent) == 1
+    assert initiative._current_miss_streak_sync(bot, -100) == 0
 
 
 def test_mark_sent_only_lets_one_caller_win(tmp_path):
