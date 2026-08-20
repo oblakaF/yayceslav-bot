@@ -173,7 +173,7 @@ async def _whoami_v4(update, context) -> None:
 
     lines = [
         f"🥚 ДОСЬЕ ЯЙЦЕСЛАВА НА {name}",
-        f"🤝 Яйцеславу: {relationship}",
+        f"🤝 Отношение: {relationship}",
         f"⭐ Репутация: {reputation}",
         f"💚 Симпатия: {positive}",
         f"🌡 Отношение сегодня: {friendliness}",
