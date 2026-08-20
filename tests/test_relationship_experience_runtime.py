@@ -35,20 +35,46 @@ def test_hostility_labels():
 
 def test_dossier_relationship_labels_are_reputation_based():
     # Familiarity is shown separately as chat level. Relationship starts neutral.
-    assert profile_v4._relationship_label(0, 0, 0) == "Нейтрально"
-    assert profile_v4._relationship_label(4, 0, 0) == "Нейтрально"
-    assert profile_v4._relationship_label(0, 0, 5) == "Нормально"
-    assert profile_v4._relationship_label(4, 0, -5) == "Слегка настороженно"
-    assert profile_v4._relationship_label(4, 0, 12) == "Кореш"
-    assert profile_v4._relationship_label(0, 0, 40) == "Свой"
-    assert profile_v4._relationship_label(0, 0, 75) == "Любимчик"
-    assert profile_v4._relationship_label(4, 0, -20) == "Настороженно"
-    assert profile_v4._relationship_label(4, 0, -40) == "Негативный знакомый"
-    assert profile_v4._relationship_label(4, 0, -80) == "Токсичный знакомый"
+    assert profile_v4._relationship_label(0, 0, 0) == "Нейтральное"
+    assert profile_v4._relationship_label(4, 0, 0) == "Нейтральное"
+    assert profile_v4._relationship_label(0, 0, 5) == "Нормальное"
+    assert profile_v4._relationship_label(4, 0, -5) == "Слегка настороженное"
+    assert profile_v4._relationship_label(4, 0, 12) == "Хорошее"
+    assert profile_v4._relationship_label(0, 0, 40) == "Очень хорошее"
+    assert profile_v4._relationship_label(0, 0, 75) == "Очень хорошее"
+    assert profile_v4._relationship_label(4, 0, -20) == "Настороженное"
+    assert profile_v4._relationship_label(4, 0, -40) == "Негативное"
+    assert profile_v4._relationship_label(4, 0, -80) == "Токсичное"
     # Today's active hostility still wins over the lifetime score.
-    assert profile_v4._relationship_label(4, 1, 100) == "Мини-хейтер"
-    assert profile_v4._relationship_label(4, 3, 100) == "Мега-хейтер"
+    assert profile_v4._relationship_label(4, 1, 100) == "Хейтерок"
+    assert profile_v4._relationship_label(4, 2, 100) == "Мини-хейтер"
+    assert profile_v4._relationship_label(4, 4, 100) == "Мега-хейтер"
     assert profile_v4._relationship_label(4, 11, 100) == "Гига-хейтер"
+
+
+def test_dossier_today_relationship_scale_has_three_positive_levels():
+    assert profile_v4._friendliness_line(0, 0, 0, False, 0) == "Нейтрально"
+    assert profile_v4._friendliness_line(0, 0, 0, False, 1) == "Симпатия"
+    assert profile_v4._friendliness_line(0, 0, 0, False, 3) == "Хорошее отношение"
+    assert profile_v4._friendliness_line(0, 0, 0, False, 6) == "Очень хорошее отношение"
+
+    # Hostility always wins over positive events for today's visible state.
+    assert profile_v4._friendliness_line(1, 1, 0, False, 20) == "Хейтерок"
+    assert profile_v4._friendliness_line(2, 2, 0, False, 20) == "Мини-хейтер"
+    assert profile_v4._friendliness_line(4, 4, 0, False, 20) == "Мега-хейтер"
+    assert profile_v4._friendliness_line(11, 11, 0, False, 20) == "Гига-хейтер"
+
+
+def test_dossier_reputation_number_is_compact():
+    assert profile_v4._reputation_line(
+        {"reputation_score": 0, "reputation_label": "нейтрально"}
+    ) == "0 — нейтрально"
+    assert profile_v4._reputation_line(
+        {"reputation_score": 5, "reputation_label": "нормальный"}
+    ) == "+5 — нормальный"
+    assert profile_v4._reputation_line(
+        {"reputation_score": -5, "reputation_label": "слегка настороженно"}
+    ) == "-5 — слегка настороженно"
 
 
 def test_dossier_positive_affinity_is_separate_from_chat_level():
