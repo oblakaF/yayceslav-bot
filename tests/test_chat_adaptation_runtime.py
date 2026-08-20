@@ -39,6 +39,17 @@ def test_primary_text_path_can_use_humanizer_but_media_paths_do_not():
     assert "source_user_text=" not in inspect.getsource(bot.answer_voice_or_audio)
 
 
+def test_voice_handler_also_understands_video_notes():
+    source = inspect.getsource(bot.answer_voice_or_audio)
+    assert "update.message.video_note" in source
+    assert '"video/mp4"' in source
+
+
+def test_main_registers_video_note_on_the_voice_handler():
+    source = inspect.getsource(bot.main)
+    assert "filters.VOICE | filters.AUDIO | filters.VIDEO_NOTE" in source
+
+
 def test_chat_native_is_exclusive_voice_pack(monkeypatch):
     feedback_engine.reset_current_trace()
     bot.adaptation_cache.clear()

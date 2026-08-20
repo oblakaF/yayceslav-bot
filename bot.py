@@ -10137,7 +10137,7 @@ async def answer_voice_or_audio(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Понимает голосовые сообщения и аудиофайлы."""
+    """Понимает голосовые сообщения, аудиофайлы и видео-кружочки."""
 
     if (
         not update.message
@@ -10147,8 +10147,9 @@ async def answer_voice_or_audio(
 
     voice = update.message.voice
     audio = update.message.audio
+    video_note = update.message.video_note
 
-    media = voice or audio
+    media = voice or audio or video_note
 
     if media is None:
         return
@@ -10182,11 +10183,11 @@ async def answer_voice_or_audio(
         and file_size > MAX_FILE_SIZE
     ):
         await update.message.reply_text(
-            "Аудио тяжелее 20 МБ. "
+            "Это тяжелее 20 МБ. "
             "Это уже подкаст, а не голосовуха."
         )
         return
-    # Учитываем голосовое сообщение или аудиофайл
+    # Учитываем голосовое сообщение, аудиофайл или видео-кружок
     await register_user_and_chat(
         update
     )
@@ -10205,7 +10206,7 @@ async def answer_voice_or_audio(
         )
         suffix = ".ogg"
 
-    else:
+    elif audio:
         mime_type = (
             audio.mime_type
             or "audio/mpeg"
@@ -10218,6 +10219,12 @@ async def answer_voice_or_audio(
             ).suffix
             or ".mp3"
         )
+
+    else:
+        # Telegram video notes (video circles) have no mime_type field of
+        # their own; Telegram always encodes them as mp4.
+        mime_type = "video/mp4"
+        suffix = ".mp4"
 
     file_path = TEMP_DIR / (
         f"audio_"
@@ -10284,10 +10291,12 @@ async def answer_voice_or_audio(
                 else None
             ),
         )
-        # Запоминаем обсуждение голосового сообщения
+        # Запоминаем обсуждение голосового сообщения или видео-кружка
         if update.effective_user:
             memory_text = (
-                "[Пользователь отправил голосовое сообщение]"
+                "[Пользователь отправил видео-кружок]"
+                if video_note
+                else "[Пользователь отправил голосовое сообщение]"
             )
 
             if (
@@ -10353,12 +10362,12 @@ async def answer_voice_or_audio(
         
     except Exception as error:
         logging.exception(
-            "Ошибка обработки голосового: %s",
+            "Ошибка обработки голосового/видео-кружка: %s",
             error,
         )
 
         await update.message.reply_text(
-            "Голосовуху не разобрал. "
+            "Кружок/голосовуху не разобрал. "
             "Либо связь поплыла, либо ты бубнишь."
         )
 
@@ -10888,7 +10897,7 @@ def main() -> None:
 
     application.add_handler(
         MessageHandler(
-            filters.VOICE | filters.AUDIO,
+            filters.VOICE | filters.AUDIO | filters.VIDEO_NOTE,
             answer_voice_or_audio,
         )
     )
@@ -10911,8 +10920,8 @@ def main() -> None:
     )
     print(
         "Яйцеслав запущен.\n"
-        "Текст, фото, документы, входящие голосовые "
-        "и голосовые ответы подключены.\n"
+        "Текст, фото, документы, входящие голосовые, "
+        "видео-кружочки и голосовые ответы подключены.\n"
         "Для остановки нажмите Ctrl+C."
     )
 
