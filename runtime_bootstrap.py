@@ -26,6 +26,7 @@ import positive_runtime
 import reputation_runtime
 import reputation_daily_runtime
 import reputation_decay_runtime
+import daily_mood_runtime
 import member_profile_runtime
 import episodic_memory_runtime
 import member_memory_safety_patch  # noqa: F401
@@ -58,6 +59,7 @@ RUNTIME_LOAD_ORDER = (
     "reputation_runtime",
     "reputation_daily_runtime",
     "reputation_decay_runtime",
+    "daily_mood_runtime",
     "member_profile_runtime",
     "episodic_memory_runtime",
     "member_memory_safety_patch",
@@ -195,6 +197,10 @@ def prepare_application_runtime(application: Application) -> None:
     # (instruction building, profile enrichment, the aggression gate) instead
     # of scanning member_reputation on a schedule.
     reputation_decay_runtime._prepare()
+    # Chat-wide mood is the last text appended to the composed instruction:
+    # it colors tone for everyone in the chat, on top of (never instead of)
+    # the per-user layers above.
+    daily_mood_runtime._prepare_application(application)
     # Rate-limit ВСЁ ТЛЕН must wrap the FINAL limiter, including the 12/min
     # group guard installed immediately above.
     import rate_limit_tlen_runtime

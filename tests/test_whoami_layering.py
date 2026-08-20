@@ -2,6 +2,7 @@ from telegram.ext import Application, CommandHandler
 
 import accountability_runtime as accountability
 import daily_content_runtime as daily_content
+import daily_mood_runtime as daily_mood
 import dialogue_guard_runtime as dialogue_guard
 import episodic_memory_runtime as episodic_memory
 import member_profile_runtime as member_profile
@@ -99,6 +100,11 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         reputation_decay, "_prepare", lambda: calls.append(("reputation_decay", None))
     )
     monkeypatch.setattr(
+        daily_mood,
+        "_prepare_application",
+        lambda app: calls.append(("daily_mood", app)),
+    )
+    monkeypatch.setattr(
         daily_content,
         "_prepare_application",
         lambda app: calls.append(("daily_content", app)),
@@ -121,6 +127,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("reputation", application),
         ("reputation_daily", application),
         ("reputation_decay", None),
+        ("daily_mood", application),
         ("daily_content", application),
     ]
     assert not hasattr(unified_titles, "install_runtime_hook")
