@@ -3,11 +3,16 @@ import random
 import initiative_engine as initiative
 
 
-def test_every_mood_key_has_a_pool():
+def test_every_mood_key_has_a_pool_with_enough_variety():
     for key in ("раздражённый", "благодушный", "циничный", "энергичный", "уставший",
-                "подозрительный", "мемный", "нейтральный"):
+                "подозрительный", "мемный", "нейтральный", "generic"):
         assert key in initiative.INITIATIVE_LINE_POOL
-        assert len(initiative.INITIATIVE_LINE_POOL[key]) >= 1
+        assert len(initiative.INITIATIVE_LINE_POOL[key]) >= 5
+
+
+def test_no_duplicate_lines_within_a_pool():
+    for key, pool in initiative.INITIATIVE_LINE_POOL.items():
+        assert len(pool) == len(set(pool)), f"duplicate line in pool {key!r}"
 
 
 def test_unknown_mood_falls_back_to_generic():
