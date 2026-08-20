@@ -35,16 +35,16 @@ def test_hostility_labels():
 
 def test_dossier_relationship_labels_are_reputation_based():
     # Familiarity is shown separately as chat level. Relationship starts neutral.
-    assert profile_v4._relationship_label(0, 0, 0) == "Нейтрально"
-    assert profile_v4._relationship_label(4, 0, 0) == "Нейтрально"
-    assert profile_v4._relationship_label(0, 0, 5) == "Нормально"
-    assert profile_v4._relationship_label(4, 0, -5) == "Слегка настороженно"
-    assert profile_v4._relationship_label(4, 0, 12) == "Кореш"
-    assert profile_v4._relationship_label(0, 0, 40) == "Свой"
-    assert profile_v4._relationship_label(0, 0, 75) == "Любимчик"
-    assert profile_v4._relationship_label(4, 0, -20) == "Настороженно"
-    assert profile_v4._relationship_label(4, 0, -40) == "Негативный знакомый"
-    assert profile_v4._relationship_label(4, 0, -80) == "Токсичный знакомый"
+    assert profile_v4._relationship_label(0, 0, 0) == "Нейтральный"
+    assert profile_v4._relationship_label(4, 0, 0) == "Нейтральный"
+    assert profile_v4._relationship_label(0, 0, 5) == "Доброжелательный"
+    assert profile_v4._relationship_label(4, 0, -5) == "Хейтерок"
+    assert profile_v4._relationship_label(4, 0, 12) == "Доброжелательный"
+    assert profile_v4._relationship_label(0, 0, 40) == "Хороший знакомый"
+    assert profile_v4._relationship_label(0, 0, 75) == "Друг"
+    assert profile_v4._relationship_label(4, 0, -20) == "Хейтерок"
+    assert profile_v4._relationship_label(4, 0, -40) == "Мини-хейтер"
+    assert profile_v4._relationship_label(4, 0, -80) == "Гига-хейтер"
     # Today's active hostility still wins over the lifetime score.
     assert profile_v4._relationship_label(4, 1, 100) == "Мини-хейтер"
     assert profile_v4._relationship_label(4, 3, 100) == "Мега-хейтер"
@@ -52,25 +52,23 @@ def test_dossier_relationship_labels_are_reputation_based():
 
 
 def test_dossier_positive_affinity_is_separate_from_chat_level():
-    assert profile_v4._positive_line({}) == "0/4 — нейтрально"
+    assert profile_v4._positive_line({}) == "0 (Нейтральная)"
     assert profile_v4._positive_line(
         {
             "chat_level": 4,
             "positive_affinity_level": 1,
-            "positive_affinity_label": "симпатия",
             "positive_affinity_points_30d": 4,
             "positive_streak": 2,
         }
-    ) == "1/4 — симпатия; 4 очк. за 30 дней, серия 2"
+    ) == "1 (Симпатия); 4 очк. за 30 дней, серия 2"
 
     # Familiarity/XP does not silently turn into affection.
     assert profile_v4._positive_line(
         {
             "chat_level": 4,
             "positive_affinity_level": 0,
-            "positive_affinity_label": "нейтрально",
         }
-    ) == "0/4 — нейтрально"
+    ) == "0 (Нейтральная)"
 
 
 def test_level_zero_non_hater_is_gentler():

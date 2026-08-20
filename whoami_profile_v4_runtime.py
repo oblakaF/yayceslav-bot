@@ -28,6 +28,8 @@ def _friendliness_line(
     penance_pending: bool,
 ) -> str:
     label = social_engine.hostility_label(active_insults)
+    if label == "Не хейтер":
+        label = "Нейтрально"
     if penance_pending:
         return f"{label} — рецидив, помилование через мемный ритуал"
     if active_insults == 0:
@@ -37,6 +39,27 @@ def _friendliness_line(
     if active_insults == 1:
         return f"{label} — 1 наезд сегодня"
     return f"{label} — {active_insults} наезда сегодня"
+
+
+def _score_relationship_label(reputation_score: int) -> str:
+    score = max(-100, min(100, int(reputation_score or 0)))
+    if score <= -76:
+        return "Гига-хейтер"
+    if score <= -51:
+        return "Мега-хейтер"
+    if score <= -26:
+        return "Мини-хейтер"
+    if score <= -1:
+        return "Хейтерок"
+    if score == 0:
+        return "Нейтральный"
+    if score <= 25:
+        return "Доброжелательный"
+    if score <= 50:
+        return "Хороший знакомый"
+    if score <= 75:
+        return "Друг"
+    return "Союзник"
 
 
 def _relationship_label(
@@ -51,41 +74,31 @@ def _relationship_label(
         return "Мега-хейтер"
     if active_hostility >= 1:
         return "Мини-хейтер"
+    return _score_relationship_label(reputation_score)
 
-    score = max(-100, min(100, int(reputation_score or 0)))
-    if score <= -70:
-        return "Токсичный знакомый"
-    if score <= -35:
-        return "Негативный знакомый"
-    if score <= -10:
-        return "Настороженно"
-    if score < 0:
-        return "Слегка настороженно"
-    if score == 0:
-        return "Нейтрально"
-    if score < 10:
-        return "Нормально"
-    if score >= 70:
-        return "Любимчик"
-    if score >= 35:
-        return "Свой"
-    return "Кореш"
+
+_POSITIVE_AFFINITY_LABELS = {
+    0: "Нейтральная",
+    1: "Симпатия",
+    2: "Хорошее отношение",
+    3: "Доверие",
+    4: "Близкий контакт",
+}
 
 
 def _positive_line(profile) -> str:
     level = max(0, min(int(profile.get("positive_affinity_level", 0) or 0), 4))
-    label = str(profile.get("positive_affinity_label") or "нейтрально")
+    label = _POSITIVE_AFFINITY_LABELS[level]
     points = max(0, int(profile.get("positive_affinity_points_30d", 0) or 0))
     streak = max(0, int(profile.get("positive_streak", 0) or 0))
     if points <= 0 and streak <= 0:
-        return f"{level}/4 — {label}"
-    return f"{level}/4 — {label}; {points} очк. за 30 дней, серия {streak}"
+        return f"{level} ({label})"
+    return f"{level} ({label}); {points} очк. за 30 дней, серия {streak}"
 
 
 def _reputation_line(profile) -> str:
     score = max(-100, min(100, int(profile.get("reputation_score", 0) or 0)))
-    label = str(profile.get("reputation_label") or "нейтрально")
-    return f"{score:+d}/100 — {label}"
+    return f"{score} ({_score_relationship_label(score)})"
 
 
 def _next_level_progress(messages_month: int, chat_level: int, is_king: bool) -> str | None:

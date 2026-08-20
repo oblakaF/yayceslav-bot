@@ -61,14 +61,14 @@ def test_profile_enrichment_keeps_reputation_separate(tmp_path):
     assert profile["reputation_label"] == "нормальный"
 
 
-def test_whoami_reputation_line_is_signed_and_bounded():
-    assert whoami_v4._reputation_line({}) == "+0/100 — нейтрально"
+def test_whoami_reputation_line_is_bounded_and_labeled():
+    assert whoami_v4._reputation_line({}) == "0 (Нейтральный)"
     assert (
-        whoami_v4._reputation_line(
-            {"reputation_score": -42, "reputation_label": "негативный"}
-        )
-        == "-42/100 — негативный"
+        whoami_v4._reputation_line({"reputation_score": -42})
+        == "-42 (Мини-хейтер)"
     )
+    assert whoami_v4._reputation_line({"reputation_score": -999}) == "-100 (Гига-хейтер)"
+    assert whoami_v4._reputation_line({"reputation_score": 999}) == "100 (Союзник)"
 
 
 def test_neutral_instruction_explicitly_overrides_old_aggressive_default():
