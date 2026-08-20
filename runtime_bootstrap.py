@@ -25,6 +25,7 @@ import accountability_runtime
 import positive_runtime
 import reputation_runtime
 import reputation_daily_runtime
+import reputation_decay_runtime
 import member_profile_runtime
 import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch
@@ -55,6 +56,7 @@ RUNTIME_LOAD_ORDER = (
     "positive_runtime",
     "reputation_runtime",
     "reputation_daily_runtime",
+    "reputation_decay_runtime",
     "member_profile_runtime",
     "member_memory_safety_patch",
     "dialogue_followup_mode_patch",
@@ -183,6 +185,10 @@ def prepare_application_runtime(application: Application) -> None:
     # The group-11 observer can revoke that same-day passive bonus if hostility
     # appears later, without altering explicit praise/abuse event counters.
     reputation_daily_runtime._prepare_application(application)
+    # Decay applies lazily to whatever _state_sync returns everywhere else
+    # (instruction building, profile enrichment, the aggression gate) instead
+    # of scanning member_reputation on a schedule.
+    reputation_decay_runtime._prepare()
     # Rate-limit ВСЁ ТЛЕН must wrap the FINAL limiter, including the 12/min
     # group guard installed immediately above.
     import rate_limit_tlen_runtime

@@ -7,6 +7,7 @@ import member_profile_runtime as member_profile
 import monthly_social_runtime as monthly
 import positive_runtime as positive
 import reputation_daily_runtime as reputation_daily
+import reputation_decay_runtime as reputation_decay
 import reputation_runtime as reputation
 import relationship_experience_runtime as relationship
 import runtime_bootstrap
@@ -89,6 +90,9 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         lambda app: calls.append(("reputation_daily", app)),
     )
     monkeypatch.setattr(
+        reputation_decay, "_prepare", lambda: calls.append(("reputation_decay", None))
+    )
+    monkeypatch.setattr(
         daily_content,
         "_prepare_application",
         lambda app: calls.append(("daily_content", app)),
@@ -109,6 +113,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("positive", application),
         ("reputation", application),
         ("reputation_daily", application),
+        ("reputation_decay", None),
         ("daily_content", application),
     ]
     assert not hasattr(unified_titles, "install_runtime_hook")
