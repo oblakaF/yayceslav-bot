@@ -45,10 +45,9 @@ def test_voice_handler_also_understands_video_notes():
     assert '"video/mp4"' in source
 
 
-def test_video_note_replies_are_a_voice_text_coin_flip():
+def test_voice_and_video_note_replies_are_a_voice_text_coin_flip():
     source = inspect.getsource(bot.answer_voice_or_audio)
     assert "random.random() < 0.5" in source
-    assert "if video_note" in source
     assert "disable_voice=not reply_as_voice" in source
 
 

@@ -10353,13 +10353,9 @@ async def answer_voice_or_audio(
                     GROUP_MEMORY_SECONDS,
                     GROUP_MEMORY_MAX_MESSAGES,
                 )
-        # Voice/audio messages always get a spoken reply, as before. Video
-        # circles get a 50/50 coin flip between voice and text.
-        reply_as_voice = (
-            random.random() < 0.5
-            if video_note
-            else True
-        )
+        # Voice, audio and video-circle replies are all a 50/50 coin flip
+        # between voice and text.
+        reply_as_voice = random.random() < 0.5
 
         await send_answer(
             update,
