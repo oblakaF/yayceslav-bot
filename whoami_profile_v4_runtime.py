@@ -13,12 +13,28 @@ from telegram.ext import Application, ApplicationHandlerStop, CommandHandler
 _PREPARED_APPLICATION_IDS: set[int] = set()
 
 
-def _find_bot_module():
-    for name in ("__main__", "bot"):
-        module = sys.modules.get(name)
-        if module is not None and callable(getattr(module, "get_member_profile", None)):
-            return module
-    return None
+def _today_hostility_label(active_insults: int) -> str:
+    value = max(0, int(active_insults or 0))
+    if value >= 11:
+        return "Гига-хейтер"
+    if value >= 4:
+        return "Мега-хейтер"
+    if value >= 2:
+        return "Мини-хейтер"
+    if value >= 1:
+        return "Хейтерок"
+    return "Нейтрально"
+
+
+def _today_positive_label(points: int) -> str:
+    value = max(0, int(points or 0))
+    if value >= 6:
+        return "Очень хорошее отношение"
+    if value >= 3:
+        return "Хорошее отношение"
+    if value >= 1:
+        return "Симпатия"
+    return "Нейтрально"
 
 
 def _friendliness_line(
@@ -26,17 +42,15 @@ def _friendliness_line(
     total_today: int,
     apologies_today: int,
     penance_pending: bool,
+    positive_today: int = 0,
 ) -> str:
-    label = social_engine.hostility_label(active_insults)
-    if penance_pending:
-        return f"{label} — рецидив, помилование через мемный ритуал"
-    if active_insults == 0:
-        if apologies_today > 0 and total_today > 0:
-            return f"{label} — сегодня уже помирились"
+    del total_today, apologies_today
+    if active_insults > 0:
+        label = _today_hostility_label(active_insults)
+        if penance_pending:
+            return f"{label} — рецидив"
         return label
-    if active_insults == 1:
-        return f"{label} — 1 наезд сегодня"
-    return f"{label} — {active_insults} наезда сегодня"
+    return _today_positive_label(positive_today)
 
 
 def _relationship_label(
@@ -45,31 +59,25 @@ def _relationship_label(
     reputation_score: int = 0,
 ) -> str:
     del chat_level  # familiarity/XP is shown separately; relationship follows reputation.
-    if active_hostility >= 11:
-        return "Гига-хейтер"
-    if active_hostility >= 3:
-        return "Мега-хейтер"
-    if active_hostility >= 1:
-        return "Мини-хейтер"
+    if active_hostility > 0:
+        return _today_hostility_label(active_hostility)
 
     score = max(-100, min(100, int(reputation_score or 0)))
     if score <= -70:
-        return "Токсичный знакомый"
+        return "Токсичное"
     if score <= -35:
-        return "Негативный знакомый"
+        return "Негативное"
     if score <= -10:
-        return "Настороженно"
+        return "Настороженное"
     if score < 0:
-        return "Слегка настороженно"
+        return "Слегка настороженное"
     if score == 0:
-        return "Нейтрально"
+        return "Нейтральное"
     if score < 10:
-        return "Нормально"
-    if score >= 70:
-        return "Любимчик"
-    if score >= 35:
-        return "Свой"
-    return "Кореш"
+        return "Нормальное"
+    if score < 35:
+        return "Хорошее"
+    return "Очень хорошее"
 
 
 def _positive_line(profile) -> str:
@@ -85,7 +93,28 @@ def _positive_line(profile) -> str:
 def _reputation_line(profile) -> str:
     score = max(-100, min(100, int(profile.get("reputation_score", 0) or 0)))
     label = str(profile.get("reputation_label") or "нейтрально")
-    return f"{score:+d}/100 — {label}"
+    score_text = f"+{score}" if score > 0 else str(score)
+    return f"{score_text} — {label}"
+
+
+def _positive_today_points_sync(bot_module, chat_id: int, user_id: int) -> int:
+    current = getattr(bot_module, "current_msk_datetime", None)
+    if not callable(current):
+        return 0
+    current_date = current().date().isoformat()
+    try:
+        with bot_module.get_db_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT affinity_points
+                FROM member_positive_daily
+                WHERE chat_id = ? AND user_id = ? AND date = ?
+                """,
+                (chat_id, user_id, current_date),
+            ).fetchone()
+    except Exception:
+        return 0
+    return max(0, int((row[0] if row else 0) or 0))
 
 
 def _next_level_progress(messages_month: int, chat_level: int, is_king: bool) -> str | None:
@@ -148,8 +177,21 @@ async def _whoami_v4(update, context) -> None:
     penance_pending = bool(profile.get("penance_pending", False))
     reputation_score = int(profile.get("reputation_score", 0) or 0)
 
+    try:
+        positive_today = await asyncio.to_thread(
+            _positive_today_points_sync, bot_module, int(chat.id), int(user.id)
+        )
+    except Exception:
+        positive_today = 0
+
     relationship = _relationship_label(chat_level, active_hostility, reputation_score)
-    friendliness = _friendliness_line(active_hostility, total_hostility, apologies, penance_pending)
+    friendliness = _friendliness_line(
+        active_hostility,
+        total_hostility,
+        apologies,
+        penance_pending,
+        positive_today,
+    )
     positive = _positive_line(profile)
     reputation = _reputation_line(profile)
 
@@ -173,7 +215,7 @@ async def _whoami_v4(update, context) -> None:
 
     lines = [
         f"🥚 ДОСЬЕ ЯЙЦЕСЛАВА НА {name}",
-        f"🤝 Яйцеславу: {relationship}",
+        f"🤝 Отношение: {relationship}",
         f"⭐ Репутация: {reputation}",
         f"💚 Симпатия: {positive}",
         f"🌡 Отношение сегодня: {friendliness}",
