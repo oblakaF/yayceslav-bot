@@ -51,6 +51,26 @@ def test_voice_and_video_note_replies_are_a_voice_text_coin_flip():
     assert "disable_voice=not reply_as_voice" in source
 
 
+def test_undirected_video_notes_can_get_a_proactive_comment():
+    source = inspect.getsource(bot.answer_voice_or_audio)
+    assert "proactive_comment = False" in source
+    assert "video_note" in source
+    assert "group_random_reply_allowed(update.effective_chat.id, now)" in source
+    assert "random.random() < VIDEO_NOTE_PROACTIVE_COMMENT_CHANCE" in source
+    assert "record_group_random_reply(update.effective_chat.id, now)" in source
+
+
+def test_proactive_video_note_comment_is_text_only_and_does_not_ask_questions():
+    source = inspect.getsource(bot.answer_voice_or_audio)
+    assert "if proactive_comment:" in source
+    assert "disable_voice=True" in source
+    assert "не задавай встречных вопросов" in source
+
+
+def test_proactive_comment_chance_is_a_moderate_constant():
+    assert 0.05 <= bot.VIDEO_NOTE_PROACTIVE_COMMENT_CHANCE <= 0.35
+
+
 def test_send_answer_disable_voice_overrides_force_voice_and_voice_mode():
     source = inspect.getsource(bot.send_answer)
     assert "disable_voice: bool = False" in source

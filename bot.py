@@ -10137,6 +10137,15 @@ async def answer_document(
 # ВХОДЯЩИЕ ГОЛОСОВЫЕ И АУДИО
 # ============================================================
 
+# Moderate, deliberately not tiny and not huge: a video circle nobody
+# addressed to the bot still has a real but bounded chance of getting an
+# unprompted reaction, so the bot can "butt into" a conversation without
+# turning into spam. Shares the same chat-wide random-intervention budget
+# (group_random_reply_allowed/record_group_random_reply) as the existing
+# hard-mode text random-reply system, so the two don't compound.
+VIDEO_NOTE_PROACTIVE_COMMENT_CHANCE = 0.20
+
+
 async def answer_voice_or_audio(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -10158,8 +10167,11 @@ async def answer_voice_or_audio(
     if media is None:
         return
 
-    # В группе голосовое обрабатывается
-    # только как ответ на сообщение Яйцеслава
+    # В группе голосовое/аудио обрабатывается только как ответ на
+    # сообщение Яйцеслава. Видео-кружок — исключение: даже не будучи
+    # адресован боту, он может (редко, с оглядкой на общий лимит
+    # случайных вмешательств в чате) получить проактивный комментарий.
+    proactive_comment = False
     if update.effective_chat.type in (
         ChatType.GROUP,
         ChatType.SUPERGROUP,
@@ -10168,8 +10180,17 @@ async def answer_voice_or_audio(
             update,
             context,
         ):
-            return
-            
+            now = time.monotonic()
+            if (
+                video_note
+                and group_random_reply_allowed(update.effective_chat.id, now)
+                and random.random() < VIDEO_NOTE_PROACTIVE_COMMENT_CHANCE
+            ):
+                proactive_comment = True
+                record_group_random_reply(update.effective_chat.id, now)
+            else:
+                return
+
     if not await enforce_rate_limit(
         update,
         "media",
@@ -10257,13 +10278,25 @@ async def answer_voice_or_audio(
             custom_path=str(file_path)
         )
 
-        prompt = (
-            "Прослушай сообщение пользователя. "
-            "Пойми вопрос и коротко ответь "
-            "по существу в характере Яйцеслава. "
-            "Полную расшифровку не делай, "
-            "если её не просили."
-        )
+        if proactive_comment:
+            prompt = (
+                "Тебя никто не звал и не спрашивал — ты сам решил "
+                "вклиниться в чужой разговор. Посмотри видео-кружок "
+                "(там может рассказываться история, показываться что-то "
+                "вроде котят и т.п.) и коротко вставь СВОЁ мнение или "
+                "комментарий по содержанию, как будто сам встрял в беседу. "
+                "Это не ответ на вопрос: не задавай встречных вопросов, "
+                "не веди себя как ассистент. Одна короткая реплика "
+                "в характере Яйцеслава."
+            )
+        else:
+            prompt = (
+                "Прослушай сообщение пользователя. "
+                "Пойми вопрос и коротко ответь "
+                "по существу в характере Яйцеслава. "
+                "Полную расшифровку не делай, "
+                "если её не просили."
+            )
 
         answer = await ask_gemini(
             contents=[
@@ -10353,17 +10386,28 @@ async def answer_voice_or_audio(
                     GROUP_MEMORY_SECONDS,
                     GROUP_MEMORY_MAX_MESSAGES,
                 )
-        # Voice, audio and video-circle replies are all a 50/50 coin flip
-        # between voice and text.
-        reply_as_voice = random.random() < 0.5
+        if proactive_comment:
+            # An unprompted comment stays text-only; a random voice
+            # message interrupting someone else's conversation would be
+            # more intrusive than a random text reply.
+            await send_answer(
+                update,
+                context,
+                answer,
+                disable_voice=True,
+            )
+        else:
+            # Voice, audio and video-circle replies are all a 50/50 coin
+            # flip between voice and text.
+            reply_as_voice = random.random() < 0.5
 
-        await send_answer(
-            update,
-            context,
-            answer,
-            force_voice=reply_as_voice,
-            disable_voice=not reply_as_voice,
-        )
+            await send_answer(
+                update,
+                context,
+                answer,
+                force_voice=reply_as_voice,
+                disable_voice=not reply_as_voice,
+            )
 
         await increment_stat(
             "bot_answers"
