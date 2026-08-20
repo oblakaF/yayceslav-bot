@@ -27,6 +27,7 @@ import reputation_runtime
 import reputation_daily_runtime
 import reputation_decay_runtime
 import member_profile_runtime
+import episodic_memory_runtime
 import member_memory_safety_patch  # noqa: F401
 import dialogue_followup_mode_patch
 
@@ -58,6 +59,7 @@ RUNTIME_LOAD_ORDER = (
     "reputation_daily_runtime",
     "reputation_decay_runtime",
     "member_profile_runtime",
+    "episodic_memory_runtime",
     "member_memory_safety_patch",
     "dialogue_followup_mode_patch",
     "monthly_social_runtime",
@@ -164,6 +166,10 @@ def prepare_application_runtime(application: Application) -> None:
     # are already installed by the import chain above before this runs.
     relationship_experience_runtime._prepare_application(application)
     member_profile_runtime._prepare_application(application)
+    # Episodic memory wraps the profile getter after member_profile_runtime's
+    # callback-term memory, adding a disjoint "episodic_notes" key; order
+    # between the two memory layers does not matter to each other.
+    episodic_memory_runtime._prepare_application(application)
     # v3 must prepare after monthly_memory_scope_patch has installed its
     # calendar-month storage functions; import order above preserves that.
     whoami_profile_v3_runtime._prepare_application(application)

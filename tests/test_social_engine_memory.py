@@ -75,7 +75,35 @@ def test_serious_topic_disables_social_callbacks():
         messages_month=400,
         callback_terms=("steam",),
         self_reported_facts=("люблю рыбалку",),
+        episodic_notes=("яйцеслав ты лучший",),
     )
     assert social_engine.build_social_instruction(
         ctx, serious_topic=True, rng=ZeroRng()
     ) == ""
+
+
+def test_episodic_note_can_be_referenced_once():
+    ctx = social_engine.SocialContext(
+        relationship_level=2,
+        chat_level=2,
+        messages_month=200,
+        episodic_notes=("яйцеслав ты долбоёб",),
+    )
+    instruction = social_engine.build_social_instruction(ctx, rng=ZeroRng())
+    assert "запомнившийся момент" in instruction
+    assert "долбоёб" in instruction
+
+
+def test_no_episodic_notes_means_no_callback_line():
+    ctx = social_engine.SocialContext(
+        relationship_level=2, chat_level=2, messages_month=200,
+    )
+    instruction = social_engine.build_social_instruction(ctx, rng=ZeroRng())
+    assert "запомнившийся момент" not in instruction
+
+
+def test_from_profile_round_trips_episodic_notes():
+    ctx = social_engine.from_profile(
+        {"episodic_notes": ["яйцеслав ты лучший", "  "]}
+    )
+    assert ctx.episodic_notes == ("яйцеслав ты лучший",)

@@ -28,6 +28,7 @@ class SocialContext:
     memory_chat_id: int = 0
     self_reported_facts: tuple[str, ...] = ()
     callback_terms: tuple[str, ...] = ()
+    episodic_notes: tuple[str, ...] = ()
 
 
 def chat_level_from_messages(messages_month: int) -> int:
@@ -151,6 +152,11 @@ def from_profile(profile: Mapping[str, Any] | None) -> SocialContext:
         callback_terms=tuple(
             str(item)
             for item in (profile.get("callback_terms") or ())
+            if str(item).strip()
+        ),
+        episodic_notes=tuple(
+            str(item)
+            for item in (profile.get("episodic_notes") or ())
             if str(item).strip()
         ),
     )
@@ -288,5 +294,13 @@ def build_social_instruction(
             "Этот же пользователь недавно сам упоминал тему/слово: " + repr(term) + ". Можно один раз естественно припомнить это в шутке. Это НЕ доказательство постоянного факта или предпочтения."
         )
         _reserve_callback(ctx, term)
+
+    if ctx.episodic_notes and rng.random() < min(0.15, 0.05 + 0.02 * ctx.chat_level):
+        note = rng.choice(ctx.episodic_notes)
+        lines.append(
+            "Есть конкретный запомнившийся момент с этим человеком: " + repr(note) +
+            ". Можно ОДИН раз естественно на него сослаться, если к месту. "
+            "Не выдумывай подробности сверх этой заметки."
+        )
 
     return "\n".join(lines)

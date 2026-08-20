@@ -3,6 +3,7 @@ from telegram.ext import Application, CommandHandler
 import accountability_runtime as accountability
 import daily_content_runtime as daily_content
 import dialogue_guard_runtime as dialogue_guard
+import episodic_memory_runtime as episodic_memory
 import member_profile_runtime as member_profile
 import monthly_social_runtime as monthly
 import positive_runtime as positive
@@ -70,6 +71,11 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         "_prepare_application",
         lambda app: calls.append(("member_profile", app)),
     )
+    monkeypatch.setattr(
+        episodic_memory,
+        "_prepare_application",
+        lambda app: calls.append(("episodic_memory", app)),
+    )
     monkeypatch.setattr(v3, "_prepare_application", lambda app: calls.append(("v3", app)))
     monkeypatch.setattr(v4, "_prepare_application", lambda app: calls.append(("v4", app)))
     monkeypatch.setattr(dialogue_guard, "_prepare", lambda: calls.append(("dialogue", None)))
@@ -106,6 +112,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("monthly", application),
         ("relationship", application),
         ("member_profile", application),
+        ("episodic_memory", application),
         ("v3", application),
         ("v4", application),
         ("dialogue", None),
