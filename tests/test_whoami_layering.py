@@ -5,6 +5,7 @@ import daily_content_runtime as daily_content
 import daily_mood_runtime as daily_mood
 import dialogue_guard_runtime as dialogue_guard
 import episodic_memory_runtime as episodic_memory
+import initiative_runtime as initiative
 import member_profile_runtime as member_profile
 import pairwise_relationship_runtime as pairwise_relationship
 import monthly_social_runtime as monthly
@@ -115,6 +116,11 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         "_prepare_application",
         lambda app: calls.append(("daily_content", app)),
     )
+    monkeypatch.setattr(
+        initiative,
+        "_prepare_application",
+        lambda app: calls.append(("initiative", app)),
+    )
 
     runtime_bootstrap.prepare_application_runtime(application)
 
@@ -136,6 +142,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("reputation_decay", None),
         ("daily_mood", application),
         ("daily_content", application),
+        ("initiative", application),
     ]
     assert not hasattr(unified_titles, "install_runtime_hook")
     assert not hasattr(monthly, "install_runtime_hook")

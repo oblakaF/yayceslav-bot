@@ -48,6 +48,7 @@ import whoami_profile_v4_runtime
 # runtime scheduler preparation is centralized here like the other safe layers.
 import daily_content_runtime
 import daily_content_source_patch  # noqa: F401
+import initiative_runtime
 
 
 # Exposed for a small contract test. This documents the critical ordering
@@ -74,6 +75,7 @@ RUNTIME_LOAD_ORDER = (
     "whoami_profile_v4_runtime",
     "daily_content_runtime",
     "daily_content_source_patch",
+    "initiative_runtime",
 )
 
 
@@ -213,6 +215,10 @@ def prepare_application_runtime(application: Application) -> None:
     # Daily content captures the already-composed daily+monthly scheduler and
     # appends its own due checks; source-network logic is untouched.
     daily_content_runtime._prepare_application(application)
+    # Initiative must wrap the FULLY composed run_due_daily_titles chain
+    # (silent titles -> daily jokes/news) so it fires last on the same tick,
+    # never displacing them.
+    initiative_runtime._prepare_application(application)
 
 
 def _install_preflight_hook() -> None:

@@ -61,6 +61,7 @@ def test_runtime_bootstrap_documents_critical_wrapper_order():
     assert order.index("whoami_profile_v3_runtime") < order.index("monthly_memory_scope_patch")
     assert order.index("monthly_memory_scope_patch") < order.index("whoami_profile_v4_runtime")
     assert order.index("daily_content_runtime") < order.index("daily_content_source_patch")
+    assert order.index("daily_content_runtime") < order.index("initiative_runtime")
 
 
 def test_consolidated_patches_do_not_reenter_bootstrap():
