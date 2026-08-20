@@ -8790,6 +8790,7 @@ async def send_answer(
     force_voice: bool = False,
     show_buttons: bool = False,
     source_user_text: str | None = None,
+    disable_voice: bool = False,
 ) -> None:
     """Отправляет voice/text; в групповой болтовне иногда делает ответ человечнее."""
 
@@ -8801,7 +8802,10 @@ async def send_answer(
     if not answer_text:
         answer_text = "Яйцеслав задумался и ничего не изрёк. Редкий анлак."
 
-    use_voice = force_voice or voice_mode_enabled(context)
+    # disable_voice is an explicit per-call override (e.g. a random 50/50
+    # roll for video-circle replies) and wins over both force_voice and the
+    # user's own voice_mode setting.
+    use_voice = not disable_voice and (force_voice or voice_mode_enabled(context))
     if use_voice:
         try:
             await send_voice_answer(update, answer_text)
@@ -10349,13 +10353,22 @@ async def answer_voice_or_audio(
                     GROUP_MEMORY_SECONDS,
                     GROUP_MEMORY_MAX_MESSAGES,
                 )
+        # Voice/audio messages always get a spoken reply, as before. Video
+        # circles get a 50/50 coin flip between voice and text.
+        reply_as_voice = (
+            random.random() < 0.5
+            if video_note
+            else True
+        )
+
         await send_answer(
             update,
             context,
             answer,
-            force_voice=True,
+            force_voice=reply_as_voice,
+            disable_voice=not reply_as_voice,
         )
-        
+
         await increment_stat(
             "bot_answers"
         )

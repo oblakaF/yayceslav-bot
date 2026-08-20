@@ -45,6 +45,19 @@ def test_voice_handler_also_understands_video_notes():
     assert '"video/mp4"' in source
 
 
+def test_video_note_replies_are_a_voice_text_coin_flip():
+    source = inspect.getsource(bot.answer_voice_or_audio)
+    assert "random.random() < 0.5" in source
+    assert "if video_note" in source
+    assert "disable_voice=not reply_as_voice" in source
+
+
+def test_send_answer_disable_voice_overrides_force_voice_and_voice_mode():
+    source = inspect.getsource(bot.send_answer)
+    assert "disable_voice: bool = False" in source
+    assert "not disable_voice and (force_voice or voice_mode_enabled(context))" in source
+
+
 def test_main_registers_video_note_on_the_voice_handler():
     source = inspect.getsource(bot.main)
     assert "filters.VOICE | filters.AUDIO | filters.VIDEO_NOTE" in source
