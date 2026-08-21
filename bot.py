@@ -55,6 +55,7 @@ import social_engine
 import state_engine
 import style_engine
 import thinking_engine
+import url_content_fetcher
 import title_pools
 import voice_runtime
 from personality import (
@@ -9373,6 +9374,24 @@ async def answer_text_message(
                 GROUP_MEMORY_MAX_MESSAGES,
                 group_author_name,
             )
+
+        # A pasted or forwarded link carries no real content in the bare
+        # URL text itself -- Gemini can't browse it. Fetch the page and
+        # attach its readable text as extra context for THIS reply only;
+        # it's never written into GROUP_MEMORY/PRIVATE_MEMORY above, so a
+        # follow-up message doesn't drag the whole article along.
+        linked_url = url_content_fetcher.find_first_url(user_text)
+        if linked_url:
+            article_text = await asyncio.to_thread(
+                url_content_fetcher.fetch_article_text_sync, linked_url
+            )
+            if article_text:
+                request_for_gemini = (
+                    f"{request_for_gemini}\n\n"
+                    "[Текст страницы по ссылке из сообщения пользователя, "
+                    "для контекста; не выдавай его дословно, если не просили]:\n"
+                    f"{article_text}"
+                )
 
         answer = await ask_gemini(
             contents=request_for_gemini,

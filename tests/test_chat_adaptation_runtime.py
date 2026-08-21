@@ -71,6 +71,14 @@ def test_proactive_comment_chance_is_a_moderate_constant():
     assert 0.05 <= bot.VIDEO_NOTE_PROACTIVE_COMMENT_CHANCE <= 0.35
 
 
+def test_answer_text_message_attaches_linked_article_text():
+    source = inspect.getsource(bot.answer_text_message)
+    assert "url_content_fetcher.find_first_url(user_text)" in source
+    assert "url_content_fetcher.fetch_article_text_sync" in source
+    # Wired into the actual outgoing request, appended after it's resolved.
+    assert source.index("linked_url = url_content_fetcher") < source.rindex("ask_gemini(")
+
+
 def test_send_answer_disable_voice_overrides_force_voice_and_voice_mode():
     source = inspect.getsource(bot.send_answer)
     assert "disable_voice: bool = False" in source
