@@ -145,3 +145,22 @@ def test_topicless_phone_and_watafa_are_not_background_events():
 
 def test_unknown_event_has_zero_background_chance():
     assert sticker_engine.event_chance("definitely_unknown") == 0.0
+
+
+def test_reputation_sticker_chance_stays_neutral_without_a_score():
+    assert sticker_engine.reputation_sticker_chance("agreement", None) == sticker_engine.event_chance("agreement")
+
+
+def test_reputation_sticker_chance_is_rarer_for_low_reputation():
+    base = sticker_engine.event_chance("agreement")
+    assert sticker_engine.reputation_sticker_chance("agreement", -50) < base
+
+
+def test_reputation_sticker_chance_is_more_common_for_high_reputation():
+    base = sticker_engine.event_chance("hard_dismissal")
+    assert sticker_engine.reputation_sticker_chance("hard_dismissal", 50) > base
+
+
+def test_reputation_sticker_chance_never_exceeds_the_hard_cap():
+    for event in sticker_engine.EVENT_STICKERS:
+        assert sticker_engine.reputation_sticker_chance(event, 100) <= sticker_engine.BACKGROUND_STICKER_CHANCE_CAP

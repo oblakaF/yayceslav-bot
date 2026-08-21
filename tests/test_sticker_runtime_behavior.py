@@ -1,9 +1,12 @@
 import asyncio
+import sqlite3
+import sys
 from types import SimpleNamespace
 
 import pytest
 from telegram.ext import ApplicationHandlerStop, filters
 
+import reputation_runtime
 import sticker_engine
 import sticker_interaction
 import sticker_runtime
@@ -11,6 +14,28 @@ import sticker_semantics_aug19
 
 
 sticker_semantics_aug19.install_catalog_semantics()
+
+
+def test_member_reputation_score_sync_reads_real_score(tmp_path, monkeypatch):
+    db_path = tmp_path / "sticker_reputation_test.db"
+
+    def get_db_connection():
+        return sqlite3.connect(db_path)
+
+    fake_bot = SimpleNamespace(get_db_connection=get_db_connection)
+    monkeypatch.setitem(sys.modules, "bot", fake_bot)
+    reputation_runtime._initialize_table(fake_bot)
+    reputation_runtime._apply_delta_sync(fake_bot, 1, 2, 9, "positive")
+
+    assert sticker_runtime._member_reputation_score_sync(1, 2) == 9
+
+
+def test_member_reputation_score_sync_is_none_when_bot_module_missing(monkeypatch):
+    # Other test modules importing the real bot.py may have already cached
+    # it in sys.modules["bot"] in this process; simulate it not being ready
+    # without touching sys.modules["__main__"], which pytest itself owns.
+    monkeypatch.delitem(sys.modules, "bot", raising=False)
+    assert sticker_runtime._member_reputation_score_sync(1, 2) is None
 
 
 class FakeBotNoCatalog:

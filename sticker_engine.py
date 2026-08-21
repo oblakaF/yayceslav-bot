@@ -324,6 +324,29 @@ def event_chance(event: str) -> float:
     return max(0.0, min(BACKGROUND_STICKER_CHANCE_CAP, raw))
 
 
+REPUTATION_COLD_STICKER_THRESHOLD = -26
+REPUTATION_WARM_STICKER_THRESHOLD = 26
+
+
+def reputation_sticker_chance(event: str, reputation_score: int | None) -> float:
+    """A playful background sticker leans toward people the bot likes.
+
+    Still capped at BACKGROUND_STICKER_CHANCE_CAP -- reputation nudges the
+    chance, it never turns a rare gesture into a common one.
+    """
+    base = event_chance(event)
+    if reputation_score is None:
+        return base
+    score = int(reputation_score)
+    if score <= REPUTATION_COLD_STICKER_THRESHOLD:
+        multiplier = 0.4
+    elif score >= REPUTATION_WARM_STICKER_THRESHOLD:
+        multiplier = 1.5
+    else:
+        multiplier = 1.0
+    return max(0.0, min(BACKGROUND_STICKER_CHANCE_CAP, base * multiplier))
+
+
 def validate_map() -> None:
     known = set(STICKER_ORDER)
     if len(STICKER_ORDER) != 37 or len(known) != 37:

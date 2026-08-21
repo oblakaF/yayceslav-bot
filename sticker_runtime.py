@@ -6,6 +6,7 @@ instance attributes to it. Runtime bookkeeping lives in this module instead.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -73,6 +74,22 @@ def _shared_db_connection_factory():
         if callable(factory):
             return factory
     return None
+
+
+def _member_reputation_score_sync(chat_id: int, user_id: int) -> int | None:
+    """Best-effort reputation lookup; None if the bot module isn't ready."""
+    for module_name in ("__main__", "bot"):
+        module = sys.modules.get(module_name)
+        if module is not None and callable(getattr(module, "get_db_connection", None)):
+            break
+    else:
+        return None
+    try:
+        import reputation_runtime
+
+        return int(reputation_runtime._state_sync(module, chat_id, user_id)["score"])
+    except Exception:
+        return None
 
 
 def _known_group_chat_ids() -> tuple[int, ...]:
@@ -503,7 +520,10 @@ async def contextual_sticker_listener(update, context) -> None:
         return
     if not sticker_slot_allowed(chat.id, user.id, now):
         return
-    if random.random() >= sticker_engine.event_chance(event):
+    reputation_score = await asyncio.to_thread(
+        _member_reputation_score_sync, chat.id, user.id
+    )
+    if random.random() >= sticker_engine.reputation_sticker_chance(event, reputation_score):
         return
 
     sticker_key = sticker_engine.choose_sticker_key(event)
