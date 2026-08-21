@@ -8,6 +8,8 @@ import random
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+import title_traits
+
 
 @dataclass(frozen=True)
 class SocialContext:
@@ -273,9 +275,17 @@ def build_social_instruction(
     _maybe_add_apology_hint(lines, ctx, rng=rng)
 
     if ctx.chat_level >= 1 and ctx.current_title and rng.random() < (0.06 + 0.03 * ctx.chat_level):
-        lines.append(
-            "Редкий callback на его шуточный титул: " + repr(ctx.current_title) + ". Только если к месту."
-        )
+        trait = title_traits.trait_for_title(ctx.current_title)
+        if trait:
+            lines.append(
+                "Сегодняшний титул этого человека: " + repr(ctx.current_title) +
+                ". Это не просто ярлык — можно реально " + trait +
+                ". Обыграй, если к месту, не через силу."
+            )
+        else:
+            lines.append(
+                "Редкий callback на его шуточный титул: " + repr(ctx.current_title) + ". Только если к месту."
+            )
 
     if ctx.chat_level >= 2 and ctx.joke_archetype and rng.random() < (0.04 + 0.02 * ctx.chat_level):
         lines.append(

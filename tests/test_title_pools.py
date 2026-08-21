@@ -80,3 +80,43 @@ def test_picker_accepts_legacy_title_from_database():
     result = title_pools.pick_title(legacy_title, rng=random.Random(7))
     assert result in title_pools.ALL_TITLES
     assert result != legacy_title
+
+
+def test_every_pool_has_a_sentiment_tier():
+    assert set(title_pools.POOL_SENTIMENT) == set(title_pools.TITLE_POOLS)
+    assert set(title_pools.POOL_SENTIMENT.values()) == {"positive", "neutral", "negative"}
+
+
+def test_tier_for_reputation_matches_score_bands():
+    assert title_pools.tier_for_reputation(-100) == "negative"
+    assert title_pools.tier_for_reputation(-26) == "negative"
+    assert title_pools.tier_for_reputation(-25) == "neutral"
+    assert title_pools.tier_for_reputation(0) == "neutral"
+    assert title_pools.tier_for_reputation(25) == "neutral"
+    assert title_pools.tier_for_reputation(26) == "positive"
+    assert title_pools.tier_for_reputation(100) == "positive"
+
+
+def test_picker_with_positive_tier_only_draws_from_positive_pools():
+    rng = random.Random(1)
+    positive_titles = {t for pool in ("classic", "positive") for t in title_pools.TITLE_POOLS[pool]}
+    for _ in range(50):
+        assert title_pools.pick_title(tier="positive", rng=rng) in positive_titles
+
+
+def test_picker_with_negative_tier_only_draws_from_negative_pools():
+    rng = random.Random(2)
+    negative_titles = {t for pool in ("absurd", "profane") for t in title_pools.TITLE_POOLS[pool]}
+    for _ in range(50):
+        assert title_pools.pick_title(tier="negative", rng=rng) in negative_titles
+
+
+def test_picker_with_neutral_tier_avoids_positive_and_negative_pools():
+    rng = random.Random(3)
+    off_limits = {
+        t
+        for pool in ("classic", "positive", "absurd", "profane")
+        for t in title_pools.TITLE_POOLS[pool]
+    }
+    for _ in range(50):
+        assert title_pools.pick_title(tier="neutral", rng=rng) not in off_limits

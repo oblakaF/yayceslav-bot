@@ -102,6 +102,29 @@ def test_no_episodic_notes_means_no_callback_line():
     assert "запомнившийся момент" not in instruction
 
 
+def test_traited_title_gets_embodiment_instruction():
+    ctx = social_engine.SocialContext(
+        relationship_level=2,
+        chat_level=2,
+        messages_month=200,
+        current_title="Смотрящий за чатом",
+    )
+    instruction = social_engine.build_social_instruction(ctx, rng=ZeroRng())
+    assert "не просто ярлык" in instruction
+    assert "смотрящий" in instruction
+
+
+def test_untraited_title_falls_back_to_generic_callback():
+    ctx = social_engine.SocialContext(
+        relationship_level=2,
+        chat_level=2,
+        messages_month=200,
+        current_title="Мудак Премиум",
+    )
+    instruction = social_engine.build_social_instruction(ctx, rng=ZeroRng())
+    assert "Редкий callback на его шуточный титул" in instruction
+
+
 def test_from_profile_round_trips_episodic_notes():
     ctx = social_engine.from_profile(
         {"episodic_notes": ["яйцеслав ты лучший", "  "]}

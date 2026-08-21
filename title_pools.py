@@ -116,16 +116,52 @@ ALL_TITLES: tuple[str, ...] = tuple(
 PERSONALITY_NAMES: tuple[str, ...] = tuple(TITLE_POOLS)
 
 
+# Which tone a pool leans toward, so the daily title can follow how someone
+# actually treats Yayceslav instead of being a pure coin flip. "classic" and
+# "positive" are unambiguously wholesome; "absurd" and "profane" are
+# insults/mockery; everything else is playful-neutral either way.
+POOL_SENTIMENT: dict[str, str] = {
+    "classic": "positive",
+    "positive": "positive",
+    "youth": "neutral",
+    "blat": "neutral",
+    "operative": "neutral",
+    "absurd": "negative",
+    "profane": "negative",
+    "street_memes": "neutral",
+    "legendary": "neutral",
+}
+
+REPUTATION_NEGATIVE_TITLE_THRESHOLD = -26
+REPUTATION_POSITIVE_TITLE_THRESHOLD = 26
+
+
+def tier_for_reputation(score: int) -> str:
+    value = int(score or 0)
+    if value <= REPUTATION_NEGATIVE_TITLE_THRESHOLD:
+        return "negative"
+    if value >= REPUTATION_POSITIVE_TITLE_THRESHOLD:
+        return "positive"
+    return "neutral"
+
+
+def pools_for_tier(tier: str) -> tuple[str, ...]:
+    return tuple(name for name, sentiment in POOL_SENTIMENT.items() if sentiment == tier)
+
+
 def pick_title(
     previous_title: str | None = None,
     *,
+    tier: str | None = None,
     rng=random,
 ) -> str:
-    """Сначала выбирает пул, затем случайный титул из него."""
+    """Сначала выбирает пул (в рамках тональности, если задана), затем титул."""
+
+    pool_names = pools_for_tier(tier) if tier else tuple(TITLE_POOLS)
 
     eligible: list[tuple[str, tuple[str, ...]]] = []
-
-    for personality, pool in TITLE_POOLS.items():
+    for personality in pool_names:
+        pool = TITLE_POOLS[personality]
         candidates = tuple(
             title
             for title in pool
@@ -135,6 +171,10 @@ def pick_title(
             eligible.append((personality, candidates))
 
     if not eligible:
+        # A tier can run dry (e.g. only one title left and it was
+        # yesterday's) -- fall back to the full pool rather than repeat.
+        if tier:
+            return pick_title(previous_title, rng=rng)
         return rng.choice(ALL_TITLES)
 
     _personality, candidates = rng.choice(eligible)

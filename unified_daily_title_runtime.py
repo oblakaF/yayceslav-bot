@@ -115,14 +115,27 @@ def _candidate_rows_sync(bot_module, chat_id: int, current_date: str) -> list[di
     return member_repository.daily_title_candidates(bot_module, chat_id, current_date)
 
 
-def _pick_title_for(candidate: dict[str, Any], kind: str, *, rng=random) -> str:
+def _pick_title_for(
+    candidate: dict[str, Any],
+    kind: str,
+    *,
+    reputation_score: int | None = None,
+    rng=random,
+) -> str:
     previous = candidate.get("previous_title")
     if kind == "never_spoke":
         pool = tuple(t for t in member_profile_runtime.SILENT_NEVER_TITLES if t != previous)
     elif kind == "silent_week":
         pool = tuple(t for t in member_profile_runtime.SILENT_WEEK_TITLES if t != previous)
     else:
-        return title_pools.pick_title(previous, rng=rng)
+        # Silence isn't bad behavior toward the bot, so only "active"
+        # members get their title tone tied to reputation.
+        tier = (
+            title_pools.tier_for_reputation(reputation_score)
+            if reputation_score is not None
+            else None
+        )
+        return title_pools.pick_title(previous, tier=tier, rng=rng)
 
     if not pool:
         pool = (
@@ -148,6 +161,15 @@ def _save_kind_sync(bot_module, chat_id: int, current_date: str, kind: str) -> N
 
 def _display_name_sync(bot_module, chat_id: int, user_id: int) -> str:
     return member_repository.display_name(bot_module, chat_id, user_id)
+
+
+def _reputation_score_sync(bot_module, chat_id: int, user_id: int) -> int | None:
+    try:
+        import reputation_runtime
+
+        return int(reputation_runtime._state_sync(bot_module, chat_id, user_id)["score"])
+    except Exception:
+        return None
 
 
 def _format_message(display_name: str, title: str, kind: str) -> str:
@@ -210,7 +232,10 @@ async def run_unified_daily_titles(application: Application) -> None:
                 total_messages=chosen["total_messages"],
                 week_messages=chosen["week_messages"],
             )
-            title = _pick_title_for(chosen, kind)
+            reputation_score = await asyncio.to_thread(
+                _reputation_score_sync, bot_module, chat_id, chosen["user_id"]
+            )
+            title = _pick_title_for(chosen, kind, reputation_score=reputation_score)
             created = await asyncio.to_thread(
                 bot_module.try_assign_daily_title_sync,
                 chat_id,

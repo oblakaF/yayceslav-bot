@@ -80,12 +80,12 @@ def test_neutral_instruction_explicitly_overrides_old_aggressive_default():
 
 def test_instruction_tells_gemini_to_explain_reputation_honestly():
     # If asked "why am I a hater", the bot should ground the answer in the
-    # real mechanism (praise/abuse directed at it), not invent pop-psychology
-    # about the user's life.
+    # real mechanism (praise/abuse directed at it) first. A behavioral read
+    # is welcome too, but only grounded in what the person actually did.
     for score in (-80, -20, 0, 20, 80):
         text = runtime._reputation_instruction(score)
-        assert "объясняй ЧЕСТНО через реальный" in text
-        assert "Не выдумывай психологический разбор" in text
+        assert "честно объясни через" in text
+        assert "опираться на то, что человек реально писал/делал" in text
 
 
 def test_negative_history_changes_long_term_attitude():
