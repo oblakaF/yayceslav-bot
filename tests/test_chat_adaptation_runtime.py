@@ -39,6 +39,21 @@ def test_primary_text_path_can_use_humanizer_but_media_paths_do_not():
     assert "source_user_text=" not in inspect.getsource(bot.answer_voice_or_audio)
 
 
+def test_voice_handler_keeps_typing_indicator_alive_during_processing():
+    # Telegram's own "typing..." fades after ~5s; a 20-30s video/voice
+    # reply needs it refreshed or the bot looks like it silently stopped
+    # reacting long before the actual answer arrives.
+    source = inspect.getsource(bot.answer_voice_or_audio)
+    assert "keep_alive_task = asyncio.create_task(" in source
+    assert "_keep_chat_action_alive(" in source
+    assert "keep_alive_task.cancel()" in source
+
+
+def test_voice_handler_forces_low_thinking_for_latency():
+    source = inspect.getsource(bot.answer_voice_or_audio)
+    assert 'thinking_level="low"' in source
+
+
 def test_voice_handler_also_understands_video_notes():
     source = inspect.getsource(bot.answer_voice_or_audio)
     assert "update.message.video_note" in source

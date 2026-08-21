@@ -10212,6 +10212,32 @@ async def answer_document(
 VIDEO_NOTE_PROACTIVE_COMMENT_CHANCE = 0.20
 
 
+async def _keep_chat_action_alive(
+    chat_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    action: str = ChatAction.TYPING,
+    interval_seconds: float = 4.0,
+) -> None:
+    """Refreshes the "typing..." indicator until cancelled.
+
+    Telegram's own chat-action indicator fades after ~5 seconds. Video/voice
+    replies can take 20-30s (multimodal understanding + generation), so
+    without a refresh the indicator disappears long before the reply
+    actually arrives and it looks like the bot silently stopped reacting.
+    """
+    try:
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action=action)
+            except Exception as error:
+                # One flaky send should not kill the whole keep-alive loop.
+                logging.debug("Chat action keep-alive send failed: %s", error)
+    except asyncio.CancelledError:
+        pass
+
+
 async def answer_voice_or_audio(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -10337,6 +10363,9 @@ async def answer_voice_or_audio(
             update.effective_user.id
         )
 
+    keep_alive_task = asyncio.create_task(
+        _keep_chat_action_alive(update.effective_chat.id, context)
+    )
     try:
         telegram_file = await media.get_file()
 
@@ -10393,6 +10422,12 @@ async def answer_voice_or_audio(
                 if update.effective_user
                 else None
             ),
+            # The auto-detector would otherwise judge complexity from the
+            # generic instruction prompt text (the real content is opaque
+            # binary audio/video), which doesn't reliably pick the fastest
+            # tier. These are short conversational replies, not deep
+            # reasoning tasks, so force the low tier for latency.
+            thinking_level="low",
         )
         # Запоминаем обсуждение голосового сообщения или видео-кружка
         if update.effective_user:
@@ -10491,6 +10526,11 @@ async def answer_voice_or_audio(
         )
 
     finally:
+        keep_alive_task.cancel()
+        try:
+            await keep_alive_task
+        except asyncio.CancelledError:
+            pass
         file_path.unlink(
             missing_ok=True
         )
