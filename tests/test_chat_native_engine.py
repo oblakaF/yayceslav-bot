@@ -14,6 +14,18 @@ def test_extracts_local_words_and_phrases_without_raw_identifiers():
     assert all("week" not in term for term in terms)
 
 
+def test_bigram_is_dropped_when_either_word_is_a_stopword():
+    # Regression: "тоже" is a stopword but "пройдено" isn't, so the old
+    # "skip only if BOTH are stopwords" rule let this noise phrase through
+    # and it ended up shown as a whoami "monthly theme".
+    terms = set(
+        chat_native_engine.extract_candidate_terms("уровень тоже пройдено вчера")
+    )
+    assert "тоже пройдено" not in terms
+    assert "уровень" in terms
+    assert "пройдено" in terms
+
+
 def test_compile_requires_repeat_and_multiple_people():
     selected = chat_native_engine.compile_profile_terms(
         [

@@ -20,6 +20,7 @@ _WORD_STOPWORDS = {
     "зачем", "кто", "кого", "кому", "чем", "чего", "какой", "какая", "какие",
     "так", "там", "тут", "здесь", "вот", "уже", "еще", "ещё", "просто", "вообще",
     "сейчас", "сегодня", "вчера", "завтра", "потом", "теперь", "тогда", "очень",
+    "тоже", "также", "снова", "опять",
     "можно", "надо", "нужно", "будет", "было", "были", "есть", "нет", "да",
     "ну", "ага", "или", "либо", "если", "для", "про", "при", "без", "под",
     "над", "между", "через", "после", "перед", "из", "от", "до", "по", "на",
@@ -71,8 +72,11 @@ def _theme_ok(term: str) -> bool:
     if normalized in _THEME_NOISE:
         return False
     words = [_normalize_word(w) for w in _WORD_RE.findall(normalized)]
-    meaningful = [w for w in words if w not in _THEME_NOISE and len(w) >= 3]
-    return bool(meaningful)
+    if not words:
+        return False
+    # For multi-word phrases, every word must be meaningful -- a single
+    # real word next to filler ("тоже пройдено") is not a real topic.
+    return all(w not in _THEME_NOISE and len(w) >= 3 for w in words)
 
 
 def _initialize_tables(bot_module) -> None:

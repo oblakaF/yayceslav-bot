@@ -68,7 +68,7 @@ def extract_candidate_terms(text: str) -> tuple[str, ...]:
         candidates.add(token)
 
     for left, right in zip(tokens, tokens[1:]):
-        if left in _STOPWORDS and right in _STOPWORDS:
+        if left in _STOPWORDS or right in _STOPWORDS:
             continue
         if len(left) < 3 or len(right) < 3:
             continue

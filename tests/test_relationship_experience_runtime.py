@@ -60,7 +60,7 @@ def test_dossier_positive_affinity_is_separate_from_chat_level():
             "positive_affinity_points_30d": 4,
             "positive_streak": 2,
         }
-    ) == "1 (Симпатия); 4 очк. за 30 дней, серия 2"
+    ) == "1 (Симпатия)"
 
     # Familiarity/XP does not silently turn into affection.
     assert profile_v4._positive_line(
@@ -137,6 +137,14 @@ def test_theme_noise_is_filtered_but_milfs_survive():
     assert profile_v3._theme_ok("милфы") is True
     assert profile_v3._theme_ok("моду") is False
     assert profile_v3._theme_ok("одобряет") is False
+
+
+def test_theme_ok_rejects_phrase_with_any_noise_word():
+    # Regression: a single real word next to filler used to be enough to
+    # pass ("тоже пройдено" showed up as a whoami monthly theme).
+    assert profile_v3._theme_ok("тоже пройдено") is False
+    assert profile_v3._theme_ok("игры сегодня") is False  # "сегодня" is noise
+    assert profile_v3._theme_ok("любимые игры") is True
 
 
 def test_dynamic_verdict_is_one_short_line():

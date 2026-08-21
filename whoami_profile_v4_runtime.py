@@ -89,11 +89,7 @@ _POSITIVE_AFFINITY_LABELS = {
 def _positive_line(profile) -> str:
     level = max(0, min(int(profile.get("positive_affinity_level", 0) or 0), 4))
     label = _POSITIVE_AFFINITY_LABELS[level]
-    points = max(0, int(profile.get("positive_affinity_points_30d", 0) or 0))
-    streak = max(0, int(profile.get("positive_streak", 0) or 0))
-    if points <= 0 and streak <= 0:
-        return f"{level} ({label})"
-    return f"{level} ({label}); {points} очк. за 30 дней, серия {streak}"
+    return f"{level} ({label})"
 
 
 def _reputation_line(profile) -> str:
