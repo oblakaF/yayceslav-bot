@@ -495,15 +495,15 @@ OLD_WORDS = [
 # ХАРД-МОД: РЕАКЦИИ И РЕПЛИКИ НА СПЕЦИАЛЬНЫЕ СЛОВА
 # ============================================================
 
+# Neutral fallback pool used only for reason-less, reputation-neutral
+# reactions. Genuinely negative emoji (🤡💩👎) live in REACTION_REASON_EMOJIS
+# / reaction_engine's cold reputation pool instead, so they only ever show
+# up when something actually earned them.
 HARD_REACTION_EMOJIS = [
-    "🤡",
-    "💩",
     "🗿",
     "🔥",
     "👍",
-    "👎",
     "😂",
-    "😭",
 ]
 
 

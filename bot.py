@@ -7,6 +7,7 @@ import os
 import random
 import re
 import sqlite3
+import sys
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -4823,16 +4824,35 @@ def detect_reaction_reason(
     )
 
 
+def _member_reputation_score_sync(chat_id: int, user_id: int) -> int:
+    import reputation_runtime
+
+    state = reputation_runtime._state_sync(sys.modules[__name__], chat_id, user_id)
+    return int(state["score"])
+
+
 def pick_reaction_emoji(
     reason: str | None,
+    *,
+    reputation_score: int | None = None,
 ) -> str:
-    """Выбирает эмодзи под причину реакции, иначе — случайное из общего пула."""
+    """Выбирает эмодзи под причину реакции.
+
+    Явная причина (контекст сообщения) всегда важнее репутации. Только
+    когда причины нет, выбор нейтрального/тёплого/холодного пула зависит
+    от текущей репутации отправителя у Яйцеслава.
+    """
 
     v2_emoji = reaction_engine.pick_v2_emoji(reason)
     if v2_emoji:
         return v2_emoji
 
-    options = REACTION_REASON_EMOJIS.get(reason or "", HARD_REACTION_EMOJIS)
+    if reason:
+        options = REACTION_REASON_EMOJIS.get(reason, HARD_REACTION_EMOJIS)
+    else:
+        options = reaction_engine.reputation_biased_pool(
+            reputation_score, HARD_REACTION_EMOJIS
+        )
     return random.choice(options)
 
 
@@ -7471,8 +7491,14 @@ async def hard_mode_listener(
         and random.random()
         < effective_reaction_chance
     ):
+        reputation_score = await asyncio.to_thread(
+            _member_reputation_score_sync,
+            chat_id,
+            update.effective_user.id,
+        )
         reaction_emoji = pick_reaction_emoji(
-            reaction_reason
+            reaction_reason,
+            reputation_score=reputation_score,
         )
 
         # Та же защита от concurrent_updates(8): резервируем

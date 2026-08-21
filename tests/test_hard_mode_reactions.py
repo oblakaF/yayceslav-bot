@@ -1,4 +1,5 @@
 import bot
+import reputation_runtime
 
 
 def test_very_long_message_reason():
@@ -73,6 +74,23 @@ def test_increment_chat_hard_stat_updates_counter_and_timestamp(tmp_path, monkey
     assert settings["trigger_replies_count"] == 1
     assert settings["random_replies_count"] == 0
     assert settings["last_intervention_at"] is not None
+
+
+def test_member_reputation_score_sync_reads_real_score(tmp_path, monkeypatch):
+    db_path = tmp_path / "hard_reputation_test.db"
+    monkeypatch.setattr(bot, "STATS_DB_PATH", db_path)
+    reputation_runtime._initialize_table(bot)
+    reputation_runtime._apply_delta_sync(bot, 1, 2, -9, "negative")
+
+    assert bot._member_reputation_score_sync(1, 2) == -9
+
+
+def test_member_reputation_score_sync_defaults_to_zero(tmp_path, monkeypatch):
+    db_path = tmp_path / "hard_reputation_missing.db"
+    monkeypatch.setattr(bot, "STATS_DB_PATH", db_path)
+    reputation_runtime._initialize_table(bot)
+
+    assert bot._member_reputation_score_sync(1, 2) == 0
 
 
 def test_increment_chat_hard_stat_rejects_unknown_counter(tmp_path, monkeypatch):

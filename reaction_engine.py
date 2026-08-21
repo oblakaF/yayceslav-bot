@@ -11,11 +11,41 @@ import random
 import re
 
 
-# Ещё мягко снижаем текущую частоту emoji на 10%: 0.80 -> 0.72.
+# Снижаем текущую частоту emoji: 0.80 -> 0.72 -> 0.55. Слишком много
+# реакций на ровном месте выглядело как шум, а не как живое внимание.
 # Это множитель поверх сохранённого reaction_chance чата, поэтому
 # существующие настройки в Railway SQLite менять не требуется.
-EMOJI_REACTION_FREQUENCY_MULTIPLIER = 0.72
+EMOJI_REACTION_FREQUENCY_MULTIPLIER = 0.55
 CONTEXT_REASON_FLOOR = 0.85
+
+# Пулы для случая, когда конкретная причина в сообщении НЕ распознана --
+# тогда выбор смещается по репутации отправителя у Яйцеслава, а не
+# остаётся чистой монеткой по общему нейтральному пулу.
+COLD_REACTION_EMOJIS: tuple[str, ...] = ("🤡", "💩", "👎")
+WARM_REACTION_EMOJIS: tuple[str, ...] = ("🔥", "👍", "😂")
+REPUTATION_COLD_THRESHOLD = -26
+REPUTATION_WARM_THRESHOLD = 26
+
+
+def reputation_biased_pool(
+    reputation_score: int | None,
+    neutral_pool,
+) -> tuple[str, ...]:
+    """Colors the reason-less reaction pool by standing with this person.
+
+    Only applies when NO specific message-content reason was detected --
+    a genuinely negative/positive reason already picks its own emoji via
+    REACTION_REASON_EMOJIS/V2_REASON_EMOJIS, independent of reputation.
+    """
+
+    if reputation_score is None:
+        return tuple(neutral_pool)
+    score = int(reputation_score)
+    if score <= REPUTATION_COLD_THRESHOLD:
+        return COLD_REACTION_EMOJIS
+    if score >= REPUTATION_WARM_THRESHOLD:
+        return WARM_REACTION_EMOJIS
+    return tuple(neutral_pool)
 
 # Причина -> набор подходящих Telegram reaction emoji.
 # Ключи дополняют уже существующие причины hard-mode.

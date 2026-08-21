@@ -10,7 +10,7 @@ def test_emoji_chance_uses_current_frequency_multiplier_without_reason():
             0.70,
             has_context_reason=False,
         ),
-        0.504,
+        0.385,
     )
 
 
@@ -20,7 +20,7 @@ def test_context_floor_is_applied_before_current_frequency_multiplier():
             0.70,
             has_context_reason=True,
         ),
-        0.612,
+        0.4675,
     )
 
 
@@ -30,7 +30,7 @@ def test_chaos_probability_is_scaled_not_clipped_upward():
             0.90,
             has_context_reason=True,
         ),
-        0.648,
+        0.495,
     )
 
 
