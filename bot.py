@@ -5539,6 +5539,12 @@ async def _reply_with_gemini_feature(
     if not update.message or not update.effective_chat:
         return
 
+    # Shared choke point for /roast, /judge, /argument, /debate, /meme,
+    # /recap, /anti_advice, /translate_yayceslav, /explain_like_* and
+    # friends -- none of them had any rate limit of their own before.
+    if not await enforce_rate_limit(update, "general"):
+        return
+
     try:
         answer = await ask_gemini(
             contents=prompt,
@@ -5904,6 +5910,11 @@ async def fact_or_bayan_command(
         )
         return
 
+    # Up to two Gemini calls per invocation (verdict + optional web-search
+    # follow-up), so this deserves the same limit as any other feature.
+    if not await enforce_rate_limit(update, "general"):
+        return
+
     chat_id = update.effective_chat.id
     chat_type = str(update.effective_chat.type)
 
@@ -6235,6 +6246,9 @@ async def story_command(
         await update.message.reply_text(
             "Коллективная история — это для групп."
         )
+        return
+
+    if not await enforce_rate_limit(update, "general"):
         return
 
     chat_id = update.effective_chat.id
@@ -8963,6 +8977,13 @@ async def answer_button_callback(
         return
 
     await query.answer()
+
+    # Все 4 действия под кнопками — это ещё один вызов Gemini/TTS не
+    # дороже обычного текстового запроса, но без этого лимита их можно
+    # было жать бесконечно (answer_search уже лимитирован своим ведром
+    # "search" внутри perform_web_search, но остальные три — нет).
+    if not await enforce_rate_limit(update, "general"):
+        return
 
     # Поиск исходного вопроса в интернете
     if action == "answer_search":

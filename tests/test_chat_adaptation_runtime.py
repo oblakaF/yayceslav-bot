@@ -79,6 +79,30 @@ def test_answer_text_message_attaches_linked_article_text():
     assert source.index("linked_url = url_content_fetcher") < source.rindex("ask_gemini(")
 
 
+def test_entertainment_commands_share_a_rate_limit():
+    # /roast, /judge, /argument, /debate, /meme, /recap, /anti_advice,
+    # /translate_yayceslav, /explain_like_* all route through this helper.
+    source = inspect.getsource(bot._reply_with_gemini_feature)
+    assert 'enforce_rate_limit(update, "general")' in source
+
+
+def test_story_command_is_rate_limited():
+    source = inspect.getsource(bot.story_command)
+    assert 'enforce_rate_limit(update, "general")' in source
+
+
+def test_fact_or_bayan_command_is_rate_limited():
+    source = inspect.getsource(bot.fact_or_bayan_command)
+    assert 'enforce_rate_limit(update, "general")' in source
+
+
+def test_button_callback_actions_are_rate_limited():
+    # answer_more/answer_shorter/answer_voice had no limit at all; button
+    # mashing could fire unlimited Gemini/TTS calls.
+    source = inspect.getsource(bot.answer_button_callback)
+    assert 'enforce_rate_limit(update, "general")' in source
+
+
 def test_send_answer_disable_voice_overrides_force_voice_and_voice_mode():
     source = inspect.getsource(bot.send_answer)
     assert "disable_voice: bool = False" in source
