@@ -53,6 +53,46 @@ def test_official_news_parser_accepts_only_article_links():
     ]
 
 
+def test_official_news_parser_accepts_absolute_hrefs_too():
+    # Regression: the source site can emit an absolute href for the same
+    # link instead of a relative one; matching only the raw href against a
+    # relative-path pattern silently dropped every link that day.
+    sample = """
+    <html><body>
+      <a href="https://government.ru/news/12345/">Правительство утвердило важное решение по инфраструктуре</a>
+    </body></html>
+    """
+    links = runtime._extract_official_news_links(
+        sample,
+        base_url="https://government.ru/news/",
+        href_pattern=r"^/news/\d+/?$",
+    )
+    assert links == [
+        (
+            "Правительство утвердило важное решение по инфраструктуре",
+            "https://government.ru/news/12345/",
+        )
+    ]
+
+
+def test_official_news_source_logs_when_zero_links_match(caplog):
+    # Regression: a fetch that succeeds (200 OK) but matches zero links --
+    # e.g. after a markup/anti-bot change -- previously left no trace and
+    # would repeat silently on every retry for the rest of the day.
+    import logging as logging_module
+
+    original_fetch = runtime._fetch_html_sync
+    runtime._fetch_html_sync = lambda url: "<html><body>no matching links here</body></html>"
+    try:
+        with caplog.at_level(logging_module.WARNING):
+            candidates = runtime._fetch_official_news_candidates_sync()
+    finally:
+        runtime._fetch_html_sync = original_fetch
+
+    assert candidates == []
+    assert any("zero matching links" in record.message for record in caplog.records)
+
+
 def test_broken_whoami_fragment_is_rejected():
     assert whoami_dynamic_verdict._clean_verdict("набра") is None
     assert whoami_dynamic_verdict._clean_verdict("Ну и хуй с ним.") == "Ну и хуй с ним."

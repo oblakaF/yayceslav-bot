@@ -8,7 +8,7 @@ import re
 import sys
 from dataclasses import dataclass
 from datetime import date as date_type
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 from google import genai
@@ -349,9 +349,15 @@ def _extract_official_news_links(
     seen: set[str] = set()
     for anchor in tree.xpath("//a[@href]"):
         href = str(anchor.get("href") or "").strip()
-        if not regex.match(href):
+        if not href:
             continue
+        # Match against the resolved path, not the raw href: the source
+        # site can emit either a relative ("/news/123") or an absolute
+        # ("https://government.ru/news/123") href for the same link, and
+        # href_pattern is written against the relative path shape.
         url = urljoin(base_url, href)
+        if not regex.match(urlparse(url).path):
+            continue
         if url in seen:
             continue
         title = _clean_space(" ".join(anchor.itertext()))
@@ -392,6 +398,17 @@ def _fetch_official_news_candidates_sync() -> list[tuple[str, str, str]]:
         except Exception as error:
             logging.warning("Official news source failed %s: %s", source_name, error)
             continue
+        if not links:
+            # The fetch succeeded (no exception) but zero links matched --
+            # most likely the source's markup or an anti-bot response
+            # changed shape. Unlike a fetch exception, this failure mode
+            # previously left no trace anywhere and would repeat silently
+            # on every retry for the rest of the day.
+            logging.warning(
+                "Official news source returned zero matching links %s (page length=%s)",
+                source_name,
+                len(html_text),
+            )
         all_candidates.extend((source_name, title, url) for title, url in links)
     return all_candidates
 
