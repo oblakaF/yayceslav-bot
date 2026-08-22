@@ -3306,18 +3306,22 @@ def _next_gemini_token_budget(current: int) -> int:
     return min(2048, max(512, current * 2))
 
 
-def _voice_reply_chance(answer_length: int) -> float:
-    """Chance a voice/video-circle reply goes out as voice rather than text.
+# ~20 seconds of speech at edge-tts's default rate (roughly 15-20 Russian
+# characters/sec). Longer than that reads better as text and risks the
+# TTS-side MAX_TTS_CHARS truncation on top of it; short answers -- which
+# is roughly the shape of a quick confirmation, e.g. an explicit "ответь
+# голосом" ask -- go out as voice.
+VOICE_REPLY_MAX_CHARS = 380
 
-    Short answers (quick confirmations) lean toward voice -- roughly the
-    shape of an explicit "ответь голосом" ask. Long answers (lists,
-    enumerations) read better as text, so lean away from it.
+
+def _should_reply_as_voice(answer_length: int) -> bool:
+    """Deterministic length cutoff for voice/video-circle replies.
+
+    Not a coin flip: a long answer (a list, an enumeration) forced into
+    voice is both harder to follow by ear and more likely to hit
+    MAX_TTS_CHARS truncation, so length alone decides the delivery mode.
     """
-    if answer_length <= 200:
-        return 0.75
-    if answer_length <= 500:
-        return 0.5
-    return 0.25
+    return answer_length <= VOICE_REPLY_MAX_CHARS
 
 
 _SENTENCE_END_CHARS = (".", "!", "?", "…")
@@ -8837,7 +8841,11 @@ async def send_voice_answer(
         speech_text,
     ).strip()
 
-    speech_text = speech_text[:MAX_TTS_CHARS]
+    if len(speech_text) > MAX_TTS_CHARS:
+        # A naive slice can land mid-word/mid-sentence; trim back to the
+        # last complete sentence so a long answer forced into voice still
+        # ends cleanly instead of stopping abruptly.
+        speech_text = _trim_to_sentence_boundary(speech_text[:MAX_TTS_CHARS])
 
     if not speech_text:
         speech_text = (
@@ -10640,12 +10648,10 @@ async def answer_voice_or_audio(
         else:
             # We can't cheaply tell from raw audio whether the user
             # explicitly asked for a voice reply (that needs transcription,
-            # which this path deliberately avoids). As a proxy: short
-            # answers are usually quick confirmations -- exactly the shape
-            # of an explicit "ответь голосом" ask -- so lean toward voice;
-            # long answers (lists, enumerations) read better as text, so
-            # lean away from it. Still randomized, not a hard rule.
-            reply_as_voice = random.random() < _voice_reply_chance(len(answer))
+            # which this path deliberately avoids). Deterministic proxy:
+            # short answers go out as voice, long ones as text -- see
+            # VOICE_REPLY_MAX_CHARS.
+            reply_as_voice = _should_reply_as_voice(len(answer))
 
             await send_answer(
                 update,
