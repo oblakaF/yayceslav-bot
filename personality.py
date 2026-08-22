@@ -28,12 +28,14 @@ DEFAULT_USER_SETTINGS = {
     "response_length": "normal",
     "voice_enabled": False,
     "search_mode": "button",
-    # Владелец явно попросил повышенную токсичность по умолчанию —
-    # "всегда, кроме острых чувствительных тем" (те уже отдельно
-    # отключают грубость и юмор через is_serious_text/emotional_tone,
-    # независимо от этой настройки). Пользователь всё ещё может
-    # выставить себе "low"/"medium" через /settings.
-    "roughness": "high",
+    # Was "high" for everyone by default -- real usage showed this made
+    # the bot toxic even toward neutral-reputation people with completely
+    # harmless messages (a shared vacation clip got a sarcastic putdown),
+    # and bled into refusing legitimate requests out of character. Default
+    # is neutral now; actual toughness should track reputation instead of
+    # being a flat always-on setting (see reputation_runtime._reputation_instruction).
+    # A user can still deliberately pick "high" via /settings.
+    "roughness": "medium",
     "custom_nickname": None,
 }
 

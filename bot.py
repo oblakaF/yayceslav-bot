@@ -831,7 +831,7 @@ def get_user_settings_sync(
             INSERT OR IGNORE INTO user_settings (
                 user_id, roughness
             )
-            VALUES (?, 'high')
+            VALUES (?, 'medium')
             """,
             (user_id,),
         )
@@ -917,7 +917,7 @@ def update_user_setting_sync(
             INSERT OR IGNORE INTO user_settings (
                 user_id, roughness
             )
-            VALUES (?, 'high')
+            VALUES (?, 'medium')
             """,
             (user_id,),
         )
@@ -2996,6 +2996,19 @@ def build_full_system_instruction(
         user_settings,
     )
 
+    # Character/roughness/reputation control TONE only. They never justify
+    # refusing, deflecting, or declining a legitimate request (a search, a
+    # question, a task) -- Яйцеслав can grumble about it, but the next
+    # message still does the thing.
+    current_instruction += (
+        "\n\nВАЖНО: характер, грубость и текущее отношение к человеку — это "
+        "только ТОН ответа. Это никогда не повод отказаться выполнить "
+        "законную просьбу (поиск, ответ на вопрос, задача), даже если "
+        "человек не нравится или просьба сформулирована грубо/лениво. "
+        "Можно поворчать или подколоть по пути, но сама просьба всё равно "
+        "выполняется."
+    )
+
     if style_text:
         settings = user_settings or DEFAULT_USER_SETTINGS
 
@@ -3004,27 +3017,33 @@ def build_full_system_instruction(
         character_name = str(settings.get("character", "classic"))
         response_style_name = str(settings.get("response_style", "bold"))
         roughness_name = str(settings.get("roughness", "medium"))
-        default_aggressive = (
-            conversation_mode != "serious"
-            and character_name not in {"calm", "professor"}
-            and response_style_name != "serious"
+
+        if chat_type == "private":
+            # A DM is a 1:1 assistant relationship, not group banter culture
+            # -- no forced edge/slang by default. Reputation/roughness can
+            # still make a specific person's replies warmer or drier, but
+            # the floor is a plain, friendly helper.
+            current_instruction += (
+                "\n\nЛИЧНЫЙ ЧАТ: здесь Яйцеслав по умолчанию дружелюбный "
+                "помощник — обычный человеческий язык, без скуф/зумерского "
+                "сленга и без наигранной грубости. Характер и юмор можно "
+                "показывать, но польза и доброжелательность в личке важнее "
+                "показной дерзости."
+            )
+        elif (
+            (chat_id is None or user_id is None)
+            and conversation_mode != "serious"
             and roughness_name != "low"
-        )
-        if default_aggressive:
-            if chat_type in ("group", "supergroup"):
-                current_instruction += (
-                    "\n\nРЕЖИМ ПО УМОЛЧАНИЮ В ГРУППЕ: агрессивный Яйцеслав. "
-                    "Не изображай вежливого ассистента: отвечай дерзко, уверенно, "
-                    "можешь материться и огрызаться. На полезный вопрос всё равно дай "
-                    "полезный ответ; агрессия — это характер, а не повод скрывать факты. "
-                    "В сраче ценятся короткость и хлёсткость, а не лекции."
-                )
-            else:
-                current_instruction += (
-                    "\n\nХАРАКТЕР ПО УМОЛЧАНИЮ: агрессивный Яйцеслав. "
-                    "Можно быть дерзким и материться, но полезный ответ остаётся полезным. "
-                    "Не превращай обычный ответ в травлю или бессмысленную ругань."
-                )
+        ):
+            # No reputation context for this call (e.g. some entertainment
+            # commands) -- fall back to a neutral baseline instead of
+            # assuming hostility. When reputation IS available, its own
+            # instruction layer (reputation_runtime) owns the tone tiering.
+            current_instruction += (
+                "\n\nГРУППА БЕЗ ДАННЫХ О РЕПУТАЦИИ: нейтральный тон по "
+                "умолчанию, обычный человеческий язык. Не начинай "
+                "токсичность или агрессию на пустом месте."
+            )
 
         hostile_streak = 0
         if (

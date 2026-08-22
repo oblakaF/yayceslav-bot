@@ -78,26 +78,57 @@ def test_lazy_is_still_possible_on_real_small_question():
     assert plan.effect == "lazy_refusal"
 
 
-def test_default_aggressive_instruction_in_group_and_private():
+def test_group_without_reputation_context_gets_neutral_fallback():
+    # Real usage showed an unconditional "aggressive by default" layer here
+    # fighting the reputation-tiered instruction added later by
+    # reputation_runtime -- toxic even toward neutral-reputation people.
+    # Removed; a reputation-less call now falls back to neutral, not hostile.
     group_instruction = bot.build_full_system_instruction(
         "привет",
         {"character": "classic", "response_style": "bold", "roughness": "high", "response_length": "normal"},
         chat_type="group",
     )
-    assert "РЕЖИМ ПО УМОЛЧАНИЮ В ГРУППЕ: агрессивный Яйцеслав" in group_instruction
+    assert "ГРУППА БЕЗ ДАННЫХ О РЕПУТАЦИИ" in group_instruction
+    assert "РЕЖИМ ПО УМОЛЧАНИЮ В ГРУППЕ" not in group_instruction
 
+
+def test_private_chat_defaults_to_friendly_helper():
     private_instruction = bot.build_full_system_instruction(
         "привет",
         {"character": "classic", "response_style": "bold", "roughness": "high", "response_length": "normal"},
         chat_type="private",
     )
-    assert "ХАРАКТЕР ПО УМОЛЧАНИЮ: агрессивный Яйцеслав" in private_instruction
+    assert "ЛИЧНЫЙ ЧАТ" in private_instruction
+    assert "дружелюбный помощник" in private_instruction
+    assert "ХАРАКТЕР ПО УМОЛЧАНИЮ" not in private_instruction
 
 
-def test_calm_setting_disables_default_aggressive_layer():
+def test_group_with_reputation_context_defers_to_reputation_layer():
+    # When chat_id/user_id are known, build_full_system_instruction no
+    # longer injects its own tone override at all -- the reputation_runtime
+    # wrap (applied outside this function) owns tone tiering instead.
+    instruction = bot.build_full_system_instruction(
+        "привет",
+        {"character": "classic", "response_style": "bold", "roughness": "high", "response_length": "normal"},
+        chat_type="group",
+        chat_id=1,
+        user_id=2,
+    )
+    assert "РЕЖИМ ПО УМОЛЧАНИЮ В ГРУППЕ" not in instruction
+    assert "ГРУППА БЕЗ ДАННЫХ О РЕПУТАЦИИ" not in instruction
+
+
+def test_calm_setting_disables_neutral_fallback_layer_too():
     instruction = bot.build_full_system_instruction(
         "привет",
         {"character": "calm", "response_style": "normal", "roughness": "low", "response_length": "normal"},
         chat_type="group",
     )
-    assert "РЕЖИМ ПО УМОЛЧАНИЮ В ГРУППЕ: агрессивный Яйцеслав" not in instruction
+    assert "РЕЖИМ ПО УМОЛЧАНИЮ В ГРУППЕ" not in instruction
+    assert "ГРУППА БЕЗ ДАННЫХ О РЕПУТАЦИИ" not in instruction
+
+
+def test_tone_is_cosmetic_instruction_is_always_present():
+    instruction = bot.build_full_system_instruction("", None, chat_type="private")
+    assert "это только ТОН ответа" in instruction
+    assert "никогда не повод отказаться выполнить" in instruction
