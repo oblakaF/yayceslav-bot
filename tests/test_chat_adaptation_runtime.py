@@ -88,21 +88,22 @@ def test_voice_handler_also_understands_video_notes():
     assert '"video/mp4"' in source
 
 
-def test_voice_and_video_note_replies_use_deterministic_length_cutoff():
-    # Regression: a flat 50/50 coin flip meant an explicit "ответь
-    # голосом" spoken request could still land as text, and long answers
-    # forced into voice risked MAX_TTS_CHARS truncation on top of it.
-    # Length alone now decides -- no randomness.
+def test_voice_and_video_note_replies_are_wired_to_the_voice_decision():
     source = inspect.getsource(bot.answer_voice_or_audio)
     assert "_should_reply_as_voice(len(answer))" in source
     assert "disable_voice=not reply_as_voice" in source
 
 
-def test_should_reply_as_voice_uses_the_char_cutoff():
-    assert bot._should_reply_as_voice(bot.VOICE_REPLY_MAX_CHARS) is True
-    assert bot._should_reply_as_voice(bot.VOICE_REPLY_MAX_CHARS + 1) is False
+def test_should_reply_as_voice_is_a_flat_coin_flip_not_length_based(monkeypatch):
+    # Reverted per explicit request: voice/video replies should be able to
+    # run up to roughly a minute of speech, not be gated by answer length.
+    monkeypatch.setattr(bot.random, "random", lambda: 0.4)
     assert bot._should_reply_as_voice(10) is True
-    assert bot._should_reply_as_voice(2000) is False
+    assert bot._should_reply_as_voice(5000) is True
+
+    monkeypatch.setattr(bot.random, "random", lambda: 0.6)
+    assert bot._should_reply_as_voice(10) is False
+    assert bot._should_reply_as_voice(5000) is False
 
 
 def test_send_voice_answer_trims_overlong_text_to_a_sentence_boundary():

@@ -3306,22 +3306,14 @@ def _next_gemini_token_budget(current: int) -> int:
     return min(2048, max(512, current * 2))
 
 
-# ~20 seconds of speech at edge-tts's default rate (roughly 15-20 Russian
-# characters/sec). Longer than that reads better as text and risks the
-# TTS-side MAX_TTS_CHARS truncation on top of it; short answers -- which
-# is roughly the shape of a quick confirmation, e.g. an explicit "ответь
-# голосом" ask -- go out as voice.
-VOICE_REPLY_MAX_CHARS = 380
-
-
+# Reverted to a flat coin flip per explicit request: the length-based
+# cutoff blocked longer voice replies entirely, but voice/video answers
+# should be able to run up to roughly a minute of speech (MAX_TTS_CHARS
+# already allows that, and send_voice_answer trims any overflow to a
+# clean sentence boundary instead of a hard mid-word cut).
 def _should_reply_as_voice(answer_length: int) -> bool:
-    """Deterministic length cutoff for voice/video-circle replies.
-
-    Not a coin flip: a long answer (a list, an enumeration) forced into
-    voice is both harder to follow by ear and more likely to hit
-    MAX_TTS_CHARS truncation, so length alone decides the delivery mode.
-    """
-    return answer_length <= VOICE_REPLY_MAX_CHARS
+    del answer_length
+    return random.random() < 0.5
 
 
 _SENTENCE_END_CHARS = (".", "!", "?", "…")
