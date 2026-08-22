@@ -3306,6 +3306,26 @@ def _next_gemini_token_budget(current: int) -> int:
     return min(2048, max(512, current * 2))
 
 
+_SENTENCE_END_CHARS = (".", "!", "?", "…")
+
+
+def _trim_to_sentence_boundary(text: str) -> str:
+    """Cuts a still-truncated (MAX_TOKENS after all retries) reply back to
+    its last complete sentence, instead of showing raw text that stops
+    mid-word/mid-thought. If the last sentence break is too early (would
+    throw away most of the answer), returns the text unchanged -- a slightly
+    abrupt full answer beats a stub.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return stripped
+
+    boundary = max(stripped.rfind(char) for char in _SENTENCE_END_CHARS)
+    if boundary == -1 or boundary < len(stripped) * 0.4:
+        return stripped
+    return stripped[: boundary + 1].strip()
+
+
 async def ask_gemini(
     contents: Any,
     max_output_tokens: int = 320,
@@ -3422,6 +3442,17 @@ async def ask_gemini(
                 continue
 
             if answer:
+                if hit_max_tokens:
+                    # Retries are exhausted (or budget already at the 2048
+                    # cap) and the model still ran out of room -- never show
+                    # raw text that stops mid-word/mid-thought.
+                    trimmed = _trim_to_sentence_boundary(answer)
+                    if trimmed:
+                        answer = trimmed
+                    logging.warning(
+                        "Gemini answer still hit MAX_TOKENS after retries (budget=%s); trimmed to sentence boundary",
+                        request_token_budget,
+                    )
                 logging.info(
                     "Gemini total: %.2fs thinking=%s attempts=%s",
                     time.monotonic() - request_started_at,

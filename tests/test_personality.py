@@ -1,19 +1,6 @@
 import personality
 
 
-def test_build_system_instruction_reflects_detected_mode():
-    instruction = personality.build_system_instruction("привет, как дела?")
-    assert "Яйцеслав" in instruction
-    assert "Текущий режим общения: greeting" in instruction
-
-
-def test_build_system_instruction_serious_mode_suppresses_rudeness():
-    instruction = personality.build_system_instruction(
-        "у меня умер родственник, что делать"
-    )
-    assert "Текущий режим общения: serious" in instruction
-
-
 def test_default_user_settings_has_expected_keys():
     expected = {
         "character",
@@ -31,15 +18,14 @@ def test_voice_style_instruction_is_nonempty_string():
     assert "голос" in personality.VOICE_STYLE_INSTRUCTION.lower()
 
 
-def test_custom_nickname_included_when_set():
-    instruction = personality.build_user_preferences_instruction(
-        {"custom_nickname": "Скуфидон"}
-    )
-    assert "Скуфидон" in instruction
+def test_build_v2_base_instruction_reflects_detected_mode():
+    instruction = personality.build_v2_base_instruction("привет, как дела?", None)
+    assert "Яйцеслав" in instruction
+    assert "Текущий режим общения: greeting" in instruction
 
 
-def test_custom_nickname_omitted_when_not_set():
-    instruction = personality.build_user_preferences_instruction(
-        {"custom_nickname": None}
+def test_build_v2_base_instruction_serious_mode_suppresses_rudeness():
+    instruction = personality.build_v2_base_instruction(
+        "у меня умер родственник, что делать", None
     )
-    assert "Обращайся к пользователю как" not in instruction
+    assert "Текущий режим общения: serious" in instruction

@@ -39,6 +39,34 @@ def test_primary_text_path_can_use_humanizer_but_media_paths_do_not():
     assert "source_user_text=" not in inspect.getsource(bot.answer_voice_or_audio)
 
 
+def test_trim_to_sentence_boundary_cuts_back_to_last_full_sentence():
+    text = "Первое предложение. Второе предложение. Третье оборв"
+    assert bot._trim_to_sentence_boundary(text) == "Первое предложение. Второе предложение."
+
+
+def test_trim_to_sentence_boundary_keeps_text_when_break_is_too_early():
+    # If the last sentence break is very early, trimming would throw away
+    # most of the answer -- a slightly abrupt full answer beats a stub.
+    text = "Ок. " + "продолжение без точек и очень длинное " * 10
+    assert bot._trim_to_sentence_boundary(text) == text.strip()
+
+
+def test_trim_to_sentence_boundary_handles_no_punctuation():
+    text = "просто оборванный текст без точек"
+    assert bot._trim_to_sentence_boundary(text) == text
+
+
+def test_trim_to_sentence_boundary_handles_empty_text():
+    assert bot._trim_to_sentence_boundary("") == ""
+    assert bot._trim_to_sentence_boundary("   ") == ""
+
+
+def test_ask_gemini_trims_truncated_answer_after_exhausting_retries():
+    source = inspect.getsource(bot.ask_gemini)
+    assert "_trim_to_sentence_boundary(answer)" in source
+    assert "if hit_max_tokens:" in source
+
+
 def test_voice_handler_keeps_typing_indicator_alive_during_processing():
     # Telegram's own "typing..." fades after ~5s; a 20-30s video/voice
     # reply needs it refreshed or the bot looks like it silently stopped
