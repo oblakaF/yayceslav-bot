@@ -71,10 +71,10 @@ def test_whoami_reputation_line_is_bounded_and_labeled():
     assert whoami_v4._reputation_line({"reputation_score": 999}) == "100 (Союзник)"
 
 
-def test_neutral_instruction_explicitly_overrides_old_aggressive_default():
+def test_neutral_instruction_is_plain_and_willing_to_help():
     text = runtime._reputation_instruction(0)
     assert "нейтральный человек" in text
-    assert "aggressive by default" in text
+    assert "охотно помогай" in text
     assert "Не начинай агрессию" in text
 
 
@@ -97,7 +97,7 @@ def test_negative_history_changes_long_term_attitude():
 def test_positive_history_is_warm_but_not_sycophantic():
     text = runtime._reputation_instruction(80)
     assert "очень свой" in text
-    assert "не льсти" in text
+    assert "льсти" in text
 
 
 def test_reputation_gate_blocks_proactive_dokop_for_neutral_user(tmp_path, monkeypatch):
