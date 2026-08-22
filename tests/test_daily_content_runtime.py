@@ -32,65 +32,88 @@ def test_jokeapi_single_and_twopart_are_external_text():
     assert twopart_key == "jokeapi:102"
 
 
-def test_official_news_parser_accepts_only_article_links():
-    sample = """
-    <html><body>
-      <a href="/news/12345/">Правительство утвердило важное решение по инфраструктуре</a>
-      <a href="/news/">Новости</a>
-      <a href="/other/999/">Не новость</a>
-    </body></html>
-    """
-    links = runtime._extract_official_news_links(
-        sample,
-        base_url="https://government.ru/news/",
-        href_pattern=r"^/news/\d+/?$",
-    )
-    assert links == [
+_SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+<title>Sample feed</title>
+<item>
+<title>Реальная новость с достаточно длинным заголовком</title>
+<link>https://example.com/news/1</link>
+</item>
+<item>
+<title>короткая</title>
+<link>https://example.com/news/2</link>
+</item>
+<item>
+<title></title>
+<link>https://example.com/news/3</link>
+</item>
+</channel>
+</rss>"""
+
+
+def test_rss_parser_accepts_valid_items_and_skips_junk():
+    # Skips a too-short title (junk/empty entries) but keeps a real one.
+    items = runtime._parse_rss_items(_SAMPLE_RSS)
+    assert items == [
         (
-            "Правительство утвердило важное решение по инфраструктуре",
-            "https://government.ru/news/12345/",
+            "Реальная новость с достаточно длинным заголовком",
+            "https://example.com/news/1",
         )
     ]
 
 
-def test_official_news_parser_accepts_absolute_hrefs_too():
-    # Regression: the source site can emit an absolute href for the same
-    # link instead of a relative one; matching only the raw href against a
-    # relative-path pattern silently dropped every link that day.
-    sample = """
-    <html><body>
-      <a href="https://government.ru/news/12345/">Правительство утвердило важное решение по инфраструктуре</a>
-    </body></html>
-    """
-    links = runtime._extract_official_news_links(
-        sample,
-        base_url="https://government.ru/news/",
-        href_pattern=r"^/news/\d+/?$",
+def test_rss_parser_handles_malformed_xml():
+    assert runtime._parse_rss_items("not xml at all <<<") == []
+
+
+def test_rss_parser_respects_limit():
+    many_items = "".join(
+        f"<item><title>Заголовок номер {i} длиной побольше</title>"
+        f"<link>https://example.com/{i}</link></item>"
+        for i in range(10)
     )
-    assert links == [
-        (
-            "Правительство утвердило важное решение по инфраструктуре",
-            "https://government.ru/news/12345/",
-        )
-    ]
+    xml_text = f"<rss><channel>{many_items}</channel></rss>"
+    assert len(runtime._parse_rss_items(xml_text, limit=3)) == 3
 
 
-def test_official_news_source_logs_when_zero_links_match(caplog):
-    # Regression: a fetch that succeeds (200 OK) but matches zero links --
-    # e.g. after a markup/anti-bot change -- previously left no trace and
-    # would repeat silently on every retry for the rest of the day.
+def test_news_source_logs_when_zero_items_match(caplog):
+    # Regression: a fetch that succeeds (200 OK) but yields zero usable
+    # items -- e.g. after a feed shape change -- previously left no trace
+    # and would repeat silently on every retry for the rest of the day.
     import logging as logging_module
 
     original_fetch = runtime._fetch_html_sync
-    runtime._fetch_html_sync = lambda url: "<html><body>no matching links here</body></html>"
+    runtime._fetch_html_sync = lambda url: "<rss><channel></channel></rss>"
     try:
         with caplog.at_level(logging_module.WARNING):
-            candidates = runtime._fetch_official_news_candidates_sync()
+            candidates = runtime._fetch_news_candidates_sync()
     finally:
         runtime._fetch_html_sync = original_fetch
 
     assert candidates == []
-    assert any("zero matching links" in record.message for record in caplog.records)
+    assert any("zero usable items" in record.message for record in caplog.records)
+
+
+def test_news_sources_no_longer_reference_government_sites():
+    # The owner explicitly asked to drop government.ru/kremlin.ru in favor
+    # of popular, more reliably-scrapable sources.
+    for _name, url in runtime.NEWS_RSS_SOURCES:
+        assert "government.ru" not in url
+        assert "kremlin.ru" not in url
+
+
+def test_fetch_news_candidates_aggregates_across_sources(monkeypatch):
+    def fake_fetch(url):
+        return _SAMPLE_RSS
+
+    monkeypatch.setattr(runtime, "_fetch_html_sync", fake_fetch)
+    candidates = runtime._fetch_news_candidates_sync()
+    assert len(candidates) == len(runtime.NEWS_RSS_SOURCES)
+    for source_name, title, link in candidates:
+        assert source_name in {name for name, _url in runtime.NEWS_RSS_SOURCES}
+        assert title == "Реальная новость с достаточно длинным заголовком"
+        assert link == "https://example.com/news/1"
 
 
 def test_broken_whoami_fragment_is_rejected():

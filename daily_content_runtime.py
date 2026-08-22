@@ -6,14 +6,13 @@ import logging
 import random
 import re
 import sys
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import date as date_type
-from urllib.parse import urljoin, urlparse
 
 import requests
 from google import genai
 from google.genai import types
-from lxml import html as lxml_html
 from telegram.ext import Application
 
 
@@ -23,8 +22,18 @@ NEWS_HOUR_MSK = 20
 NEWS_MINUTE_MSK = 0
 
 JOKE_API_URL = "https://v2.jokeapi.dev/joke/Any"
-GOVERNMENT_NEWS_URL = "https://government.ru/news/"
-KREMLIN_NEWS_URL = "https://www.kremlin.ru/events/president/news"
+
+# Government/Kremlin scraping was fragile (HTML markup drift silently
+# broke it) and produced only dry official-speak. RSS is a standardized,
+# machine-readable format -- far more robust to parse than arbitrary HTML
+# -- and several popular sources are tried per run so one feed being down
+# doesn't stop news from arriving at all. Content doesn't need to be
+# serious; it just needs to reliably show up.
+NEWS_RSS_SOURCES: tuple[tuple[str, str], ...] = (
+    ("Lenta.ru", "https://lenta.ru/rss/news"),
+    ("РИА Новости", "https://ria.ru/export/rss2/archive/index.xml"),
+    ("РБК", "https://rssexport.rbc.ru/rbcnews/news/30/full.rss"),
+)
 
 _HTTP_HEADERS = {
     "User-Agent": "YayceslavBot/2.0 (+https://github.com/oblakaF/yayceslav-bot)",
@@ -333,83 +342,55 @@ def _fetch_html_sync(url: str) -> str:
     return response.text
 
 
-def _extract_official_news_links(
-    html_text: str,
-    *,
-    base_url: str,
-    href_pattern: str,
-    limit: int = 8,
-) -> list[tuple[str, str]]:
+_RSS_NAMESPACES = {"content": "http://purl.org/rss/1.0/modules/content/"}
+
+
+def _parse_rss_items(xml_text: str, *, limit: int = 8) -> list[tuple[str, str]]:
+    """Extracts (title, link) pairs from a standard RSS 2.0 feed."""
     try:
-        tree = lxml_html.fromstring(html_text)
-    except Exception:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
         return []
-    regex = re.compile(href_pattern)
+
     results: list[tuple[str, str]] = []
     seen: set[str] = set()
-    for anchor in tree.xpath("//a[@href]"):
-        href = str(anchor.get("href") or "").strip()
-        if not href:
+    for item in root.iter("item"):
+        title_el = item.find("title")
+        link_el = item.find("link")
+        title = _clean_space(str((title_el.text if title_el is not None else "") or ""))
+        link = str((link_el.text if link_el is not None else "") or "").strip()
+        if not title or not link or link in seen:
             continue
-        # Match against the resolved path, not the raw href: the source
-        # site can emit either a relative ("/news/123") or an absolute
-        # ("https://government.ru/news/123") href for the same link, and
-        # href_pattern is written against the relative path shape.
-        url = urljoin(base_url, href)
-        if not regex.match(urlparse(url).path):
+        if len(title) < 12 or len(title) > 320:
             continue
-        if url in seen:
-            continue
-        title = _clean_space(" ".join(anchor.itertext()))
-        if len(title) < 18 or len(title) > 320:
-            continue
-        if title.lower() in {"подробнее", "читать", "новости"}:
-            continue
-        seen.add(url)
-        results.append((title, url))
+        seen.add(link)
+        results.append((title, link))
         if len(results) >= limit:
             break
     return results
 
 
-def _fetch_official_news_candidates_sync() -> list[tuple[str, str, str]]:
-    sources = (
-        (
-            "Правительство России",
-            GOVERNMENT_NEWS_URL,
-            r"^/news/\d+/?$",
-        ),
-        (
-            "Президент России",
-            KREMLIN_NEWS_URL,
-            r"^/events/president/news/\d+/?$",
-        ),
-    )
+def _fetch_news_candidates_sync() -> list[tuple[str, str, str]]:
     all_candidates: list[tuple[str, str, str]] = []
-    for source_name, source_url, pattern in sources:
+    for source_name, feed_url in NEWS_RSS_SOURCES:
         try:
-            html_text = _fetch_html_sync(source_url)
-            links = _extract_official_news_links(
-                html_text,
-                base_url=source_url,
-                href_pattern=pattern,
-                limit=5,
-            )
+            xml_text = _fetch_html_sync(feed_url)
+            items = _parse_rss_items(xml_text, limit=5)
         except Exception as error:
-            logging.warning("Official news source failed %s: %s", source_name, error)
+            logging.warning("News RSS source failed %s: %s", source_name, error)
             continue
-        if not links:
-            # The fetch succeeded (no exception) but zero links matched --
-            # most likely the source's markup or an anti-bot response
-            # changed shape. Unlike a fetch exception, this failure mode
-            # previously left no trace anywhere and would repeat silently
-            # on every retry for the rest of the day.
+        if not items:
+            # The fetch succeeded (no exception) but zero usable items came
+            # out -- most likely the feed's shape changed or it returned an
+            # empty/error body. Unlike a fetch exception, this failure mode
+            # would otherwise leave no trace and repeat silently all day.
             logging.warning(
-                "Official news source returned zero matching links %s (page length=%s)",
+                "News RSS source returned zero usable items %s (feed length=%s)",
                 source_name,
-                len(html_text),
+                len(xml_text),
             )
-        all_candidates.extend((source_name, title, url) for title, url in links)
+            continue
+        all_candidates.extend((source_name, title, link) for title, link in items)
     return all_candidates
 
 
@@ -418,7 +399,7 @@ async def _comment_news(bot_module, title: str, source_name: str) -> tuple[str, 
     if not api_key:
         return None
     prompt = (
-        "Ниже заголовок ОДНОЙ новости с официального российского сайта. "
+        "Ниже заголовок ОДНОЙ новости из популярного российского СМИ. "
         "Не добавляй никаких фактов, которых нет в заголовке. "
         "Определи эмоциональный тон новости как positive, negative или neutral и придумай ОДИН короткий комментарий Яйцеслава. "
         "Позитивное можно отметить победно/иронично, негативное — ворчливо в духе «ну опять всё как всегда», нейтральное — сухо и смешно. "
@@ -461,7 +442,7 @@ async def _build_news_item(bot_module, current_date: date_type) -> DailyItem | N
     if cached:
         return cached
 
-    candidates = await asyncio.to_thread(_fetch_official_news_candidates_sync)
+    candidates = await asyncio.to_thread(_fetch_news_candidates_sync)
     if not candidates:
         return None
 
@@ -569,5 +550,7 @@ def _prepare_application(application: Application) -> None:
     _patch_scheduler(bot_module)
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning(
-        "Daily external content ready: joke=19:30 MSK (JokeAPI ru/en); news=20:00 MSK (government.ru/kremlin.ru)"
+        "Daily external content ready: joke=19:30 MSK (JokeAPI ru/en); "
+        "news=20:00 MSK (%s)",
+        ", ".join(name for name, _url in NEWS_RSS_SOURCES),
     )
