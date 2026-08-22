@@ -5127,6 +5127,56 @@ HARD_LEVEL_REPLIES = {
 }
 
 
+HARD_LEVEL_BUTTON_LABELS: dict[str, str] = {
+    "calm": "Спокойный",
+    "normal": "Обычный",
+    "chaos": "Хаос",
+}
+
+HARD_LEVEL_CALLBACK_PREFIX = "hard_level:"
+
+
+def _hard_level_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    label,
+                    callback_data=f"{HARD_LEVEL_CALLBACK_PREFIX}{level}",
+                )
+                for level, label in HARD_LEVEL_BUTTON_LABELS.items()
+            ]
+        ]
+    )
+
+
+async def _apply_hard_level(
+    chat_id: int,
+    chat_type: str,
+    level: str,
+) -> None:
+    chances = HARD_LEVEL_CHANCES[level]
+
+    await update_chat_setting(
+        chat_id,
+        "hard_level",
+        level,
+        chat_type,
+    )
+    await update_chat_setting(
+        chat_id,
+        "reaction_chance",
+        chances["reaction_chance"],
+        chat_type,
+    )
+    await update_chat_setting(
+        chat_id,
+        "random_reply_chance",
+        chances["random_reply_chance"],
+        chat_type,
+    )
+
+
 async def hard_level_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -5142,10 +5192,12 @@ async def hard_level_command(
         )
         return
 
+    # No argument: offer buttons instead of making the admin type an exact
+    # level name (fiddly on mobile). Typing it directly still works too.
     if not context.args:
         await update.message.reply_text(
-            "Укажи уровень: /hard_level calm, /hard_level normal "
-            "или /hard_level chaos."
+            "Выбери уровень хард-мода:",
+            reply_markup=_hard_level_keyboard(),
         )
         return
 
@@ -5166,30 +5218,54 @@ async def hard_level_command(
         )
         return
 
-    chances = HARD_LEVEL_CHANCES[level]
-
-    await update_chat_setting(
+    await _apply_hard_level(
         update.effective_chat.id,
-        "hard_level",
+        str(update.effective_chat.type),
         level,
-        str(update.effective_chat.type),
-    )
-    await update_chat_setting(
-        update.effective_chat.id,
-        "reaction_chance",
-        chances["reaction_chance"],
-        str(update.effective_chat.type),
-    )
-    await update_chat_setting(
-        update.effective_chat.id,
-        "random_reply_chance",
-        chances["random_reply_chance"],
-        str(update.effective_chat.type),
     )
 
     await update.message.reply_text(
         HARD_LEVEL_REPLIES[level]
     )
+
+
+async def hard_level_button_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handles the /hard_level inline keyboard selection."""
+
+    query = update.callback_query
+    if not query or not query.data or not query.data.startswith(HARD_LEVEL_CALLBACK_PREFIX):
+        return
+
+    if not update.effective_chat or update.effective_chat.type == ChatType.PRIVATE:
+        await query.answer()
+        return
+
+    level = query.data[len(HARD_LEVEL_CALLBACK_PREFIX):]
+    if level not in HARD_LEVEL_CHANCES:
+        await query.answer("Такого уровня нет.", show_alert=True)
+        return
+
+    if not await user_is_group_admin(update, context):
+        await query.answer(
+            "Уровень хард-мода меняют только админы, нищий.",
+            show_alert=True,
+        )
+        return
+
+    await query.answer()
+
+    await _apply_hard_level(
+        update.effective_chat.id,
+        str(update.effective_chat.type),
+        level,
+    )
+
+    message = update.effective_message
+    if message:
+        await message.edit_text(HARD_LEVEL_REPLIES[level])
 
 
 async def hard_stats_command(
@@ -11052,6 +11128,12 @@ def main() -> None:
         CallbackQueryHandler(
             settings_button_callback,
             pattern=r"^settings_",
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            hard_level_button_callback,
+            pattern=rf"^{HARD_LEVEL_CALLBACK_PREFIX}",
         )
     )
     application.add_handler(
