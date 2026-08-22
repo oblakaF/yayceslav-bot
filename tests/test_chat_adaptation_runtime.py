@@ -88,10 +88,21 @@ def test_voice_handler_also_understands_video_notes():
     assert '"video/mp4"' in source
 
 
-def test_voice_and_video_note_replies_are_a_voice_text_coin_flip():
+def test_voice_and_video_note_replies_favor_voice_for_short_answers():
+    # Regression: a flat 50/50 coin flip meant an explicit "ответь
+    # голосом" spoken request could still land as text. We can't cheaply
+    # detect that request from raw audio, so bias by answer length instead
+    # -- short answers (quick confirmations) lean toward voice.
     source = inspect.getsource(bot.answer_voice_or_audio)
-    assert "random.random() < 0.5" in source
+    assert "_voice_reply_chance(len(answer))" in source
     assert "disable_voice=not reply_as_voice" in source
+
+
+def test_voice_reply_chance_favors_voice_for_short_answers():
+    assert bot._voice_reply_chance(50) == 0.75
+    assert bot._voice_reply_chance(300) == 0.5
+    assert bot._voice_reply_chance(800) == 0.25
+    assert bot._voice_reply_chance(50) > bot._voice_reply_chance(800)
 
 
 def test_undirected_video_notes_can_get_a_proactive_comment():

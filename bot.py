@@ -3306,6 +3306,20 @@ def _next_gemini_token_budget(current: int) -> int:
     return min(2048, max(512, current * 2))
 
 
+def _voice_reply_chance(answer_length: int) -> float:
+    """Chance a voice/video-circle reply goes out as voice rather than text.
+
+    Short answers (quick confirmations) lean toward voice -- roughly the
+    shape of an explicit "ответь голосом" ask. Long answers (lists,
+    enumerations) read better as text, so lean away from it.
+    """
+    if answer_length <= 200:
+        return 0.75
+    if answer_length <= 500:
+        return 0.5
+    return 0.25
+
+
 _SENTENCE_END_CHARS = (".", "!", "?", "…")
 
 
@@ -10624,9 +10638,14 @@ async def answer_voice_or_audio(
                 disable_voice=True,
             )
         else:
-            # Voice, audio and video-circle replies are all a 50/50 coin
-            # flip between voice and text.
-            reply_as_voice = random.random() < 0.5
+            # We can't cheaply tell from raw audio whether the user
+            # explicitly asked for a voice reply (that needs transcription,
+            # which this path deliberately avoids). As a proxy: short
+            # answers are usually quick confirmations -- exactly the shape
+            # of an explicit "ответь голосом" ask -- so lean toward voice;
+            # long answers (lists, enumerations) read better as text, so
+            # lean away from it. Still randomized, not a hard rule.
+            reply_as_voice = random.random() < _voice_reply_chance(len(answer))
 
             await send_answer(
                 update,
