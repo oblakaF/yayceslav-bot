@@ -259,14 +259,22 @@ def _fetch_external_joke_sync(language: str, recent_keys: set[str]) -> tuple[str
     raise RuntimeError("JokeAPI returned no usable non-repeating joke")
 
 
+_SENTENCE_END_CHARS = (".", "!", "?", "…", "»", '"')
+
+
+def _looks_like_complete_joke(text: str) -> bool:
+    stripped = text.strip()
+    return bool(stripped) and stripped[-1] in _SENTENCE_END_CHARS
+
+
 async def _translate_joke(bot_module, english_text: str) -> str | None:
     api_key = str(getattr(bot_module, "GEMINI_API_KEY", "") or "").strip()
     if not api_key:
         return None
     prompt = (
-        "Переведи этот АНГЛИЙСКИЙ анекдот на естественный разговорный русский. "
-        "Не придумывай новую шутку, не меняй смысл, не добавляй пояснений, цензуру или комментарии. "
-        "Верни только перевод.\n\n" + english_text
+        "Переведи этот АНГЛИЙСКИЙ анекдот ПОЛНОСТЬЮ на естественный разговорный русский, "
+        "не обрывая на середине. Не придумывай новую шутку, не меняй смысл, не добавляй "
+        "пояснений, цензуру или комментарии. Верни только перевод.\n\n" + english_text
     )
     try:
         client = genai.Client(api_key=api_key)
@@ -275,7 +283,11 @@ async def _translate_joke(bot_module, english_text: str) -> str | None:
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.15,
-                max_output_tokens=384,
+                # Generous margin over the 900-char cap on the source joke --
+                # a truncated mid-sentence punchline (finish_reason=MAX_TOKENS
+                # with no retry, unlike ask_gemini's Gemini calls) previously
+                # got sent to users as-is.
+                max_output_tokens=768,
                 system_instruction="Ты точный переводчик юмора. Не сочиняй ничего от себя.",
             ),
         )
@@ -284,6 +296,12 @@ async def _translate_joke(bot_module, english_text: str) -> str | None:
         logging.warning("Daily joke translation failed: %s", error)
         return None
     if len(translated) < 12:
+        return None
+    if not _looks_like_complete_joke(translated):
+        # Doesn't end on a sentence boundary -- treat as a truncated/failed
+        # translation rather than showing a joke that stops mid-word. The
+        # caller falls back to a native-language joke instead.
+        logging.warning("Daily joke translation looked truncated, discarding it")
         return None
     return translated
 

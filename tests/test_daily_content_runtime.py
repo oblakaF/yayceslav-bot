@@ -201,3 +201,68 @@ def test_prepare_application_initializes_once(monkeypatch):
 
     assert init_calls == [fake]
     assert not hasattr(runtime, "install_runtime_hook")
+
+
+def test_looks_like_complete_joke_checks_sentence_boundary():
+    assert runtime._looks_like_complete_joke("Панч в конце шутки.") is True
+    assert runtime._looks_like_complete_joke("Шутка обрывается на полусл") is False
+    assert runtime._looks_like_complete_joke("") is False
+    assert runtime._looks_like_complete_joke("   ") is False
+
+
+class _FakeBotModuleForTranslate:
+    GEMINI_API_KEY = "fake-key"
+    MODEL_NAME = "gemini-3.6-flash"
+
+
+def test_translate_joke_discards_truncated_translation(monkeypatch):
+    # Regression: a joke arrived to users with a setup but no punchline --
+    # _translate_joke had no completeness check of its own, unlike
+    # ask_gemini's retry/trim handling for the main chat path.
+    class FakeResponse:
+        text = "Штирлиц вошёл в комнату и увидел на столе"
+
+    class FakeModels:
+        async def generate_content(self, **kwargs):
+            del kwargs
+            return FakeResponse()
+
+    class FakeAio:
+        models = FakeModels()
+
+    class FakeClient:
+        def __init__(self, api_key):
+            del api_key
+            self.aio = FakeAio()
+
+    monkeypatch.setattr(runtime.genai, "Client", FakeClient)
+
+    result = asyncio.run(
+        runtime._translate_joke(_FakeBotModuleForTranslate(), "Some english joke.")
+    )
+    assert result is None
+
+
+def test_translate_joke_keeps_complete_translation(monkeypatch):
+    class FakeResponse:
+        text = "Штирлиц вошёл в комнату и увидел на столе чемодан."
+
+    class FakeModels:
+        async def generate_content(self, **kwargs):
+            del kwargs
+            return FakeResponse()
+
+    class FakeAio:
+        models = FakeModels()
+
+    class FakeClient:
+        def __init__(self, api_key):
+            del api_key
+            self.aio = FakeAio()
+
+    monkeypatch.setattr(runtime.genai, "Client", FakeClient)
+
+    result = asyncio.run(
+        runtime._translate_joke(_FakeBotModuleForTranslate(), "Some english joke.")
+    )
+    assert result == "Штирлиц вошёл в комнату и увидел на столе чемодан."
