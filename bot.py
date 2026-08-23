@@ -3355,6 +3355,18 @@ async def ask_gemini(
 
     if isinstance(contents, str):
         style_text = contents
+    elif isinstance(contents, list):
+        # Multimodal calls (voice/video-note/photo/PDF) pass contents as a
+        # list of [Part.from_bytes(...), prompt_text] -- without this, the
+        # empty style_text made build_full_system_instruction's entire
+        # `if style_text:` block a no-op for every media reply, silently
+        # skipping the DM-friendly default, the group neutral-tone
+        # fallback, and the reputation-tiered instruction from
+        # social_engine. That's why media replies could land as sharply
+        # sarcastic even toward a neutral/positive sender.
+        style_text = " ".join(
+            part for part in contents if isinstance(part, str)
+        )
     else:
         style_text = ""
 
@@ -4227,6 +4239,88 @@ async def perform_web_search(
             "Интернет-поиск поплыл. "
             "Повтори позже, легенда."
         )
+
+
+async def _resolve_voice_search_answer(
+    update: Update,
+    raw_answer: str,
+    *,
+    user_settings: dict[str, Any] | None,
+) -> str:
+    """Lets voice/video-circle replies trigger a real web search.
+
+    The content of a voice message is opaque audio -- we can't pre-scan it
+    for a search-trigger phrase the way answer_text_message does for typed
+    text. Instead, the model is asked (see the prompt in
+    answer_voice_or_audio) to self-report via structured JSON whether it
+    needs a real search instead of guessing/fabricating an answer. Falls
+    back to the raw text if the model didn't return that JSON shape.
+    """
+
+    match = re.search(r"\{.*\}", raw_answer, flags=re.DOTALL)
+    if not match:
+        return raw_answer
+
+    try:
+        payload = json.loads(match.group(0))
+    except Exception:
+        return raw_answer
+
+    if not isinstance(payload, dict):
+        return raw_answer
+
+    direct_answer = str(payload.get("answer") or "").strip()
+    if not payload.get("needs_search"):
+        return direct_answer or raw_answer
+
+    search_query = str(payload.get("search_query") or "").strip()
+    if not search_query:
+        return direct_answer or (
+            "Хотел поискать в интернете, но не понял, что именно искать. "
+            "Переспроси конкретнее."
+        )
+
+    if not await enforce_rate_limit(update, "search"):
+        return direct_answer or (
+            "Хотел погуглить, но лимит поисков на сейчас исчерпан. Спроси чуть позже."
+        )
+
+    try:
+        results = await search_web(query=search_query, max_results=5)
+    except Exception as error:
+        logging.warning("Voice-triggered web search failed: %s", error)
+        return "Поиск в интернете сейчас не отвечает. Попробуй ещё раз чуть позже."
+
+    if not results:
+        return f"Погуглил «{search_query}» — поиск ничего не нашёл."
+
+    search_context = format_search_results(results)
+    prompt = (
+        "Пользователь спросил голосом, ты выполнил поиск в интернете по его "
+        "запросу. Ответь кратко (3-6 предложений) по существу в характере "
+        "Яйцеслава, опираясь ТОЛЬКО на результаты поиска ниже. Не придумывай "
+        "ничего сверх них. Не перечисляй ссылки и не произноси адреса сайтов.\n\n"
+        f"Поисковый запрос: {search_query}\n\n{search_context}"
+    )
+
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    chat_type = str(update.effective_chat.type) if update.effective_chat else "private"
+    user_id = update.effective_user.id if update.effective_user else None
+
+    try:
+        return await ask_gemini(
+            contents=prompt,
+            max_output_tokens=280,
+            voice_style=True,
+            user_settings=user_settings,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            user_id=user_id,
+            thinking_level="medium",
+        )
+    except Exception as error:
+        logging.warning("Voice-triggered search follow-up answer failed: %s", error)
+        return f"Погуглил «{search_query}», но не смог собрать нормальный ответ. Спроси ещё раз."
 
 
 async def search_command(
@@ -10526,14 +10620,25 @@ async def answer_voice_or_audio(
             )
         else:
             prompt = (
-                "Прослушай сообщение пользователя. "
-                "Пойми вопрос и коротко ответь "
-                "по существу в характере Яйцеслава. "
-                "Полную расшифровку не делай, "
-                "если её не просили."
+                "Прослушай сообщение пользователя и пойми, чего он хочет. "
+                "Полную расшифровку не делай, если её не просили.\n\n"
+                "Если для честного и точного ответа нужны актуальные или "
+                "проверяемые данные из интернета (новости, факты о конкретных "
+                "людях, курсы, даты, текущие события и т.п.) — не выдумывай "
+                "и не угадывай, а запроси поиск. Верни СТРОГО один JSON-объект "
+                "без пояснений и без markdown, в таком виде:\n"
+                '{"needs_search": true или false, '
+                '"search_query": "короткий поисковый запрос, если нужен '
+                'поиск, иначе пустая строка", '
+                '"answer": "прямой ответ пользователю, если поиск НЕ нужен, '
+                'иначе пустая строка"}\n'
+                "Если поиск не нужен — содержательно ответь в поле answer, "
+                "коротко и по существу в характере Яйцеслава. Текст поля "
+                "answer будет озвучен голосом: без списков, Markdown, "
+                "звёздочек и эмодзи, простой разговорной речью."
             )
 
-        answer = await ask_gemini(
+        raw_answer = await ask_gemini(
             contents=[
                 types.Part.from_bytes(
                     data=file_path.read_bytes(),
@@ -10545,7 +10650,11 @@ async def answer_voice_or_audio(
                 user_settings,
                 normal_tokens=320,
             ),
-            voice_style=True,
+            # The JSON-request prompt above conflicts with
+            # VOICE_STYLE_INSTRUCTION's "no lists/Markdown, plain speech"
+            # rules -- only apply voice styling for the proactive-comment
+            # prompt, which doesn't ask for structured output.
+            voice_style=proactive_comment,
             user_settings=user_settings,
             chat_id=(
                 update.effective_chat.id
@@ -10569,6 +10678,12 @@ async def answer_voice_or_audio(
             # reasoning tasks, so force the low tier for latency.
             thinking_level="low",
         )
+        if proactive_comment:
+            answer = raw_answer
+        else:
+            answer = await _resolve_voice_search_answer(
+                update, raw_answer, user_settings=user_settings
+            )
         # Запоминаем обсуждение голосового сообщения или видео-кружка
         if update.effective_user:
             memory_text = (
@@ -10640,9 +10755,8 @@ async def answer_voice_or_audio(
         else:
             # We can't cheaply tell from raw audio whether the user
             # explicitly asked for a voice reply (that needs transcription,
-            # which this path deliberately avoids). Deterministic proxy:
-            # short answers go out as voice, long ones as text -- see
-            # VOICE_REPLY_MAX_CHARS.
+            # which this path deliberately avoids). Flat coin flip instead,
+            # independent of answer length (see _should_reply_as_voice).
             reply_as_voice = _should_reply_as_voice(len(answer))
 
             await send_answer(

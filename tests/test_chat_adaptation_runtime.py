@@ -1,4 +1,6 @@
+import asyncio
 import inspect
+from types import SimpleNamespace
 
 import bot
 import feedback_engine
@@ -129,6 +131,105 @@ def test_proactive_video_note_comment_is_text_only_and_does_not_ask_questions():
 
 def test_proactive_comment_chance_is_a_moderate_constant():
     assert 0.05 <= bot.VIDEO_NOTE_PROACTIVE_COMMENT_CHANCE <= 0.35
+
+
+def test_voice_handler_asks_for_structured_search_json_when_not_proactive():
+    # Regression: voice/video-circle messages had no way to trigger a real
+    # web search (unlike typed text), so the model would guess/fabricate
+    # instead of admitting it needs current data.
+    source = inspect.getsource(bot.answer_voice_or_audio)
+    assert '"needs_search"' in source
+    assert '"search_query"' in source
+    assert "raw_answer = await ask_gemini(" in source
+    assert "answer = raw_answer" in source
+    assert "_resolve_voice_search_answer(\n                update, raw_answer, user_settings=user_settings\n            )" in source
+
+
+def test_voice_handler_json_request_does_not_fight_voice_style_instruction():
+    # VOICE_STYLE_INSTRUCTION forbids lists/Markdown/structured output, which
+    # would fight the JSON-format request above -- only the proactive-comment
+    # prompt (plain text, no JSON) should get voice styling on this call.
+    source = inspect.getsource(bot.answer_voice_or_audio)
+    assert "voice_style=proactive_comment," in source
+
+
+def test_resolve_voice_search_answer_returns_direct_answer_without_search():
+    payload = '{"needs_search": false, "search_query": "", "answer": "Прямой ответ."}'
+    update = SimpleNamespace(effective_chat=None, effective_user=None)
+
+    result = asyncio.run(
+        bot._resolve_voice_search_answer(update, payload, user_settings=None)
+    )
+    assert result == "Прямой ответ."
+
+
+def test_resolve_voice_search_answer_falls_back_when_not_json():
+    update = SimpleNamespace(effective_chat=None, effective_user=None)
+
+    result = asyncio.run(
+        bot._resolve_voice_search_answer(update, "просто обычный текст", user_settings=None)
+    )
+    assert result == "просто обычный текст"
+
+
+def test_resolve_voice_search_answer_runs_search_and_synthesizes_answer(monkeypatch):
+    payload = (
+        '{"needs_search": true, "search_query": "курс доллара сегодня", "answer": ""}'
+    )
+    update = SimpleNamespace(
+        effective_chat=SimpleNamespace(id=-1, type="group"),
+        effective_user=SimpleNamespace(id=42),
+    )
+
+    async def fake_rate_limit(update, kind):
+        del update, kind
+        return True
+
+    async def fake_search_web(query, max_results):
+        assert query == "курс доллара сегодня"
+        return [{"title": "Курс ЦБ", "snippet": "90 рублей"}]
+
+    def fake_format_search_results(results):
+        return "Курс ЦБ: 90 рублей"
+
+    async def fake_ask_gemini(**kwargs):
+        assert kwargs["voice_style"] is True
+        assert "90 рублей" in kwargs["contents"]
+        return "Доллар сегодня стоит около девяноста рублей."
+
+    monkeypatch.setattr(bot, "enforce_rate_limit", fake_rate_limit)
+    monkeypatch.setattr(bot, "search_web", fake_search_web)
+    monkeypatch.setattr(bot, "format_search_results", fake_format_search_results)
+    monkeypatch.setattr(bot, "ask_gemini", fake_ask_gemini)
+
+    result = asyncio.run(
+        bot._resolve_voice_search_answer(update, payload, user_settings=None)
+    )
+    assert result == "Доллар сегодня стоит около девяноста рублей."
+
+
+def test_resolve_voice_search_answer_handles_empty_search_results(monkeypatch):
+    payload = '{"needs_search": true, "search_query": "что-то редкое", "answer": ""}'
+    update = SimpleNamespace(
+        effective_chat=SimpleNamespace(id=-1, type="group"),
+        effective_user=SimpleNamespace(id=42),
+    )
+
+    async def fake_rate_limit(update, kind):
+        del update, kind
+        return True
+
+    async def fake_search_web(query, max_results):
+        del query, max_results
+        return []
+
+    monkeypatch.setattr(bot, "enforce_rate_limit", fake_rate_limit)
+    monkeypatch.setattr(bot, "search_web", fake_search_web)
+
+    result = asyncio.run(
+        bot._resolve_voice_search_answer(update, payload, user_settings=None)
+    )
+    assert "ничего не наш" in result
 
 
 def test_answer_text_message_attaches_linked_article_text():
