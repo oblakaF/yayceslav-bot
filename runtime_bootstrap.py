@@ -49,6 +49,7 @@ import whoami_profile_v4_runtime
 import daily_content_runtime
 import daily_content_source_patch  # noqa: F401
 import initiative_runtime
+import birthday_runtime
 
 
 # Exposed for a small contract test. This documents the critical ordering
@@ -76,6 +77,7 @@ RUNTIME_LOAD_ORDER = (
     "daily_content_runtime",
     "daily_content_source_patch",
     "initiative_runtime",
+    "birthday_runtime",
 )
 
 
@@ -219,6 +221,9 @@ def prepare_application_runtime(application: Application) -> None:
     # (silent titles -> daily jokes/news) so it fires last on the same tick,
     # never displacing them.
     initiative_runtime._prepare_application(application)
+    # Birthdays wrap the same chain last; independent of initiative/daily
+    # content, order relative to them doesn't matter.
+    birthday_runtime._prepare_application(application)
 
 
 def _install_preflight_hook() -> None:

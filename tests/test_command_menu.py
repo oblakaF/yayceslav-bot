@@ -17,6 +17,7 @@ def test_group_menu_is_exactly_the_approved_compact_list():
         "leaderboard",
         "awards",
         "chat_native_status",
+        "birthday",
     )
 
 

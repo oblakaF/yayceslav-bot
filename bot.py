@@ -58,6 +58,8 @@ import thinking_engine
 import url_content_fetcher
 import title_pools
 import voice_runtime
+import birthday_engine
+import birthday_runtime
 from personality import (
     DEFAULT_USER_SETTINGS,
     HOSTILE_RE,
@@ -7980,6 +7982,7 @@ HELP_PROFILE_SECTION = (
     "/remember_me текст — сохранить факт о себе\n"
     "/forget_me — удалить свой профиль в чате\n"
     "/forget — очистить кратковременную память\n"
+    "/birthday ДД.ММ — задать день рождения (себе или ответом другому)\n"
 )
 
 HELP_SETTINGS_SECTION = (
@@ -8354,6 +8357,113 @@ async def nickname_off_command(
 
     await update.message.reply_text(
         "Личное обращение отключено."
+    )
+
+
+BIRTHDAY_USAGE_TEXT = (
+    "Как пользоваться:\n"
+    "/birthday ДД.ММ — задать свой день рождения\n"
+    "/birthday @ник ДД.ММ — задать день рождения другого участника чата\n"
+    "/birthday ДД.ММ в ответ на его сообщение — то же самое через reply\n"
+    "/birthday — посмотреть свой день рождения"
+)
+
+
+async def birthday_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Минимальный календарь дней рождения: задать/посмотреть день рождения.
+
+    В день рождения бот сам тепло поздравит и тегнет человека в чате
+    (см. birthday_runtime.run_birthday_greetings_if_due, 10:00 МСК).
+    """
+
+    if not update.message or not update.effective_chat or not update.effective_user:
+        return
+
+    chat_id = update.effective_chat.id
+    args = list(context.args or [])
+    bot_module = sys.modules[__name__]
+
+    reply_target = (
+        update.message.reply_to_message.from_user
+        if update.message.reply_to_message
+        else None
+    )
+
+    if reply_target:
+        target_user_id = reply_target.id
+        target_display_name = (
+            reply_target.full_name or reply_target.username or "Участник"
+        )
+        date_args = args
+    elif args and args[0].startswith("@"):
+        if len(args) < 2:
+            await update.message.reply_text(BIRTHDAY_USAGE_TEXT)
+            return
+        resolved = await asyncio.to_thread(
+            birthday_runtime.resolve_member_by_username_sync,
+            bot_module,
+            chat_id,
+            args[0],
+        )
+        if resolved is None:
+            await update.message.reply_text(
+                "Не нашёл такого участника в этом чате — он должен был "
+                "хотя бы раз что-то написать здесь."
+            )
+            return
+        target_user_id = resolved["user_id"]
+        target_display_name = resolved["display_name"]
+        date_args = args[1:]
+    else:
+        target_user_id = update.effective_user.id
+        target_display_name = (
+            update.effective_user.full_name
+            or update.effective_user.username
+            or "Участник"
+        )
+        date_args = args
+
+    if not date_args:
+        existing = await asyncio.to_thread(
+            birthday_runtime.get_birthday_sync,
+            bot_module,
+            chat_id,
+            target_user_id,
+        )
+        if existing is None:
+            await update.message.reply_text(BIRTHDAY_USAGE_TEXT)
+        else:
+            await update.message.reply_text(
+                f"{existing['display_name']}: "
+                f"{existing['day']:02d}.{existing['month']:02d}"
+            )
+        return
+
+    parsed = birthday_engine.parse_date_arg(date_args[0])
+    if parsed is None:
+        await update.message.reply_text(
+            "Не понял дату. Формат: ДД.ММ, например 05.09."
+        )
+        return
+
+    day, month = parsed
+    await asyncio.to_thread(
+        birthday_runtime.set_birthday_sync,
+        bot_module,
+        chat_id,
+        target_user_id,
+        target_display_name,
+        month,
+        day,
+        update.effective_user.id,
+    )
+
+    await update.message.reply_text(
+        f"Запомнил: {target_display_name} — {day:02d}.{month:02d}. "
+        "Поздравлю в этот день."
     )
 
 
@@ -11098,6 +11208,12 @@ def main() -> None:
         CommandHandler(
             "nickname_off",
             nickname_off_command,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "birthday",
+            birthday_command,
         )
     )
     application.add_handler(

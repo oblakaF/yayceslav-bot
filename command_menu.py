@@ -30,6 +30,7 @@ GROUP_COMMANDS: Final[tuple[tuple[str, str], ...]] = (
     ("leaderboard", "Таблица активности"),
     ("awards", "Награды недели"),
     ("chat_native_status", "Чему Яйцеслав научился у чата"),
+    ("birthday", "Задать/посмотреть день рождения"),
 )
 
 # Private chat should be useful, not a dump of group entertainment commands.
@@ -49,6 +50,7 @@ PRIVATE_COMMANDS: Final[tuple[tuple[str, str], ...]] = (
     ("forget_me", "Удалить мой профиль"),
     ("forget", "Стереть краткую память диалога"),
     ("stickers", "Стикеры Яйцеслава"),
+    ("birthday", "Задать/посмотреть день рождения"),
 )
 
 # Owner gets the complete operational menu in the owner's private chat and
@@ -101,6 +103,7 @@ OWNER_COMMANDS: Final[tuple[tuple[str, str], ...]] = (
     ("week_auto_status", "Статус автоотчёта"),
     ("week_time", "Время автоотчёта"),
     ("chat_native_status", "Что бот выучил у чата"),
+    ("birthday", "Задать/посмотреть день рождения"),
     ("stickers", "Официальный стикерпак"),
     ("stats", "Общая статистика бота"),
     ("geminiversion", "Модель и версия Gemini"),
