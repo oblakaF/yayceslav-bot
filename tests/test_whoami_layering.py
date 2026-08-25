@@ -1,12 +1,14 @@
 from telegram.ext import Application, CommandHandler
 
 import accountability_runtime as accountability
+import chat_digest_runtime as chat_digest
 import daily_content_runtime as daily_content
 import daily_mood_runtime as daily_mood
 import dialogue_guard_runtime as dialogue_guard
 import episodic_memory_runtime as episodic_memory
 import initiative_runtime as initiative
 import member_profile_runtime as member_profile
+import natural_router_runtime as natural_router
 import pairwise_relationship_runtime as pairwise_relationship
 import monthly_social_runtime as monthly
 import positive_runtime as positive
@@ -16,6 +18,7 @@ import reputation_runtime as reputation
 import relationship_experience_runtime as relationship
 import runtime_bootstrap
 import scoped_help_runtime
+import search_enrichment_runtime as search_enrichment
 import sticker_post_runtime
 import sticker_runtime
 import unified_daily_title_runtime as unified_titles
@@ -121,6 +124,21 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         "_prepare_application",
         lambda app: calls.append(("initiative", app)),
     )
+    monkeypatch.setattr(
+        search_enrichment,
+        "install",
+        lambda: calls.append(("search_enrichment", None)),
+    )
+    monkeypatch.setattr(
+        chat_digest,
+        "prepare_application_runtime",
+        lambda app: calls.append(("chat_digest", app)),
+    )
+    monkeypatch.setattr(
+        natural_router,
+        "prepare_application_runtime",
+        lambda app: calls.append(("natural_router", app)),
+    )
 
     runtime_bootstrap.prepare_application_runtime(application)
 
@@ -143,6 +161,9 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("daily_mood", application),
         ("daily_content", application),
         ("initiative", application),
+        ("search_enrichment", None),
+        ("chat_digest", application),
+        ("natural_router", application),
     ]
     assert not hasattr(unified_titles, "install_runtime_hook")
     assert not hasattr(monthly, "install_runtime_hook")
