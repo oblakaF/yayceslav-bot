@@ -14,6 +14,8 @@ import sys
 from telegram.constants import ChatType
 from telegram.ext import Application, ApplicationHandlerStop, MessageHandler, filters
 
+import chat_digest_runtime
+
 
 _PREPARED_APPLICATION_IDS: set[int] = set()
 
@@ -144,27 +146,29 @@ async def _route_message(update, context) -> None:
     if action is None:
         return
 
-    handler_name = {
-        "recap": "recap_command",
-        "leaderboard": "leaderboard_command",
-        "judge": "judge_command",
-        "fact_or_bayan": "fact_or_bayan_command",
-        "roast": "roast_command",
-        "debate": "debate_command",
-        "argument": "argument_command",
-        "meme": "meme_command",
-        "week": "week_command",
-        "awards": "awards_command",
-    }[action]
-    handler = getattr(bot_module, handler_name, None)
-    if not callable(handler):
-        logging.warning("Natural router: handler missing for %s (%s)", action, handler_name)
-        return
-
     # These actions are group-centric; avoid surprising private-chat routing
     # for analytics commands that already make little sense in DMs.
     if action in {"recap", "leaderboard", "week", "awards"} and update.effective_chat.type == ChatType.PRIVATE:
         return
+
+    if action == "recap":
+        handler = chat_digest_runtime.missed_recap_command
+    else:
+        handler_name = {
+            "leaderboard": "leaderboard_command",
+            "judge": "judge_command",
+            "fact_or_bayan": "fact_or_bayan_command",
+            "roast": "roast_command",
+            "debate": "debate_command",
+            "argument": "argument_command",
+            "meme": "meme_command",
+            "week": "week_command",
+            "awards": "awards_command",
+        }[action]
+        handler = getattr(bot_module, handler_name, None)
+        if not callable(handler):
+            logging.warning("Natural router: handler missing for %s (%s)", action, handler_name)
+            return
 
     logging.info("Natural router: %s -> %s", prepared[:120], action)
     await handler(update, context)
