@@ -59,8 +59,3 @@ def pick_congratulation(display_name: str, *, rng: random.Random | None = None) 
     chooser = rng or random
     template = chooser.choice(CONGRATULATION_TEMPLATES)
     return template.format(name=display_name)
-
-
-# Production-only compatibility guards are isolated in a separate module.
-# The module is inert under tests/tools and activates only for `python bot.py`.
-import runtime_hotfix  # noqa: E402,F401
