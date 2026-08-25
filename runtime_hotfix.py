@@ -1,17 +1,18 @@
 """Small production guards for conversation edge cases.
 
 This module is loaded by birthday_engine only when the actual bot process is
-started. It patches three narrow runtime behaviors without changing the rest
-of Yaiceslav V2:
+started. It patches narrow runtime behaviors without changing the rest of
+Yaiceslav V2:
 
 1. Ground Gemini with the real Moscow date/year so short follow-ups cannot
    reinforce an old hallucinated year from chat memory.
 2. Never expose malformed internal voice-control JSON to Telegram users.
 3. When a user says only "check/search the internet" as a follow-up, reuse
    the immediately preceding user topic instead of searching an empty string.
+4. Install Voice 2.0 structured control output and modest sticker tuning.
 
 The patch is intentionally isolated and idempotent so it can be removed once
-these guards are folded into bot.py directly.
+these guards are folded into the main bootstrap directly.
 """
 
 from __future__ import annotations
@@ -135,6 +136,8 @@ def _install(module: Any) -> bool:
         "_resolve_voice_search_answer",
         "perform_web_search",
         "current_msk_datetime",
+        "ask_gemini",
+        "_should_reply_as_voice",
     )
     if not all(hasattr(module, name) for name in required):
         return False
@@ -263,8 +266,19 @@ def _install(module: Any) -> bool:
         perform_web_search_with_context._yayceslav_empty_search_guard = True
         module.perform_web_search = perform_web_search_with_context
 
+    # ------------------------------------------------------------------
+    # 4. Voice 2.0 + sticker tuning. Both are idempotent. Sticker tuning
+    #    attaches itself to the normal semantic startup hook so it runs before
+    #    Telegram sticker handlers are registered.
+    # ------------------------------------------------------------------
+    import voice2_runtime
+    import sticker_tuning_runtime
+
+    voice2_runtime.install()
+    sticker_tuning_runtime.install()
+
     logging.warning(
-        "Runtime hotfix installed: date grounding, voice JSON guard, contextual bare search"
+        "Runtime hotfix installed: date grounding, voice JSON guard, contextual bare search, voice2, sticker tuning"
     )
     return True
 
