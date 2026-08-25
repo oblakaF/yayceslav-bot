@@ -1,8 +1,9 @@
 """Deterministic natural-language routing for existing Yayceslav actions.
 
 The router intentionally handles only high-confidence phrases. Anything
-ambiguous falls through to the ordinary Gemini text handler, so this layer
-adds convenience without turning every chat message into a command.
+ambiguous falls through to the ordinary Gemini text handler. In groups, these
+high-confidence action phrases are allowed to wake the bot even without an
+explicit mention/reply, because the phrase itself is the address signal.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ _PREPARED_APPLICATION_IDS: set[int] = set()
 
 
 def _norm(text: str) -> str:
-    return re.sub(r"[^\wёЁ]+", " ", (text or "").lower(), flags=re.UNICODE).strip()
+    return re.sub(r"[^\wёЁ@]+", " ", (text or "").lower(), flags=re.UNICODE).strip()
 
 
 _ROUTE_PATTERNS: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
@@ -29,8 +30,23 @@ _ROUTE_PATTERNS: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
         "recap",
         (
             re.compile(r"\bчто\s+(?:я\s+)?пропустил\b", re.I),
-            re.compile(r"\bчто\s+(?:тут|здесь|в\s+чате)\s+(?:было|происходило)\b", re.I),
-            re.compile(r"\bперескажи\s+(?:чат|переписку)\b", re.I),
+            re.compile(r"\bчто\s+(?:тут|здесь|в\s+чате)\s+(?:было|происходило|творилось)\b", re.I),
+            re.compile(r"\bче\s+(?:тут|здесь|в\s+чате)\s+(?:было|происходило|творилось)\b", re.I),
+            re.compile(r"\bч[её]\s+было\s+в\s+чате\b", re.I),
+            re.compile(r"\bчто\s+было\s+в\s+чате\b", re.I),
+            re.compile(r"\bо\s+ч[её]м\s+(?:тут\s+)?(?:базар|разговор)\s+(?:был|ш[её]л)\b", re.I),
+            re.compile(r"\bпро\s+что\s+(?:(?:вы|мы)\s+)?(?:тут\s+)?(?:базарили|говорили|трещали)\b", re.I),
+            re.compile(r"\bчто\s+(?:сегодня\s+)?обсуждали\b", re.I),
+            re.compile(r"\bо\s+ч[её]м\s+(?:мы\s+)?(?:сегодня\s+)?(?:говорили|разговаривали)\b", re.I),
+            re.compile(r"\bпро\s+что\s+(?:мы\s+)?(?:сегодня\s+)?(?:говорили|разговаривали)\b", re.I),
+            re.compile(r"\bперескажи\s+(?:чат|переписку|что\s+тут\s+было)\b", re.I),
+            re.compile(r"\b(?:нифига|нихрена|охренеть|офигеть)\s+вы\s+тут\s+(?:насрали|написали|нафлудили)\b", re.I),
+            re.compile(r"\bвы\s+тут\s+(?:насрали|нафлудили)\s+(?:в\s+)?чат\b", re.I),
+            re.compile(r"\bчто\s+за\s+движ\s+(?:тут|в\s+чате)\b", re.I),
+            re.compile(r"\bкакой\s+тут\s+движ\b", re.I),
+            re.compile(r"\bвведите\s+в\s+курс\s+дел\b", re.I),
+            re.compile(r"\bвведи\s+в\s+курс\s+дел\b", re.I),
+            re.compile(r"\bдайте\s+краткий\s+пересказ\b", re.I),
         ),
     ),
     (
@@ -39,6 +55,8 @@ _ROUTE_PATTERNS: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
             re.compile(r"\bкто\s+(?:больше|больше\s+всех)\s+писал\b", re.I),
             re.compile(r"\bкто\s+самый\s+активн\w*\b", re.I),
             re.compile(r"\bтоп\s+(?:писателей|активных|болтунов)\b", re.I),
+            re.compile(r"\bкто\s+тут\s+главный\s+болтун\b", re.I),
+            re.compile(r"\bкто\s+нафлудил\s+больше\s+всех\b", re.I),
         ),
     ),
     (
@@ -48,6 +66,8 @@ _ROUTE_PATTERNS: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
             re.compile(r"\bкто\s+(?:из\s+нас\s+)?прав\b", re.I),
             re.compile(r"\bвынеси\s+вердикт\b", re.I),
             re.compile(r"\bоцени\s+спор\b", re.I),
+            re.compile(r"\bкто\s+тут\s+прав\b", re.I),
+            re.compile(r"\bразрули\s+спор\b", re.I),
         ),
     ),
     (
@@ -57,13 +77,16 @@ _ROUTE_PATTERNS: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
             re.compile(r"\bэто\s+правда\s+или\s+нет\b", re.I),
             re.compile(r"\bфакт\s+или\s+баян\b", re.I),
             re.compile(r"\bпроверь\s+утверждение\b", re.I),
+            re.compile(r"\bправда\s+или\s+пизд[её]ж\b", re.I),
         ),
     ),
     (
         "roast",
         (
-            re.compile(r"\bпрожарь\b", re.I),
-            re.compile(r"\bподколи\s+(?:его|её|это|сообщение)\b", re.I),
+            re.compile(r"\bпрожарь(?:\s+@?[\wёЁ][\wёЁ._-]*)?\b", re.I),
+            re.compile(r"\bподколи\s+(?:его|её|это|сообщение|@?[\wёЁ][\wёЁ._-]*)\b", re.I),
+            re.compile(r"\bразъеби\s+(?:его|её|@?[\wёЁ][\wёЁ._-]*)\b", re.I),
+            re.compile(r"\bпрожарка\s+(?:для\s+)?@?[\wёЁ][\wёЁ._-]*\b", re.I),
         ),
     ),
     (
@@ -92,6 +115,7 @@ _ROUTE_PATTERNS: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
         (
             re.compile(r"\bдай\s+отч[её]т\s+за\s+неделю\b", re.I),
             re.compile(r"\bчто\s+было\s+за\s+неделю\b", re.I),
+            re.compile(r"\bитоги\s+недели\b", re.I),
         ),
     ),
     (
@@ -99,6 +123,7 @@ _ROUTE_PATTERNS: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
         (
             re.compile(r"\bнаграды\s+недели\b", re.I),
             re.compile(r"\bкто\s+получил\s+награды\b", re.I),
+            re.compile(r"\bкому\s+награды\s+дали\b", re.I),
         ),
     ),
 )
@@ -131,20 +156,27 @@ async def _route_message(update, context) -> None:
     if not original_text:
         return
 
-    # Reuse the bot's own group-address rules. In private every text is eligible;
-    # in groups only direct mentions/replies/text-addresses are routed.
-    prepared = await bot_module.prepare_request_text(
-        update=update,
-        context=context,
-        original_text=original_text,
-        default_text="",
-    )
-    if prepared is None:
-        return
-
-    action = classify_action(prepared)
-    if action is None:
-        return
+    # A high-confidence natural action is itself an address signal. This lets
+    # people write normal group phrases such as "че было в чате?" or
+    # "прожарь @nick" without first saying "Яйцеслав". Ambiguous chatter still
+    # falls through and cannot wake the bot through this router.
+    direct_action = classify_action(original_text)
+    if direct_action is not None and update.effective_chat.type != ChatType.PRIVATE:
+        prepared = original_text
+        action = direct_action
+    else:
+        # Otherwise preserve the bot's ordinary mention/reply/address rules.
+        prepared = await bot_module.prepare_request_text(
+            update=update,
+            context=context,
+            original_text=original_text,
+            default_text="",
+        )
+        if prepared is None:
+            return
+        action = classify_action(prepared)
+        if action is None:
+            return
 
     # These actions are group-centric; avoid surprising private-chat routing
     # for analytics commands that already make little sense in DMs.
