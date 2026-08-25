@@ -20,7 +20,7 @@ import functools
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 _INSTALLED = False
@@ -56,9 +56,11 @@ class RelationshipSnapshot:
 
     @property
     def has_repeated_conflict_history(self) -> bool:
+        """Require persistent evidence, not one mildly bad interaction."""
+
         return bool(
             self.reputation_score <= -10
-            or self.hostility_today > 0
+            or self.hostility_today >= 3
             or self.reputation_negative_events >= 2
             or self.insults_to_bot >= 3
         )
@@ -112,8 +114,19 @@ def snapshot_from_profile(
 def resolve_relationship_band(snapshot: RelationshipSnapshot) -> str:
     """Resolve the persistent attitude before looking at current wording."""
 
+    familiar = bool(
+        snapshot.familiarity >= 2
+        or snapshot.replies_to_bot >= 5
+    )
+
+    # A real recurring feud is relationship history of its own. It comes
+    # before generic warmth so a mixed love/hate old-timer gets playful banter
+    # rather than being flattened into either blind friendliness or hatred.
+    if snapshot.has_repeated_conflict_history:
+        return "feuding_familiar" if familiar else "wary"
+
     # Strong recent sympathy can warm a neutral lifetime score, but it does
-    # not magically erase a clearly negative long-term score.
+    # not erase persistent negative evidence handled above.
     if snapshot.reputation_score >= 35 or (
         snapshot.reputation_score >= 0
         and snapshot.positive_affinity_level >= 3
@@ -125,14 +138,6 @@ def resolve_relationship_band(snapshot: RelationshipSnapshot) -> str:
         and snapshot.positive_affinity_level >= 1
     ):
         return "friendly"
-
-    familiar = bool(
-        snapshot.familiarity >= 2
-        or snapshot.replies_to_bot >= 5
-    )
-
-    if snapshot.has_repeated_conflict_history:
-        return "feuding_familiar" if familiar else "wary"
 
     if familiar:
         return "neutral_familiar"
@@ -255,6 +260,15 @@ def build_priority_instruction(
             "наезд и не отвечай так, будто человек уже оскорбил Яйцеслава."
         )
 
+    if media_kind != "text":
+        lines.append(
+            "Сначала пойми РЕАЛЬНОЕ содержание медиа. Если там горе, опасность, "
+            "здоровье, сильный стресс или просьба о помощи — серьёзность сразу "
+            "побеждает бантер. Если человек прямо атакует Яйцеслава — допустима "
+            "пропорциональная защита по режиму отношений. Жалоба на пробки, "
+            "работу или третьих лиц не считается атакой на бота."
+        )
+
     if media_kind == "proactive_video":
         lines.extend(
             (
@@ -296,6 +310,21 @@ def _find_bot_module():
     return None
 
 
+def _call_argument(
+    args: Sequence[Any],
+    kwargs: Mapping[str, Any],
+    *,
+    name: str,
+    position: int,
+    default: Any = None,
+) -> Any:
+    if name in kwargs:
+        return kwargs[name]
+    if len(args) > position:
+        return args[position]
+    return default
+
+
 def install(bot_module: Any | None = None) -> bool:
     """Install after all other social/mood wrappers and before Voice 2.0."""
 
@@ -312,10 +341,15 @@ def install(bot_module: Any | None = None) -> bool:
 
     @functools.wraps(original)
     def build_with_social_priority(*args: Any, **kwargs: Any) -> str:
-        raw_style_text = (
-            str(args[0] or "")
-            if args
-            else str(kwargs.get("style_text", "") or "")
+        raw_style_text = str(
+            _call_argument(
+                args,
+                kwargs,
+                name="style_text",
+                position=0,
+                default="",
+            )
+            or ""
         )
         media_kind = detect_media_kind(raw_style_text)
 
@@ -332,14 +366,33 @@ def install(bot_module: Any | None = None) -> bool:
             # Nobody called the bot. Prevent the existing fatigue/call tracker
             # from treating a random circle intervention as another direct
             # summons and carrying artificial annoyance into later replies.
-            call_kwargs["bot_was_mentioned"] = False
+            if len(call_args) > 7:
+                call_args[7] = False
+            else:
+                call_kwargs["bot_was_mentioned"] = False
 
         instruction = str(original(*call_args, **call_kwargs))
-        chat_type = str(call_kwargs.get("chat_type", "")).lower()
+        chat_type = str(
+            _call_argument(
+                call_args,
+                call_kwargs,
+                name="chat_type",
+                position=4,
+                default="",
+            )
+            or ""
+        ).lower()
         if chat_type not in _GROUP_CHAT_TYPES:
             return instruction
 
-        snapshot = snapshot_from_profile(call_kwargs.get("member_profile"))
+        profile = _call_argument(
+            call_args,
+            call_kwargs,
+            name="member_profile",
+            position=8,
+            default=None,
+        )
+        snapshot = snapshot_from_profile(profile)
 
         if media_kind == "text":
             try:
