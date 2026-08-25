@@ -17,12 +17,13 @@ from telegram.constants import ChatType
 
 
 _INSTALLED = False
+_APPLIED = False
 
 
-def install() -> bool:
-    global _INSTALLED
-    if _INSTALLED:
-        return True
+def _apply_tuning() -> None:
+    global _APPLIED
+    if _APPLIED:
+        return
 
     import sticker_engine
     import sticker_interaction
@@ -63,9 +64,41 @@ def install() -> bool:
         directed_own_pack_listener._yayceslav_directed_stickers = True
         sticker_runtime.own_pack_sticker_listener = directed_own_pack_listener
 
-    _INSTALLED = True
+    _APPLIED = True
     logging.warning(
         "Sticker tuning ready: background<=3%%, question<=7%%, post-tag<=8%%, "
         "cooldown=8m/chat 15m/user, max=3/hour; group sticker replies must target bot"
     )
+
+
+def install() -> bool:
+    """Attach tuning to the existing Aug19 semantic startup hook.
+
+    runtime_hotfix calls this before polling. The actual sticker registry is
+    extended later by runtime_bootstrap, so wrapping that extension guarantees
+    new Aug19 events get the same probability tuning and the listener is patched
+    before Telegram handlers are registered.
+    """
+
+    global _INSTALLED
+    if _INSTALLED:
+        return True
+
+    import sticker_semantics_aug19
+
+    original_install_runtime = sticker_semantics_aug19.install_runtime_behavior
+    if not getattr(original_install_runtime, "_yayceslav_sticker_tuning", False):
+        @functools.wraps(original_install_runtime)
+        def install_runtime_with_tuning() -> None:
+            original_install_runtime()
+            _apply_tuning()
+
+        install_runtime_with_tuning._yayceslav_sticker_tuning = True
+        sticker_semantics_aug19.install_runtime_behavior = install_runtime_with_tuning
+
+    # Tests or unusual startup paths may call us after semantic runtime setup.
+    if getattr(sticker_semantics_aug19, "_INSTALLED_RUNTIME", False):
+        _apply_tuning()
+
+    _INSTALLED = True
     return True
