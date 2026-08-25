@@ -81,18 +81,21 @@ def test_structured_call_uses_json_schema_and_sets_voice_override():
         ),
     )
 
-    voice2_runtime._VOICE_REPLY_OVERRIDE.set(None)
-    result = asyncio.run(
-        voice2_runtime._structured_voice_decision(
+    async def run_in_same_context():
+        voice2_runtime._VOICE_REPLY_OVERRIDE.set(None)
+        result = await voice2_runtime._structured_voice_decision(
             bot_module,
             [object(), "Прослушай сообщение пользователя"],
             {"chat_type": "private", "max_output_tokens": 320},
         )
-    )
+        override = voice2_runtime._VOICE_REPLY_OVERRIDE.get()
+        voice2_runtime._VOICE_REPLY_OVERRIDE.set(None)
+        return result, override
+
+    result, override = asyncio.run(run_in_same_context())
 
     assert '"answer": "Четыре."' in result
     config = captured["config"].kwargs
     assert config["response_mime_type"] == "application/json"
     assert config["response_schema"] is voice2_runtime.VoiceDecision
-    assert voice2_runtime._VOICE_REPLY_OVERRIDE.get() is True
-    voice2_runtime._VOICE_REPLY_OVERRIDE.set(None)
+    assert override is True
