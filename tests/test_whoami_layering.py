@@ -4,6 +4,7 @@ import accountability_runtime as accountability
 import chat_digest_runtime as chat_digest
 import daily_content_runtime as daily_content
 import daily_mood_runtime as daily_mood
+import date_grounding_runtime as date_grounding
 import dialogue_guard_runtime as dialogue_guard
 import episodic_memory_runtime as episodic_memory
 import initiative_runtime as initiative
@@ -18,10 +19,12 @@ import reputation_runtime as reputation
 import relationship_experience_runtime as relationship
 import runtime_bootstrap
 import scoped_help_runtime
+import search_context_runtime as search_context
 import search_enrichment_runtime as search_enrichment
 import sticker_post_runtime
 import sticker_runtime
 import unified_daily_title_runtime as unified_titles
+import voice2_runtime as voice2
 import whoami_profile_v3_runtime as v3
 import whoami_profile_v4_runtime as v4
 
@@ -125,9 +128,24 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         lambda app: calls.append(("initiative", app)),
     )
     monkeypatch.setattr(
+        date_grounding,
+        "install",
+        lambda: calls.append(("date_grounding", None)) or True,
+    )
+    monkeypatch.setattr(
+        voice2,
+        "install",
+        lambda: calls.append(("voice2", None)) or True,
+    )
+    monkeypatch.setattr(
         search_enrichment,
         "install",
         lambda: calls.append(("search_enrichment", None)),
+    )
+    monkeypatch.setattr(
+        search_context,
+        "install",
+        lambda: calls.append(("search_context", None)) or True,
     )
     monkeypatch.setattr(
         chat_digest,
@@ -161,7 +179,10 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("daily_mood", application),
         ("daily_content", application),
         ("initiative", application),
+        ("date_grounding", None),
+        ("voice2", None),
         ("search_enrichment", None),
+        ("search_context", None),
         ("chat_digest", application),
         ("natural_router", application),
     ]

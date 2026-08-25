@@ -51,11 +51,15 @@ import daily_content_source_patch  # noqa: F401
 import initiative_runtime
 import birthday_runtime
 
-# Free-tier smart tools: deterministic routing, bounded search enrichment and
-# compact group digests. None of these owns polling or unbounded storage.
+# Free-tier smart tools and production guards. All are explicit, bounded runtime
+# layers: no readiness thread, browser, cache, vector DB, or transcript storage.
 import natural_router_runtime
 import search_enrichment_runtime
 import chat_digest_runtime
+import date_grounding_runtime
+import search_context_runtime
+import voice2_runtime
+import sticker_tuning_runtime
 
 
 # Exposed for a small contract test. This documents the critical ordering
@@ -87,6 +91,10 @@ RUNTIME_LOAD_ORDER = (
     "search_enrichment_runtime",
     "chat_digest_runtime",
     "natural_router_runtime",
+    "date_grounding_runtime",
+    "search_context_runtime",
+    "voice2_runtime",
+    "sticker_tuning_runtime",
 )
 
 
@@ -128,24 +136,23 @@ def ensure_chat_member_updates(kwargs: dict) -> None:
 
 def prepare_polling_runtime(kwargs: dict) -> None:
     """Apply small non-schema polling preparations without extra wrappers."""
-    # This used to be its own Application.run_polling wrapper. Keep the same
-    # best-effort behavior: install() may return False if the bot module is not
-    # ready, but that has never blocked polling.
     dialogue_followup_mode_patch.install()
     ensure_chat_member_updates(kwargs)
 
 
 def _prepare_sticker_menu_runtime(application: Application) -> None:
     """Prepare the sticker/menu startup layer without polling wrappers."""
+    # Tuning wraps the Aug19 semantic install hook, so it must attach before
+    # install_runtime_behavior is called and before Telegram sticker handlers
+    # capture own_pack_sticker_listener.
+    sticker_tuning_runtime.install()
+
     # Lazy imports are intentional. bot.py imports adaptation_cache (and thus
     # this bootstrap) before the sticker/menu modules; importing them here at
     # polling startup avoids changing bot.py import order or creating cycles.
     import praise_guard_runtime
     import sticker_semantics_aug19
 
-    # Extend the pure semantic registry BEFORE sticker_runtime loads its cached
-    # ids. The runtime behavior hooks themselves are installed only after all
-    # three sticker/menu modules exist.
     sticker_semantics_aug19.install_catalog_semantics()
 
     import scoped_help_runtime
@@ -155,16 +162,13 @@ def _prepare_sticker_menu_runtime(application: Application) -> None:
     praise_guard_runtime.install()
     sticker_semantics_aug19.install_runtime_behavior()
 
-    # Preserve the previous preparation order while keeping polling ownership
-    # in this bootstrap only.
     sticker_runtime.prepare_application_runtime(application)
     scoped_help_runtime.prepare_application_runtime(application)
     sticker_post_runtime.install_send_answer_wrapper()
 
     logging.warning(
         "Yayceslav stickers runtime ready: registry=%s; own-pack=50%% semantic sticker/text; "
-        "foreign packs ignored; question<=5%% semantic-only; background<=2%%; "
-        "background cap=%s/hour",
+        "foreign packs ignored; tuned probabilities with shared cap=%s/hour",
         len(sticker_runtime.sticker_engine.STICKER_ORDER),
         sticker_runtime.STICKER_MAX_PER_WINDOW,
     )
@@ -174,70 +178,46 @@ def _prepare_sticker_menu_runtime(application: Application) -> None:
 def prepare_application_runtime(application: Application) -> None:
     """Prepare application-owned features from one explicit startup path."""
     _prepare_sticker_menu_runtime(application)
-    # Order is a runtime contract: monthly captures the unified scheduler and
-    # appends its report after the daily-title run.
     unified_daily_title_runtime._prepare()
     monthly_social_runtime._prepare_application(application)
-    # Relationship must wrap the base profile before member-profile memory
-    # augmentation wraps that enriched profile. Safety/monthly-memory patches
-    # are already installed by the import chain above before this runs.
     relationship_experience_runtime._prepare_application(application)
     member_profile_runtime._prepare_application(application)
-    # Episodic memory wraps the profile getter after member_profile_runtime's
-    # callback-term memory, adding a disjoint "episodic_notes" key; order
-    # between the two memory layers does not matter to each other.
     episodic_memory_runtime._prepare_application(application)
-    # Data-only for now: records reply-chain interaction between two ordinary
-    # members, nothing reads it into a live prompt yet.
     pairwise_relationship_runtime._prepare_application(application)
-    # v3 must prepare after monthly_memory_scope_patch has installed its
-    # calendar-month storage functions; import order above preserves that.
     whoami_profile_v3_runtime._prepare_application(application)
     whoami_profile_v4_runtime._prepare_application(application)
-    # Dialogue guard patches bot-level Gemini/instruction/rate-limit functions;
-    # keep it after the application-owned feature preparation as before.
+
+    # Compose conversational wrappers first. Voice 2.0 is installed later so
+    # non-voice requests delegate through this final Gemini stack.
     dialogue_guard_runtime._prepare()
-    # Accountability must wrap the already-composed instruction builder and
-    # must also block correction from proactive aggression.
     accountability_runtime.install()
-    # Positive behavior is intentionally installed after accountability and the
-    # dialogue guard, so its grounded warmth is appended to the final composed
-    # instruction. It adds only a group-9 observer; polling ownership stays here.
     positive_runtime._prepare_application(application)
-    # Lifetime explicit reputation sits above short-term positive affinity. New
-    # users are exactly neutral (0); directed praise/abuse persists across days.
     reputation_runtime._prepare_application(application)
-    # Ordinary social behavior then adds one passive +1..+5 per clean active day.
-    # The group-11 observer can revoke that same-day passive bonus if hostility
-    # appears later, without altering explicit praise/abuse event counters.
     reputation_daily_runtime._prepare_application(application)
-    # Decay applies lazily to whatever _state_sync returns everywhere else
-    # (instruction building, profile enrichment, the aggression gate) instead
-    # of scanning member_reputation on a schedule.
     reputation_decay_runtime._prepare()
-    # Chat-wide mood is the last text appended to the composed instruction:
-    # it colors tone for everyone in the chat, on top of (never instead of)
-    # the per-user layers above.
     daily_mood_runtime._prepare_application(application)
-    # Rate-limit ВСЁ ТЛЕН must wrap the FINAL limiter, including the 12/min
-    # group guard installed immediately above.
+
     import rate_limit_tlen_runtime
     rate_limit_tlen_runtime.install()
-    # Daily content captures the already-composed daily+monthly scheduler and
-    # appends its own due checks; source-network logic is untouched.
     daily_content_runtime._prepare_application(application)
-    # Initiative must wrap the FULLY composed run_due_daily_titles chain
-    # (silent titles -> daily jokes/news) so it fires last on the same tick,
-    # never displacing them.
     initiative_runtime._prepare_application(application)
-    # Birthdays wrap the same chain last; independent of initiative/daily
-    # content, order relative to them doesn't matter.
     birthday_runtime._prepare_application(application)
 
-    # Smart-tool order is deliberate: install search enhancement first, then
-    # storage-bounded digest collection, then the group=-2 natural router.
-    # The router can therefore answer "что я пропустил?" from digest memory.
+    # Current-date grounding is deliberately late: it wraps the fully composed
+    # instruction builder, making process date/time authoritative at the edge.
+    if not date_grounding_runtime.install():
+        logging.warning("Date grounding runtime: bot module not ready")
+
+    # Voice 2.0 captures the completed ask_gemini stack and owns its JSON leak
+    # containment. No delayed readiness thread is needed anymore.
+    if not voice2_runtime.install():
+        logging.warning("Voice 2.0 runtime: bot module not ready")
+
+    # Search 2.0 remains bounded. Context recovery wraps perform_web_search only
+    # after enrichment is installed, preserving the existing search pipeline.
     search_enrichment_runtime.install()
+    if not search_context_runtime.install():
+        logging.warning("Search context runtime: bot module not ready")
     chat_digest_runtime.prepare_application_runtime(application)
     natural_router_runtime.prepare_application_runtime(application)
 
@@ -253,8 +233,6 @@ def _install_preflight_hook() -> None:
         try:
             run_schema_preflight()
         except Exception:
-            # Fail closed: never start the bot against a schema whose migration
-            # state is unknown or partially applied.
             logging.exception("Schema migration preflight failed; polling not started")
             raise
         prepare_application_runtime(self)

@@ -45,8 +45,9 @@ def test_non_search_decision_drops_control_query():
     assert decision.answer.startswith("Резонанс")
 
 
-def test_structured_call_uses_json_schema_and_sets_voice_override():
+def test_structured_call_uses_json_schema_profile_and_sets_voice_override():
     captured = {}
+    instruction_kwargs = {}
 
     class FakeModels:
         async def generate_content(self, **kwargs):
@@ -70,8 +71,17 @@ def test_structured_call_uses_json_schema_and_sets_voice_override():
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
+    async def get_member_profile(chat_id, user_id):
+        assert (chat_id, user_id) == (-100, 42)
+        return {"reputation": 17}
+
+    def build_instruction(*args, **kwargs):
+        instruction_kwargs.update(kwargs)
+        return "SYSTEM"
+
     bot_module = SimpleNamespace(
-        build_full_system_instruction=lambda *args, **kwargs: "SYSTEM",
+        build_full_system_instruction=build_instruction,
+        get_member_profile=get_member_profile,
         GEMINI_SEMAPHORE=asyncio.Semaphore(1),
         gemini_client=SimpleNamespace(aio=SimpleNamespace(models=FakeModels())),
         MODEL_NAME="test-model",
@@ -86,7 +96,12 @@ def test_structured_call_uses_json_schema_and_sets_voice_override():
         result = await voice2_runtime._structured_voice_decision(
             bot_module,
             [object(), "Прослушай сообщение пользователя"],
-            {"chat_type": "private", "max_output_tokens": 320},
+            {
+                "chat_type": "group",
+                "chat_id": -100,
+                "user_id": 42,
+                "max_output_tokens": 320,
+            },
         )
         override = voice2_runtime._VOICE_REPLY_OVERRIDE.get()
         voice2_runtime._VOICE_REPLY_OVERRIDE.set(None)
@@ -95,7 +110,46 @@ def test_structured_call_uses_json_schema_and_sets_voice_override():
     result, override = asyncio.run(run_in_same_context())
 
     assert '"answer": "Четыре."' in result
+    assert instruction_kwargs["member_profile"] == {"reputation": 17}
     config = captured["config"].kwargs
     assert config["response_mime_type"] == "application/json"
     assert config["response_schema"] is voice2_runtime.VoiceDecision
     assert override is True
+
+
+def test_voice_resolver_guard_suppresses_malformed_or_empty_control_json():
+    calls = []
+
+    async def original(update, raw_answer, *, user_settings):
+        calls.append(raw_answer)
+        return "NORMAL"
+
+    module = SimpleNamespace(_resolve_voice_search_answer=original)
+    voice2_runtime._install_voice_resolver_guard(module)
+
+    malformed = asyncio.run(
+        module._resolve_voice_search_answer(
+            object(),
+            '{"needs_search": false, "search_query": ""',
+            user_settings=None,
+        )
+    )
+    empty_answer = asyncio.run(
+        module._resolve_voice_search_answer(
+            object(),
+            '{"needs_search": false, "search_query": "", "answer": ""}',
+            user_settings=None,
+        )
+    )
+    normal = asyncio.run(
+        module._resolve_voice_search_answer(
+            object(),
+            "обычный ответ",
+            user_settings=None,
+        )
+    )
+
+    assert "служебный ответ" in malformed
+    assert "не сформировала ответ" in empty_answer
+    assert normal == "NORMAL"
+    assert calls == ["обычный ответ"]

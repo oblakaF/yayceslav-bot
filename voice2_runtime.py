@@ -12,6 +12,7 @@ import asyncio
 import contextvars
 import json
 import logging
+import re
 import sys
 import time
 from typing import Any
@@ -36,6 +37,7 @@ _VOICE_REPLY_OVERRIDE: contextvars.ContextVar[bool | None] = contextvars.Context
     default=None,
 )
 _INSTALLED = False
+_STRUCTURED_VOICE_MARKERS = ('"needs_search"', '"search_query"')
 
 
 def _find_bot_module():
@@ -62,6 +64,25 @@ def _prompt_text(contents: Any) -> str:
     if isinstance(contents, list):
         return " ".join(str(item) for item in contents if isinstance(item, str))
     return str(contents or "")
+
+
+def _extract_voice_payload(raw_answer: str) -> dict[str, Any] | None:
+    match = re.search(r"\{.*\}", raw_answer or "", flags=re.DOTALL)
+    if not match:
+        return None
+    try:
+        payload = json.loads(match.group(0))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _looks_like_voice_control_output(raw_answer: str) -> bool:
+    text = (raw_answer or "").strip()
+    return bool(
+        text.startswith("{")
+        or any(marker in text for marker in _STRUCTURED_VOICE_MARKERS)
+    )
 
 
 def _normalize_decision(decision: VoiceDecision) -> VoiceDecision:
@@ -98,6 +119,14 @@ async def _structured_voice_decision(bot_module, contents: Any, kwargs: dict[str
     user_id = kwargs.get("user_id")
     max_output_tokens = int(kwargs.get("max_output_tokens", 320) or 320)
 
+    member_profile = None
+    get_member_profile = getattr(bot_module, "get_member_profile", None)
+    if callable(get_member_profile) and chat_id is not None and user_id is not None:
+        try:
+            member_profile = await get_member_profile(chat_id, user_id)
+        except Exception as error:
+            logging.warning("Voice 2.0 member profile lookup failed: %s", error)
+
     style_text = _prompt_text(contents)
     current_instruction = bot_module.build_full_system_instruction(
         style_text,
@@ -108,7 +137,7 @@ async def _structured_voice_decision(bot_module, contents: Any, kwargs: dict[str
         user_name=user_name,
         recent_messages=recent_messages,
         bot_was_mentioned=bot_was_mentioned,
-        member_profile=None,
+        member_profile=member_profile,
         user_id=user_id,
     )
     current_instruction += (
@@ -178,6 +207,45 @@ async def _structured_voice_decision(bot_module, contents: Any, kwargs: dict[str
     raise RuntimeError("Voice 2.0 structured decision failed")
 
 
+def _install_voice_resolver_guard(bot_module) -> None:
+    original = bot_module._resolve_voice_search_answer
+    if getattr(original, "_yayceslav_voice_json_guard", False):
+        return
+
+    async def resolve_voice_safely(
+        update: Any,
+        raw_answer: str,
+        *,
+        user_settings: dict[str, Any] | None,
+    ) -> str:
+        payload = _extract_voice_payload(raw_answer)
+
+        if payload is None and _looks_like_voice_control_output(raw_answer):
+            logging.warning(
+                "Malformed voice-control JSON suppressed: %r",
+                (raw_answer or "")[:160],
+            )
+            return (
+                "Голосовуху понял, но служебный ответ нейросети обрезался. "
+                "Повтори вопрос ещё раз."
+            )
+
+        if payload is not None:
+            needs_search = bool(payload.get("needs_search"))
+            direct_answer = str(payload.get("answer") or "").strip()
+            if not needs_search and not direct_answer:
+                logging.warning("Voice-control JSON had no user answer; suppressed payload")
+                return (
+                    "Голосовуху понял, но нейросеть не сформировала ответ. "
+                    "Повтори вопрос ещё раз."
+                )
+
+        return await original(update, raw_answer, user_settings=user_settings)
+
+    resolve_voice_safely._yayceslav_voice_json_guard = True
+    bot_module._resolve_voice_search_answer = resolve_voice_safely
+
+
 def install() -> bool:
     global _INSTALLED
     if _INSTALLED:
@@ -185,6 +253,10 @@ def install() -> bool:
 
     bot_module = _find_bot_module()
     if bot_module is None:
+        return False
+
+    required = ("_should_reply_as_voice", "_resolve_voice_search_answer")
+    if not all(hasattr(bot_module, name) for name in required):
         return False
 
     original_ask = bot_module.ask_gemini
@@ -197,8 +269,8 @@ def install() -> bool:
             return await _structured_voice_decision(bot_module, contents, kwargs)
         except Exception as error:
             # Safe fallback keeps the old path available if the installed SDK or
-            # provider temporarily rejects schema output. The existing JSON leak
-            # guard remains active as a final containment layer.
+            # provider temporarily rejects schema output. Resolver containment
+            # below guarantees malformed legacy control JSON is not user-visible.
             logging.warning("Voice 2.0 falling back to legacy JSON prompt: %s", error)
             _VOICE_REPLY_OVERRIDE.set(None)
             return await original_ask(contents, *args, **kwargs)
@@ -214,8 +286,9 @@ def install() -> bool:
     should_reply_as_voice_voice2._yayceslav_voice2 = True
     bot_module.ask_gemini = ask_gemini_voice2
     bot_module._should_reply_as_voice = should_reply_as_voice_voice2
+    _install_voice_resolver_guard(bot_module)
     _INSTALLED = True
     logging.warning(
-        "Voice 2.0 ready: structured schema, ephemeral transcript, explicit voice request support"
+        "Voice 2.0 ready: structured schema, ephemeral transcript, member profile, explicit voice request, JSON containment"
     )
     return True
