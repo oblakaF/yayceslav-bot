@@ -52,6 +52,33 @@ def test_real_feud_history_allows_playful_preemptive_banter_without_escalation()
     assert "не эскалируй первым" in instruction
 
 
+def test_one_mild_bad_interaction_does_not_invent_a_recurring_feud():
+    snapshot = runtime.snapshot_from_profile(
+        {
+            "reputation_score": -1,
+            "hostility_today": 1,
+            "relationship_level": 3,
+            "reputation_negative_events": 1,
+            "insults_to_bot": 1,
+        }
+    )
+    assert snapshot.has_repeated_conflict_history is False
+    assert runtime.resolve_relationship_band(snapshot) == "neutral_familiar"
+
+
+def test_recurring_feud_history_is_not_erased_by_generic_positive_affinity():
+    snapshot = runtime.snapshot_from_profile(
+        {
+            "reputation_score": 40,
+            "positive_affinity_level": 4,
+            "relationship_level": 3,
+            "reputation_negative_events": 3,
+            "insults_to_bot": 6,
+        }
+    )
+    assert runtime.resolve_relationship_band(snapshot) == "feuding_familiar"
+
+
 def test_negative_unfamiliar_person_is_wary_not_preemptively_abused():
     snapshot = runtime.snapshot_from_profile(
         {
@@ -97,6 +124,8 @@ def test_proactive_circle_keeps_twenty_percent_gate_and_content_first_tone():
     assert "отдых" in instruction
     assert "пробки" in instruction
     assert "Не оскорбляй внешность" in instruction
+    assert "горе, опасность" in instruction
+    assert "Жалоба на пробки" in instruction
 
 
 def test_voice_media_uses_actual_audio_not_service_prompt_as_user_tone():
@@ -109,6 +138,7 @@ def test_voice_media_uses_actual_audio_not_service_prompt_as_user_tone():
     assert "служебный prompt обработки не является словами человека" in instruction
     assert "реальный контекст из медиа" in instruction
     assert "не сбрасывает отношения" in instruction
+    assert "серьёзность сразу побеждает бантер" in instruction
 
 
 def test_install_sanitizes_proactive_media_and_does_not_count_it_as_bot_call():
@@ -140,6 +170,44 @@ def test_install_sanitizes_proactive_media_and_does_not_count_it_as_bot_call():
     assert "служебное описание обработки" in recorded_args[0]
     assert recorded_kwargs["bot_was_mentioned"] is False
     assert "RELATIONSHIP PRIORITY" in result
+
+
+def test_install_handles_positional_media_context_without_duplicate_keywords():
+    calls = []
+
+    def base(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "BASE"
+
+    module = SimpleNamespace(
+        build_full_system_instruction=base,
+        detect_conversation_mode=lambda text: "normal",
+        is_serious_text=lambda text: False,
+    )
+    assert runtime.install(module) is True
+
+    prompt = (
+        "Тебя никто не звал — ты сам решил вклиниться. "
+        "Посмотри видео-кружок."
+    )
+    result = module.build_full_system_instruction(
+        prompt,
+        None,
+        False,
+        10,
+        "group",
+        "",
+        None,
+        True,
+        {"reputation_score": -20, "relationship_level": 3},
+        20,
+    )
+
+    recorded_args, recorded_kwargs = calls[-1]
+    assert recorded_args[7] is False
+    assert "служебное описание обработки" in recorded_args[0]
+    assert recorded_kwargs == {}
+    assert "feuding_familiar" in result
 
 
 def test_private_chat_is_not_given_group_relationship_policy():
