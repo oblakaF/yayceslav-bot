@@ -14,21 +14,17 @@ import sticker_post_runtime  # noqa: F401
 import scoped_help_runtime  # noqa: F401
 
 
-# Exactly the compact group menu approved by the user.
+# Compact public group menu. Actions that now have reliable conversational
+# routing (/roast, /judge, /argument, /debate, /leaderboard, /awards) stay
+# registered as hidden fallbacks but no longer clutter Telegram's slash menu.
 GROUP_COMMANDS: Final[tuple[tuple[str, str], ...]] = (
     ("stickers", "Стикеры Яйцеслава"),
-    ("roast", "Прожарить реплику или участника"),
     ("wisdom", "Мудрость Яйцеслава"),
     ("nickname", "Задать обращение к себе"),
     ("nickname_off", "Убрать своё обращение"),
     ("whoami", "Как Яйцеслав тебя видит"),
     ("title", "Выдать шуточный титул"),
     ("title_status", "Титул дня"),
-    ("judge", "Вынести вердикт"),
-    ("argument", "Разобрать аргумент"),
-    ("debate", "Разобрать обе стороны спора"),
-    ("leaderboard", "Таблица активности"),
-    ("awards", "Награды недели"),
     ("chat_native_status", "Чему Яйцеслав научился у чата"),
     ("birthday", "Задать/посмотреть день рождения"),
 )
