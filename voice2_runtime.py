@@ -38,6 +38,11 @@ _VOICE_REPLY_OVERRIDE: contextvars.ContextVar[bool | None] = contextvars.Context
 )
 _INSTALLED = False
 _STRUCTURED_VOICE_MARKERS = ('"needs_search"', '"search_query"')
+_EXPLICIT_VOICE_REPLY_RE = re.compile(
+    r"(?:\b(?:ответь|ответьте|ответить|скажи|скажи-ка|говори|произнеси)\b.{0,36}\bголос(?:ом|овой|овое|овую)?\b"
+    r"|\bголос(?:ом|овой|овое|овую)?\b.{0,36}\b(?:ответь|ответьте|ответить|скажи|говори|произнеси)\b)",
+    flags=re.IGNORECASE | re.DOTALL,
+)
 
 
 def _find_bot_module():
@@ -85,6 +90,20 @@ def _looks_like_voice_control_output(raw_answer: str) -> bool:
     )
 
 
+def _transcript_explicitly_requests_voice(transcript: str) -> bool:
+    """Deterministically detect a spoken request to receive the reply as audio.
+
+    The model still supplies ``wants_voice`` for flexible phrasing, but an
+    obvious phrase such as ``ответь мне голосом`` must never be left to model
+    classification or the ordinary 50/50 voice coin flip.
+    """
+
+    normalized = " ".join((transcript or "").split()).strip()
+    if not normalized:
+        return False
+    return bool(_EXPLICIT_VOICE_REPLY_RE.search(normalized))
+
+
 def _normalize_decision(decision: VoiceDecision) -> VoiceDecision:
     transcript = " ".join(decision.transcript.split()).strip()[:700]
     query = " ".join(decision.search_query.split()).strip()[:220]
@@ -100,12 +119,16 @@ def _normalize_decision(decision: VoiceDecision) -> VoiceDecision:
     else:
         query = ""
 
+    wants_voice = bool(decision.wants_voice) or _transcript_explicitly_requests_voice(
+        transcript
+    )
+
     return VoiceDecision(
         transcript=transcript,
         needs_search=bool(decision.needs_search),
         search_query=query,
         answer=answer,
-        wants_voice=bool(decision.wants_voice),
+        wants_voice=wants_voice,
     )
 
 
@@ -233,6 +256,12 @@ def _install_voice_resolver_guard(bot_module) -> None:
         if payload is not None:
             needs_search = bool(payload.get("needs_search"))
             direct_answer = str(payload.get("answer") or "").strip()
+            transcript = str(payload.get("transcript") or "").strip()
+            explicit_voice = bool(payload.get("wants_voice")) or _transcript_explicitly_requests_voice(
+                transcript
+            )
+            if explicit_voice:
+                _VOICE_REPLY_OVERRIDE.set(True)
             if not needs_search and not direct_answer:
                 logging.warning("Voice-control JSON had no user answer; suppressed payload")
                 return (
