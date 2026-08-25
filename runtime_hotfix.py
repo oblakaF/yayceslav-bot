@@ -37,7 +37,9 @@ _STRUCTURED_VOICE_MARKERS = (
 _CURRENT_DATE_QUERY_RE = re.compile(
     r"(?:"
     r"\b(?:какой|который)\s+(?:сейчас\s+)?год\b|"
-    r"\b(?:какая|которaя)\s+(?:сейчас\s+)?дата\b|"
+    r"\bгод\s+(?:сейчас\s+)?(?:какой|который)\b|"
+    r"\b(?:какая|которая)\s+(?:сейчас\s+)?дата\b|"
+    r"\bдата\s+(?:сейчас\s+)?(?:какая|которая)\b|"
     r"\bкакое\s+сегодня\s+число\b|"
     r"\bсегодняшн\w*\s+дата\b|"
     r"\bwhat\s+(?:year|date)\s+is\s+it\b|"
@@ -78,7 +80,6 @@ def _previous_search_topic(module: Any, update: Any, context: Any) -> str:
     """Recover the topic for a bare follow-up such as 'check the internet'."""
 
     chat = getattr(update, "effective_chat", None)
-    user = getattr(update, "effective_user", None)
     if chat is None:
         return ""
 
