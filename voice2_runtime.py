@@ -1,0 +1,221 @@
+"""Structured Voice 2.0 control path for incoming audio/video messages.
+
+This runtime keeps the existing multimodal handler and search flow intact, but
+replaces the fragile prompt-only JSON control message with Gemini structured
+output. The transcript exists only inside the current request and is never
+written to chat memory or SQLite.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextvars
+import json
+import logging
+import sys
+import time
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+class VoiceDecision(BaseModel):
+    transcript: str = Field(
+        default="",
+        max_length=700,
+        description="Short faithful transcript/summary of what the user said.",
+    )
+    needs_search: bool = False
+    search_query: str = Field(default="", max_length=220)
+    answer: str = Field(default="", max_length=1000)
+    wants_voice: bool = False
+
+
+_VOICE_REPLY_OVERRIDE: contextvars.ContextVar[bool | None] = contextvars.ContextVar(
+    "yayceslav_voice_reply_override",
+    default=None,
+)
+_INSTALLED = False
+
+
+def _find_bot_module():
+    for name in ("__main__", "bot"):
+        module = sys.modules.get(name)
+        if module is not None and callable(getattr(module, "ask_gemini", None)):
+            return module
+    return None
+
+
+def _is_voice_decision_request(contents: Any) -> bool:
+    if not isinstance(contents, list):
+        return False
+    text_parts = "\n".join(str(item) for item in contents if isinstance(item, str))
+    return (
+        "Прослушай сообщение пользователя" in text_parts
+        and '"needs_search"' in text_parts
+        and '"search_query"' in text_parts
+        and '"answer"' in text_parts
+    )
+
+
+def _prompt_text(contents: Any) -> str:
+    if isinstance(contents, list):
+        return " ".join(str(item) for item in contents if isinstance(item, str))
+    return str(contents or "")
+
+
+def _normalize_decision(decision: VoiceDecision) -> VoiceDecision:
+    transcript = " ".join(decision.transcript.split()).strip()[:700]
+    query = " ".join(decision.search_query.split()).strip()[:220]
+    answer = " ".join(decision.answer.split()).strip()[:1000]
+
+    if decision.needs_search:
+        # A bare "проверь в интернете" should never collapse to an empty query.
+        # The transcript is available for this single request only and is not
+        # persisted anywhere after the handler finishes.
+        if not query:
+            query = transcript[:220]
+        answer = ""
+    else:
+        query = ""
+
+    return VoiceDecision(
+        transcript=transcript,
+        needs_search=bool(decision.needs_search),
+        search_query=query,
+        answer=answer,
+        wants_voice=bool(decision.wants_voice),
+    )
+
+
+async def _structured_voice_decision(bot_module, contents: Any, kwargs: dict[str, Any]) -> str:
+    user_settings = kwargs.get("user_settings")
+    chat_id = kwargs.get("chat_id")
+    chat_type = kwargs.get("chat_type", "private")
+    user_name = kwargs.get("user_name", "")
+    recent_messages = kwargs.get("recent_messages")
+    bot_was_mentioned = kwargs.get("bot_was_mentioned", True)
+    user_id = kwargs.get("user_id")
+    max_output_tokens = int(kwargs.get("max_output_tokens", 320) or 320)
+
+    style_text = _prompt_text(contents)
+    current_instruction = bot_module.build_full_system_instruction(
+        style_text,
+        user_settings,
+        voice_style=False,
+        chat_id=chat_id,
+        chat_type=chat_type,
+        user_name=user_name,
+        recent_messages=recent_messages,
+        bot_was_mentioned=bot_was_mentioned,
+        member_profile=None,
+        user_id=user_id,
+    )
+    current_instruction += (
+        "\n\nVOICE 2.0 CONTROL: return only the structured schema. "
+        "transcript is a short faithful rendering of the user's actual request; "
+        "needs_search is true only when current/verifiable web data is needed; "
+        "search_query must contain the concrete subject to search; answer is the "
+        "direct user-facing response when search is not needed; wants_voice is "
+        "true only if the user explicitly asked to receive a voice/audio reply."
+    )
+
+    token_budget = max(512, min(1024, max_output_tokens * 2))
+    last_error: Exception | None = None
+
+    for attempt in range(1, 3):
+        started = time.monotonic()
+        try:
+            async with bot_module.GEMINI_SEMAPHORE:
+                response = await asyncio.wait_for(
+                    bot_module.gemini_client.aio.models.generate_content(
+                        model=bot_module.MODEL_NAME,
+                        contents=contents,
+                        config=bot_module.types.GenerateContentConfig(
+                            system_instruction=current_instruction,
+                            max_output_tokens=token_budget,
+                            thinking_config=bot_module.types.ThinkingConfig(
+                                thinking_level="low",
+                            ),
+                            response_mime_type="application/json",
+                            response_schema=VoiceDecision,
+                        ),
+                    ),
+                    timeout=90,
+                )
+
+            parsed = getattr(response, "parsed", None)
+            if isinstance(parsed, VoiceDecision):
+                decision = parsed
+            elif isinstance(parsed, dict):
+                decision = VoiceDecision.model_validate(parsed)
+            else:
+                decision = VoiceDecision.model_validate_json(str(response.text or "{}"))
+
+            decision = _normalize_decision(decision)
+            _VOICE_REPLY_OVERRIDE.set(decision.wants_voice)
+            logging.info(
+                "Voice 2.0 decision: %.2fs search=%s query=%r wants_voice=%s",
+                time.monotonic() - started,
+                decision.needs_search,
+                decision.search_query,
+                decision.wants_voice,
+            )
+            return json.dumps(decision.model_dump(), ensure_ascii=False)
+        except Exception as error:
+            last_error = error
+            logging.warning(
+                "Voice 2.0 structured decision attempt %s/2 failed: %s",
+                attempt,
+                error,
+            )
+            if attempt < 2:
+                token_budget = min(1024, token_budget * 2)
+                await asyncio.sleep(1)
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("Voice 2.0 structured decision failed")
+
+
+def install() -> bool:
+    global _INSTALLED
+    if _INSTALLED:
+        return True
+
+    bot_module = _find_bot_module()
+    if bot_module is None:
+        return False
+
+    original_ask = bot_module.ask_gemini
+    original_voice_choice = bot_module._should_reply_as_voice
+
+    async def ask_gemini_voice2(contents: Any, *args, **kwargs):
+        if not _is_voice_decision_request(contents):
+            return await original_ask(contents, *args, **kwargs)
+        try:
+            return await _structured_voice_decision(bot_module, contents, kwargs)
+        except Exception as error:
+            # Safe fallback keeps the old path available if the installed SDK or
+            # provider temporarily rejects schema output. The existing JSON leak
+            # guard remains active as a final containment layer.
+            logging.warning("Voice 2.0 falling back to legacy JSON prompt: %s", error)
+            _VOICE_REPLY_OVERRIDE.set(None)
+            return await original_ask(contents, *args, **kwargs)
+
+    def should_reply_as_voice_voice2(answer_length: int) -> bool:
+        override = _VOICE_REPLY_OVERRIDE.get()
+        _VOICE_REPLY_OVERRIDE.set(None)
+        if override is True:
+            return True
+        return original_voice_choice(answer_length)
+
+    ask_gemini_voice2._yayceslav_voice2 = True
+    should_reply_as_voice_voice2._yayceslav_voice2 = True
+    bot_module.ask_gemini = ask_gemini_voice2
+    bot_module._should_reply_as_voice = should_reply_as_voice_voice2
+    _INSTALLED = True
+    logging.warning(
+        "Voice 2.0 ready: structured schema, ephemeral transcript, explicit voice request support"
+    )
+    return True
