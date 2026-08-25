@@ -1,24 +1,33 @@
 import command_menu
 
 
-def test_group_menu_is_exactly_the_approved_compact_list():
+HIDDEN_NATURAL_ACTIONS = {
+    "roast",
+    "judge",
+    "argument",
+    "debate",
+    "leaderboard",
+    "awards",
+}
+
+
+def test_group_menu_is_exactly_the_compact_public_list():
     assert command_menu.command_names(command_menu.GROUP_COMMANDS) == (
         "stickers",
-        "roast",
         "wisdom",
         "nickname",
         "nickname_off",
         "whoami",
         "title",
         "title_status",
-        "judge",
-        "argument",
-        "debate",
-        "leaderboard",
-        "awards",
         "chat_native_status",
         "birthday",
     )
+
+
+def test_naturalized_actions_are_hidden_from_public_group_menu():
+    names = set(command_menu.command_names(command_menu.GROUP_COMMANDS))
+    assert HIDDEN_NATURAL_ACTIONS.isdisjoint(names)
 
 
 def test_private_menu_hides_group_entertainment_clutter():
@@ -27,10 +36,11 @@ def test_private_menu_hides_group_entertainment_clutter():
     assert {"roast", "title", "title_status", "duel", "awards", "leaderboard"}.isdisjoint(names)
 
 
-def test_owner_menu_contains_every_operational_and_diagnostic_command():
+def test_owner_menu_keeps_hidden_fallbacks_and_operational_commands():
     owner = set(command_menu.command_names(command_menu.OWNER_COMMANDS))
     assert set(command_menu.command_names(command_menu.GROUP_COMMANDS)) <= owner
     assert set(command_menu.command_names(command_menu.PRIVATE_COMMANDS)) <= owner
+    assert HIDDEN_NATURAL_ACTIONS <= owner
     assert {
         "stats",
         "geminiversion",
@@ -58,12 +68,13 @@ def test_help_scope_uses_same_source_as_visible_menus():
     )
 
 
-def test_group_help_does_not_advertise_private_or_owner_clutter():
+def test_group_help_hides_naturalized_and_private_or_owner_clutter():
     help_text = command_menu.render_help(
         command_menu.commands_for_help(chat_type="group")
     )
     assert "/stickers —" in help_text
-    assert "/roast —" in help_text
+    for command in HIDDEN_NATURAL_ACTIONS:
+        assert f"/{command} —" not in help_text
     assert "/settings —" not in help_text
     assert "/hard_on —" not in help_text
     assert "/geminiversion —" not in help_text
@@ -79,10 +90,12 @@ def test_private_help_does_not_advertise_group_entertainment():
     assert "/title —" not in help_text
 
 
-def test_owner_help_contains_diagnostics_and_stays_one_telegram_message():
+def test_owner_help_contains_hidden_fallbacks_and_diagnostics():
     help_text = command_menu.render_help(
         command_menu.commands_for_help(chat_type="private", is_owner=True)
     )
+    for command in HIDDEN_NATURAL_ACTIONS:
+        assert f"/{command} —" in help_text
     assert "/geminiversion —" in help_text
     assert "/hard_stats —" in help_text
     assert len(help_text) <= 4096
