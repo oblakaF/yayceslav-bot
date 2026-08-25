@@ -51,6 +51,6 @@ jobs:
           monthly_theme_quality_patch.py whoami_verdict_style_patch.py daily_content_runtime.py
           daily_content_source_patch.py praise_guard_runtime.py sticker_semantics_aug19.py
           rate_limit_tlen_runtime.py natural_router_runtime.py search_enrichment_runtime.py
-          chat_digest_runtime.py runtime_hotfix.py
+          chat_digest_runtime.py date_grounding_runtime.py search_context_runtime.py
       - name: Test
         run: pytest -q
