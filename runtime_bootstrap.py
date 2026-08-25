@@ -51,6 +51,12 @@ import daily_content_source_patch  # noqa: F401
 import initiative_runtime
 import birthday_runtime
 
+# Free-tier smart tools: deterministic routing, bounded search enrichment and
+# compact group digests. None of these owns polling or unbounded storage.
+import natural_router_runtime
+import search_enrichment_runtime
+import chat_digest_runtime
+
 
 # Exposed for a small contract test. This documents the critical ordering
 # without inspecting source text or depending on import implementation details.
@@ -78,6 +84,9 @@ RUNTIME_LOAD_ORDER = (
     "daily_content_source_patch",
     "initiative_runtime",
     "birthday_runtime",
+    "search_enrichment_runtime",
+    "chat_digest_runtime",
+    "natural_router_runtime",
 )
 
 
@@ -224,6 +233,13 @@ def prepare_application_runtime(application: Application) -> None:
     # Birthdays wrap the same chain last; independent of initiative/daily
     # content, order relative to them doesn't matter.
     birthday_runtime._prepare_application(application)
+
+    # Smart-tool order is deliberate: install search enhancement first, then
+    # storage-bounded digest collection, then the group=-2 natural router.
+    # The router can therefore answer "что я пропустил?" from digest memory.
+    search_enrichment_runtime.install()
+    chat_digest_runtime.prepare_application_runtime(application)
+    natural_router_runtime.prepare_application_runtime(application)
 
 
 def _install_preflight_hook() -> None:
