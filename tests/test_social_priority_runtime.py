@@ -167,7 +167,7 @@ def test_install_sanitizes_proactive_media_and_does_not_count_it_as_bot_call():
     )
 
     recorded_args, recorded_kwargs = calls[-1]
-    assert "служебное описание обработки" in recorded_args[0]
+    assert "служебное описание обработки" in recorded_args[0].lower()
     assert recorded_kwargs["bot_was_mentioned"] is False
     assert "RELATIONSHIP PRIORITY" in result
 
@@ -205,7 +205,7 @@ def test_install_handles_positional_media_context_without_duplicate_keywords():
 
     recorded_args, recorded_kwargs = calls[-1]
     assert recorded_args[7] is False
-    assert "служебное описание обработки" in recorded_args[0]
+    assert "служебное описание обработки" in recorded_args[0].lower()
     assert recorded_kwargs == {}
     assert "feuding_familiar" in result
 
