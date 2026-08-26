@@ -58,6 +58,7 @@ import search_enrichment_runtime
 import chat_digest_runtime
 import date_grounding_runtime
 import social_priority_runtime
+import owner_social_diagnostics_runtime
 import search_context_runtime
 import voice2_runtime
 import sticker_tuning_runtime
@@ -94,6 +95,7 @@ RUNTIME_LOAD_ORDER = (
     "natural_router_runtime",
     "date_grounding_runtime",
     "social_priority_runtime",
+    "owner_social_diagnostics_runtime",
     "search_context_runtime",
     "voice2_runtime",
     "sticker_tuning_runtime",
@@ -215,6 +217,10 @@ def prepare_application_runtime(application: Application) -> None:
     # and prevents generic roughness from overriding a neutral relationship.
     if not social_priority_runtime.install():
         logging.warning("Social priority runtime: bot module not ready")
+
+    # Owner diagnostics reads the fully composed social profile, but never
+    # mutates it and never calls Gemini.
+    owner_social_diagnostics_runtime.prepare_application_runtime(application)
 
     # Voice 2.0 captures the completed ask_gemini stack and owns its JSON leak
     # containment. No delayed readiness thread is needed anymore.
