@@ -13,6 +13,7 @@ import natural_router_runtime as natural_router
 import pairwise_relationship_runtime as pairwise_relationship
 import monthly_social_runtime as monthly
 import positive_runtime as positive
+import recent_video_note_runtime as recent_video_note
 import reputation_daily_runtime as reputation_daily
 import reputation_decay_runtime as reputation_decay
 import reputation_runtime as reputation
@@ -157,6 +158,11 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         "prepare_application_runtime",
         lambda app: calls.append(("natural_router", app)),
     )
+    monkeypatch.setattr(
+        recent_video_note,
+        "prepare_application_runtime",
+        lambda app: calls.append(("recent_video_note", app)),
+    )
 
     runtime_bootstrap.prepare_application_runtime(application)
 
@@ -185,6 +191,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("search_context", None),
         ("chat_digest", application),
         ("natural_router", application),
+        ("recent_video_note", application),
     ]
     assert not hasattr(unified_titles, "install_runtime_hook")
     assert not hasattr(monthly, "install_runtime_hook")
