@@ -2,8 +2,10 @@
 
 This runtime keeps the existing multimodal handler and search flow intact, but
 replaces the fragile prompt-only JSON control message with Gemini structured
-output. The transcript exists only inside the current request and is never
-written to chat memory or SQLite.
+output. Spoken transcripts exist only inside the current request and are never
+written to chat memory or SQLite. Telegram video notes additionally get a tiny,
+non-sensitive visual summary that may live only in the existing short-term RAM
+memory so a follow-up such as "как тебе котята из прошлого кружка?" has context.
 """
 
 from __future__ import annotations
@@ -30,11 +32,24 @@ class VoiceDecision(BaseModel):
     search_query: str = Field(default="", max_length=220)
     answer: str = Field(default="", max_length=1000)
     wants_voice: bool = False
+    memory_summary: str = Field(
+        default="",
+        max_length=240,
+        description=(
+            "For a Telegram video note only: a very short factual description "
+            "of the clearly visible scene/actions, suitable for temporary RAM "
+            "conversation memory. Empty for audio-only requests."
+        ),
+    )
 
 
 _VOICE_REPLY_OVERRIDE: contextvars.ContextVar[bool | None] = contextvars.ContextVar(
     "yayceslav_voice_reply_override",
     default=None,
+)
+_VIDEO_NOTE_MEMORY_SUMMARY: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "yayceslav_video_note_memory_summary",
+    default="",
 )
 _INSTALLED = False
 _STRUCTURED_VOICE_MARKERS = ('"needs_search"', '"search_query"')
@@ -43,6 +58,7 @@ _EXPLICIT_VOICE_REPLY_RE = re.compile(
     r"|\bголос(?:ом|овой|овое|овую)?\b.{0,36}\b(?:ответь|ответьте|ответить|скажи|говори|произнеси)\b)",
     flags=re.IGNORECASE | re.DOTALL,
 )
+_VIDEO_NOTE_PLACEHOLDER = "[Пользователь отправил видео-кружок]"
 
 
 def _find_bot_module():
@@ -62,6 +78,24 @@ def _is_voice_decision_request(contents: Any) -> bool:
         and '"needs_search"' in text_parts
         and '"search_query"' in text_parts
         and '"answer"' in text_parts
+    )
+
+
+def _part_mime_type(part: Any) -> str:
+    """Return the inline-data MIME type without depending on SDK internals."""
+
+    inline_data = getattr(part, "inline_data", None)
+    return str(getattr(inline_data, "mime_type", "") or "").lower().strip()
+
+
+def _is_video_note_request(contents: Any) -> bool:
+    """The bot handler only sends video/mp4 here for Telegram VIDEO_NOTE."""
+
+    if not isinstance(contents, list):
+        return False
+    return any(
+        not isinstance(item, str) and _part_mime_type(item) == "video/mp4"
+        for item in contents
     )
 
 
@@ -104,10 +138,25 @@ def _transcript_explicitly_requests_voice(transcript: str) -> bool:
     return bool(_EXPLICIT_VOICE_REPLY_RE.search(normalized))
 
 
-def _normalize_decision(decision: VoiceDecision) -> VoiceDecision:
+def _normalize_memory_summary(summary: str) -> str:
+    clean = " ".join((summary or "").split()).strip()
+    clean = clean.strip("[]")
+    return clean[:240]
+
+
+def _normalize_decision(
+    decision: VoiceDecision,
+    *,
+    video_note: bool = False,
+) -> VoiceDecision:
     transcript = " ".join(decision.transcript.split()).strip()[:700]
     query = " ".join(decision.search_query.split()).strip()[:220]
     answer = " ".join(decision.answer.split()).strip()[:1000]
+    memory_summary = (
+        _normalize_memory_summary(decision.memory_summary)
+        if video_note
+        else ""
+    )
 
     if decision.needs_search:
         # A bare "проверь в интернете" should never collapse to an empty query.
@@ -129,6 +178,7 @@ def _normalize_decision(decision: VoiceDecision) -> VoiceDecision:
         search_query=query,
         answer=answer,
         wants_voice=wants_voice,
+        memory_summary=memory_summary,
     )
 
 
@@ -141,6 +191,10 @@ async def _structured_voice_decision(bot_module, contents: Any, kwargs: dict[str
     bot_was_mentioned = kwargs.get("bot_was_mentioned", True)
     user_id = kwargs.get("user_id")
     max_output_tokens = int(kwargs.get("max_output_tokens", 320) or 320)
+    video_note = _is_video_note_request(contents)
+
+    # Never let a previous request's temporary summary leak into this task.
+    _VIDEO_NOTE_MEMORY_SUMMARY.set("")
 
     member_profile = None
     get_member_profile = getattr(bot_module, "get_member_profile", None)
@@ -165,12 +219,31 @@ async def _structured_voice_decision(bot_module, contents: Any, kwargs: dict[str
     )
     current_instruction += (
         "\n\nVOICE 2.0 CONTROL: return only the structured schema. "
-        "transcript is a short faithful rendering of the user's actual request; "
-        "needs_search is true only when current/verifiable web data is needed; "
-        "search_query must contain the concrete subject to search; answer is the "
-        "direct user-facing response when search is not needed; wants_voice is "
-        "true only if the user explicitly asked to receive a voice/audio reply."
+        "transcript is a short faithful rendering of the user's actual spoken "
+        "request; needs_search is true only when current/verifiable web data is "
+        "needed; search_query must contain the concrete subject to search; answer "
+        "is the direct user-facing response when search is not needed; wants_voice "
+        "is true only if the user explicitly asked to receive a voice/audio reply."
     )
+
+    if video_note:
+        current_instruction += (
+            "\n\nTELEGRAM VIDEO NOTE VISION: this input is a real Telegram video "
+            "circle, not audio-only. WATCH the visible frames and LISTEN to its "
+            "audio. Base the user-facing answer on both channels. If there is no "
+            "speech, still understand and comment on what is visibly happening. "
+            "Do not claim that you cannot see the video when clear frames are "
+            "available. transcript remains spoken-content-only. memory_summary "
+            "must be one short factual description of the clearly visible scene "
+            "or action (for example: 'два котёнка лежат под одеялом'). Do not put "
+            "names, identity guesses, sensitive traits, hidden-state guesses or "
+            "the user's spoken transcript into memory_summary. If the picture is "
+            "unclear, leave memory_summary empty."
+        )
+    else:
+        current_instruction += (
+            " memory_summary must be an empty string for audio-only input."
+        )
 
     token_budget = max(512, min(1024, max_output_tokens * 2))
     last_error: Exception | None = None
@@ -204,14 +277,18 @@ async def _structured_voice_decision(bot_module, contents: Any, kwargs: dict[str
             else:
                 decision = VoiceDecision.model_validate_json(str(response.text or "{}"))
 
-            decision = _normalize_decision(decision)
+            decision = _normalize_decision(decision, video_note=video_note)
             _VOICE_REPLY_OVERRIDE.set(decision.wants_voice)
+            if video_note:
+                _VIDEO_NOTE_MEMORY_SUMMARY.set(decision.memory_summary)
             logging.info(
-                "Voice 2.0 decision: %.2fs search=%s query=%r wants_voice=%s",
+                "Voice 2.0 decision: %.2fs search=%s query=%r wants_voice=%s video_note=%s visual_memory=%s",
                 time.monotonic() - started,
                 decision.needs_search,
                 decision.search_query,
                 decision.wants_voice,
+                video_note,
+                bool(decision.memory_summary),
             )
             return json.dumps(decision.model_dump(), ensure_ascii=False)
         except Exception as error:
@@ -225,6 +302,7 @@ async def _structured_voice_decision(bot_module, contents: Any, kwargs: dict[str
                 token_budget = min(1024, token_budget * 2)
                 await asyncio.sleep(1)
 
+    _VIDEO_NOTE_MEMORY_SUMMARY.set("")
     if last_error:
         raise last_error
     raise RuntimeError("Voice 2.0 structured decision failed")
@@ -275,6 +353,52 @@ def _install_voice_resolver_guard(bot_module) -> None:
     bot_module._resolve_voice_search_answer = resolve_voice_safely
 
 
+def _install_video_note_memory_bridge(bot_module) -> None:
+    """Replace only the generic VIDEO_NOTE RAM marker with its visual summary.
+
+    The summary is produced by the same existing Gemini request. No second model
+    call, no SQLite write, and no raw video/transcript persistence are added.
+    """
+
+    original = getattr(bot_module, "remember_message", None)
+    if not callable(original) or getattr(original, "_yayceslav_video_memory", False):
+        return
+
+    def remember_with_video_summary(*args: Any, **kwargs: Any):
+        positional = list(args)
+        role = kwargs.get("role")
+        if role is None and len(positional) > 2:
+            role = positional[2]
+
+        text_key = None
+        for candidate in ("text", "content", "message"):
+            if candidate in kwargs:
+                text_key = candidate
+                break
+
+        if text_key is not None:
+            text = kwargs.get(text_key)
+        elif len(positional) > 3:
+            text = positional[3]
+        else:
+            text = None
+
+        if role == "user" and str(text or "") == _VIDEO_NOTE_PLACEHOLDER:
+            summary = _normalize_memory_summary(_VIDEO_NOTE_MEMORY_SUMMARY.get())
+            _VIDEO_NOTE_MEMORY_SUMMARY.set("")
+            if summary:
+                replacement = f"[Видео-кружок: {summary}]"
+                if text_key is not None:
+                    kwargs[text_key] = replacement
+                elif len(positional) > 3:
+                    positional[3] = replacement
+
+        return original(*positional, **kwargs)
+
+    remember_with_video_summary._yayceslav_video_memory = True
+    bot_module.remember_message = remember_with_video_summary
+
+
 def install() -> bool:
     global _INSTALLED
     if _INSTALLED:
@@ -302,6 +426,7 @@ def install() -> bool:
             # below guarantees malformed legacy control JSON is not user-visible.
             logging.warning("Voice 2.0 falling back to legacy JSON prompt: %s", error)
             _VOICE_REPLY_OVERRIDE.set(None)
+            _VIDEO_NOTE_MEMORY_SUMMARY.set("")
             return await original_ask(contents, *args, **kwargs)
 
     def should_reply_as_voice_voice2(answer_length: int) -> bool:
@@ -316,8 +441,9 @@ def install() -> bool:
     bot_module.ask_gemini = ask_gemini_voice2
     bot_module._should_reply_as_voice = should_reply_as_voice_voice2
     _install_voice_resolver_guard(bot_module)
+    _install_video_note_memory_bridge(bot_module)
     _INSTALLED = True
     logging.warning(
-        "Voice 2.0 ready: structured schema, ephemeral transcript, member profile, explicit voice request, JSON containment"
+        "Voice 2.0 ready: structured schema, ephemeral transcript, video-note vision memory, member profile, explicit voice request, JSON containment"
     )
     return True
