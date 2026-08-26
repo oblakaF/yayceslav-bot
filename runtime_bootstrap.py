@@ -60,6 +60,7 @@ import date_grounding_runtime
 import social_priority_runtime
 import search_context_runtime
 import voice2_runtime
+import recent_video_note_runtime
 import sticker_tuning_runtime
 
 
@@ -96,6 +97,7 @@ RUNTIME_LOAD_ORDER = (
     "social_priority_runtime",
     "search_context_runtime",
     "voice2_runtime",
+    "recent_video_note_runtime",
     "sticker_tuning_runtime",
 )
 
@@ -228,6 +230,7 @@ def prepare_application_runtime(application: Application) -> None:
         logging.warning("Search context runtime: bot module not ready")
     chat_digest_runtime.prepare_application_runtime(application)
     natural_router_runtime.prepare_application_runtime(application)
+    recent_video_note_runtime.prepare_application_runtime(application)
 
 
 def _install_preflight_hook() -> None:
