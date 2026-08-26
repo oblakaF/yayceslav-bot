@@ -226,10 +226,13 @@ async def _handle_recent_video_note_followup(update, context) -> None:
 
     recent = get_recent_video_note(int(chat.id))
     if recent is None:
-        # No live pointer means this runtime cannot safely identify a concrete
-        # old circle. Fall through to the normal text/memory path instead of
-        # guessing which historical media the user meant.
-        return
+        # The request itself is unambiguous, but there is no live pointer after
+        # TTL expiry or a process restart. Stop here rather than letting the
+        # ordinary text model invent whether it has access to historical media.
+        await message.reply_text(
+            "Последний кружок уже не держу в коротком буфере. Перешли его ещё раз — посмотрю."
+        )
+        raise ApplicationHandlerStop
 
     bot_module = _find_bot_module()
     if bot_module is None:
