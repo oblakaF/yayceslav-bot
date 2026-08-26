@@ -8,15 +8,9 @@ from __future__ import annotations
 
 from typing import Final
 
-# Runtime hooks are imported here because sticker_runtime already imports
-# command_menu on every normal startup path. Keep the huge bot.py untouched.
 import sticker_post_runtime  # noqa: F401
 import scoped_help_runtime  # noqa: F401
 
-
-# Compact public group menu. Actions that now have reliable conversational
-# routing (/roast, /judge, /argument, /debate, /leaderboard, /awards) stay
-# registered as hidden fallbacks but no longer clutter Telegram's slash menu.
 GROUP_COMMANDS: Final[tuple[tuple[str, str], ...]] = (
     ("stickers", "Стикеры Яйцеслава"),
     ("wisdom", "Мудрость Яйцеслава"),
@@ -29,8 +23,6 @@ GROUP_COMMANDS: Final[tuple[tuple[str, str], ...]] = (
     ("birthday", "Задать/посмотреть день рождения"),
 )
 
-# Private chat should be useful, not a dump of group entertainment commands.
-# Hidden commands still work if typed explicitly.
 PRIVATE_COMMANDS: Final[tuple[tuple[str, str], ...]] = (
     ("start", "Запустить Яйцеслава"),
     ("help", "Краткая помощь"),
@@ -49,8 +41,6 @@ PRIVATE_COMMANDS: Final[tuple[tuple[str, str], ...]] = (
     ("birthday", "Задать/посмотреть день рождения"),
 )
 
-# Owner gets the complete operational menu in the owner's private chat and
-# in owner-specific group scopes.
 OWNER_COMMANDS: Final[tuple[tuple[str, str], ...]] = (
     ("start", "Запуск"),
     ("help", "Помощь"),
@@ -94,6 +84,7 @@ OWNER_COMMANDS: Final[tuple[tuple[str, str], ...]] = (
     ("hard_stats", "Статистика hard-mode"),
     ("people", "Известные участники"),
     ("set_archetype", "Задать архетип участнику"),
+    ("social_debug", "Диагностика отношений с участником"),
     ("week_auto_on", "Включить автоотчёт"),
     ("week_auto_off", "Выключить автоотчёт"),
     ("week_auto_status", "Статус автоотчёта"),
@@ -111,7 +102,6 @@ def command_names(commands: tuple[tuple[str, str], ...]) -> tuple[str, ...]:
 
 
 def commands_for_help(*, chat_type: str, is_owner: bool = False) -> tuple[tuple[str, str], ...]:
-    """Return exactly the command set relevant to this user's current scope."""
     if is_owner:
         return OWNER_COMMANDS
     if chat_type in {"group", "supergroup"}:
@@ -119,23 +109,14 @@ def commands_for_help(*, chat_type: str, is_owner: bool = False) -> tuple[tuple[
     return PRIVATE_COMMANDS
 
 
-def render_help(
-    commands: tuple[tuple[str, str], ...],
-    *,
-    title: str = "Команды Яйцеслава",
-) -> str:
-    """Render slash help from the same source of truth as Telegram menus."""
+def render_help(commands: tuple[tuple[str, str], ...], *, title: str = "Команды Яйцеслава") -> str:
     lines = [title, ""]
     lines.extend(f"/{command} — {description}" for command, description in commands)
     return "\n".join(lines)
 
 
 def validate_menus() -> None:
-    for menu_name, commands in (
-        ("group", GROUP_COMMANDS),
-        ("private", PRIVATE_COMMANDS),
-        ("owner", OWNER_COMMANDS),
-    ):
+    for menu_name, commands in (("group", GROUP_COMMANDS), ("private", PRIVATE_COMMANDS), ("owner", OWNER_COMMANDS)):
         names = command_names(commands)
         if len(names) != len(set(names)):
             raise RuntimeError(f"Duplicate commands in {menu_name} menu")
@@ -146,8 +127,6 @@ def validate_menus() -> None:
                 raise RuntimeError(f"Invalid command length: {command}")
             if not (1 <= len(description) <= 256):
                 raise RuntimeError(f"Invalid description for /{command}")
-
-    # /help must stay within Telegram's single-message limit in every scope.
     for commands in (GROUP_COMMANDS, PRIVATE_COMMANDS, OWNER_COMMANDS):
         if len(render_help(commands)) > 4096:
             raise RuntimeError("Scoped /help exceeds Telegram message limit")
