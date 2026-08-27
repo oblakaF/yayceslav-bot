@@ -25,6 +25,13 @@ from natural_router_runtime import classify_action
         ("прожарь @sergey", "roast"),
         ("прожарь Серегу", "roast"),
         ("прожарка для @ross", "roast"),
+        ("ну ка оскорби его @Dobry64 че он тебя обижает", "roast"),
+        ("отжарь Серегу", "roast"),
+        ("разнеси его", "roast"),
+        ("обосри @ross", "roast"),
+        ("размажь этого типа", "roast"),
+        ("пройдись по нему", "roast"),
+        ("проедься по @ross", "roast"),
         ("аргументы за и против", "debate"),
         ("приведи аргумент", "argument"),
         ("сделай из этого мем", "meme"),
@@ -50,6 +57,8 @@ def test_high_confidence_routes(text, expected):
         "базар сегодня странный",
         "насрали конечно знатно",
         "серега опять что-то пишет",
+        "разнеси вещи по комнатам",
+        "оскорбление было лишним",
     ],
 )
 def test_ambiguous_or_normal_text_falls_through(text):
