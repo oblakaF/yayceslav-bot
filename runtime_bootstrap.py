@@ -59,6 +59,7 @@ import chat_digest_runtime
 import date_grounding_runtime
 import social_priority_runtime
 import search_context_runtime
+import search_slang_runtime
 import voice2_runtime
 import recent_video_note_runtime
 import sticker_tuning_runtime
@@ -96,6 +97,7 @@ RUNTIME_LOAD_ORDER = (
     "date_grounding_runtime",
     "social_priority_runtime",
     "search_context_runtime",
+    "search_slang_runtime",
     "voice2_runtime",
     "recent_video_note_runtime",
     "sticker_tuning_runtime",
@@ -228,6 +230,8 @@ def prepare_application_runtime(application: Application) -> None:
     search_enrichment_runtime.install()
     if not search_context_runtime.install():
         logging.warning("Search context runtime: bot module not ready")
+    if not search_slang_runtime.install():
+        logging.warning("Search slang runtime: bot module not ready")
     chat_digest_runtime.prepare_application_runtime(application)
     natural_router_runtime.prepare_application_runtime(application)
     recent_video_note_runtime.prepare_application_runtime(application)
