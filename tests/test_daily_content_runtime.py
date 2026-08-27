@@ -1,5 +1,7 @@
 import asyncio
-from datetime import datetime
+from datetime import date, datetime
+
+import requests
 
 import daily_content_runtime as runtime
 import whoami_dynamic_verdict
@@ -53,7 +55,6 @@ _SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def test_rss_parser_accepts_valid_items_and_skips_junk():
-    # Skips a too-short title (junk/empty entries) but keeps a real one.
     items = runtime._parse_rss_items(_SAMPLE_RSS)
     assert items == [
         (
@@ -78,9 +79,6 @@ def test_rss_parser_respects_limit():
 
 
 def test_news_source_logs_when_zero_items_match(caplog):
-    # Regression: a fetch that succeeds (200 OK) but yields zero usable
-    # items -- e.g. after a feed shape change -- previously left no trace
-    # and would repeat silently on every retry for the rest of the day.
     import logging as logging_module
 
     original_fetch = runtime._fetch_html_sync
@@ -96,18 +94,13 @@ def test_news_source_logs_when_zero_items_match(caplog):
 
 
 def test_news_sources_no_longer_reference_government_sites():
-    # The owner explicitly asked to drop government.ru/kremlin.ru in favor
-    # of popular, more reliably-scrapable sources.
     for _name, url in runtime.NEWS_RSS_SOURCES:
         assert "government.ru" not in url
         assert "kremlin.ru" not in url
 
 
 def test_fetch_news_candidates_aggregates_across_sources(monkeypatch):
-    def fake_fetch(url):
-        return _SAMPLE_RSS
-
-    monkeypatch.setattr(runtime, "_fetch_html_sync", fake_fetch)
+    monkeypatch.setattr(runtime, "_fetch_html_sync", lambda url: _SAMPLE_RSS)
     candidates = runtime._fetch_news_candidates_sync()
     assert len(candidates) == len(runtime.NEWS_RSS_SOURCES)
     for source_name, title, link in candidates:
@@ -149,12 +142,6 @@ def test_scheduler_appends_daily_content_once(monkeypatch):
 
 
 def test_daily_content_must_wrap_final_unified_scheduler(monkeypatch):
-    """Regression for the old wrapper-order bug that silently killed delivery.
-
-    The pre-centralized runtime could prepare daily content first and then let
-    unified titles overwrite ``run_due_daily_titles``. Centralized startup must
-    do the opposite: finalize unified titles first, then append daily content.
-    """
     calls = []
 
     class FakeBotModule:
@@ -170,12 +157,8 @@ def test_daily_content_must_wrap_final_unified_scheduler(monkeypatch):
         del application
         calls.append("daily_content")
 
-    # This assignment represents unified_daily_title_runtime._prepare() having
-    # already finalized the title scheduler.
     fake.run_due_daily_titles = final_unified_scheduler
     monkeypatch.setattr(runtime, "run_daily_content_if_due", fake_daily_content)
-
-    # Daily content MUST be the later/final scheduler patch.
     runtime._patch_scheduler(fake)
     asyncio.run(fake.run_due_daily_titles(object()))
 
@@ -215,12 +198,11 @@ class _FakeBotModuleForTranslate:
     MODEL_NAME = "gemini-3.6-flash"
 
 
-def test_translate_joke_discards_truncated_translation(monkeypatch):
-    # Regression: a joke arrived to users with a setup but no punchline --
-    # _translate_joke had no completeness check of its own, unlike
-    # ask_gemini's retry/trim handling for the main chat path.
+def _install_fake_translation(monkeypatch, text):
     class FakeResponse:
-        text = "Штирлиц вошёл в комнату и увидел на столе"
+        pass
+
+    FakeResponse.text = text
 
     class FakeModels:
         async def generate_content(self, **kwargs):
@@ -237,6 +219,9 @@ def test_translate_joke_discards_truncated_translation(monkeypatch):
 
     monkeypatch.setattr(runtime.genai, "Client", FakeClient)
 
+
+def test_translate_joke_discards_truncated_translation(monkeypatch):
+    _install_fake_translation(monkeypatch, "Штирлиц вошёл в комнату и увидел на столе")
     result = asyncio.run(
         runtime._translate_joke(_FakeBotModuleForTranslate(), "Some english joke.")
     )
@@ -244,25 +229,86 @@ def test_translate_joke_discards_truncated_translation(monkeypatch):
 
 
 def test_translate_joke_keeps_complete_translation(monkeypatch):
-    class FakeResponse:
-        text = "Штирлиц вошёл в комнату и увидел на столе чемодан."
-
-    class FakeModels:
-        async def generate_content(self, **kwargs):
-            del kwargs
-            return FakeResponse()
-
-    class FakeAio:
-        models = FakeModels()
-
-    class FakeClient:
-        def __init__(self, api_key):
-            del api_key
-            self.aio = FakeAio()
-
-    monkeypatch.setattr(runtime.genai, "Client", FakeClient)
-
+    _install_fake_translation(
+        monkeypatch,
+        "Штирлиц вошёл в комнату и увидел на столе чемодан.",
+    )
     result = asyncio.run(
         runtime._translate_joke(_FakeBotModuleForTranslate(), "Some english joke.")
     )
     assert result == "Штирлиц вошёл в комнату и увидел на столе чемодан."
+
+
+def test_translate_joke_discards_meta_commentary_seen_in_production(monkeypatch):
+    _install_fake_translation(
+        monkeypatch,
+        'лифчик). Wait! "Альга" = водоросль (from Latin/scientific, though standard Russian is "водоросли").',
+    )
+    result = asyncio.run(
+        runtime._translate_joke(_FakeBotModuleForTranslate(), "Some english joke.")
+    )
+    assert result is None
+
+
+def test_jokeapi_rejects_unsupported_ru_without_network(monkeypatch):
+    calls = []
+    monkeypatch.setattr(runtime.requests, "get", lambda *args, **kwargs: calls.append((args, kwargs)))
+    try:
+        runtime._fetch_external_joke_sync("ru", set())
+    except ValueError as error:
+        assert "Unsupported JokeAPI joke language" in str(error)
+    else:
+        raise AssertionError("ru must be rejected before a network request")
+    assert calls == []
+
+
+def test_jokeapi_4xx_is_not_retried(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        status_code = 400
+
+        def raise_for_status(self):
+            error = requests.HTTPError("400 Bad Request")
+            error.response = self
+            raise error
+
+    def fake_get(*args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr(runtime.requests, "get", fake_get)
+    try:
+        runtime._fetch_external_joke_sync("en", set())
+    except requests.HTTPError:
+        pass
+    else:
+        raise AssertionError("expected HTTPError")
+    assert len(calls) == 1
+
+
+def test_joke_build_persists_local_fallback_after_external_failure(monkeypatch):
+    saved = []
+
+    monkeypatch.setattr(runtime, "_load_item_sync", lambda bot, day, kind: None)
+    monkeypatch.setattr(runtime, "_recent_item_keys_sync", lambda bot, kind, limit: set())
+
+    def fail_external(language, recent):
+        del language, recent
+        raise RuntimeError("source down")
+
+    monkeypatch.setattr(runtime, "_fetch_external_joke_sync", fail_external)
+    monkeypatch.setattr(
+        runtime,
+        "_save_item_sync",
+        lambda bot, day, item: saved.append((day, item)),
+    )
+
+    item = asyncio.run(runtime._build_joke_item(object(), date(2026, 8, 27)))
+    assert item is not None
+    assert item.source_name == "Yayceslav local fallback"
+    assert item.rendered_text.startswith("🥚 ВНИМАНИЕ, АНЕКДОТ:")
+    assert runtime._looks_like_complete_joke(item.raw_text)
+    assert len(saved) == 1
+    assert saved[0][0] == "2026-08-27"
+    assert saved[0][1] is item
