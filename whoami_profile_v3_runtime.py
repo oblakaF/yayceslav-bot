@@ -39,6 +39,9 @@ _THEME_NOISE = _WORD_STOPWORDS | {
     "делает", "сделал", "сделай", "видит", "вижу", "знает", "знаю", "думает",
     "думаю", "хочет", "хочу", "может", "могут", "буду", "будешь", "давай",
     "окей", "ок", "норм", "правильно", "реально", "тип", "типа",
+    "ответ", "ответа", "ответы", "вопрос", "вопроса", "вопросы", "проверил",
+    "проверила", "проверь", "починил", "починила", "почини", "кажется", "вроде",
+    "сделано", "получилось", "стороны", "другой", "другая", "другие", "всех",
 }
 
 
@@ -74,9 +77,12 @@ def _theme_ok(term: str) -> bool:
     words = [_normalize_word(w) for w in _WORD_RE.findall(normalized)]
     if not words:
         return False
-    # For multi-word phrases, every word must be meaningful -- a single
-    # real word next to filler ("тоже пройдено") is not a real topic.
     return all(w not in _THEME_NOISE and len(w) >= 3 for w in words)
+
+
+def _current_month(bot_module) -> str:
+    now = bot_module.current_msk_datetime()
+    return f"{now.year:04d}-{now.month:02d}"
 
 
 def _initialize_tables(bot_module) -> None:
@@ -100,18 +106,35 @@ def _initialize_tables(bot_module) -> None:
             ON member_word_counts(chat_id, user_id, occurrences DESC, last_seen DESC)
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS member_word_counts_monthly (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                month TEXT NOT NULL,
+                word TEXT NOT NULL,
+                occurrences INTEGER NOT NULL DEFAULT 0,
+                last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (chat_id, user_id, month, word)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_member_word_counts_monthly_rank
+            ON member_word_counts_monthly(chat_id, user_id, month, occurrences DESC, last_seen DESC)
+            """
+        )
         connection.commit()
 
 
 def _record_words_sync(bot_module, chat_id: int, user_id: int, text: str) -> None:
-    words = [
-        _normalize_word(word)
-        for word in _WORD_RE.findall(text or "")
-    ]
+    words = [_normalize_word(word) for word in _WORD_RE.findall(text or "")]
     words = [word for word in words if _display_word_ok(word)]
     if not words:
         return
 
+    month = _current_month(bot_module)
     with bot_module.get_db_connection() as connection:
         for word in words:
             connection.execute(
@@ -124,8 +147,17 @@ def _record_words_sync(bot_module, chat_id: int, user_id: int, text: str) -> Non
                 """,
                 (chat_id, user_id, word),
             )
+            connection.execute(
+                """
+                INSERT INTO member_word_counts_monthly(chat_id, user_id, month, word, occurrences)
+                VALUES (?, ?, ?, ?, 1)
+                ON CONFLICT(chat_id, user_id, month, word) DO UPDATE SET
+                    occurrences = occurrences + 1,
+                    last_seen = datetime('now')
+                """,
+                (chat_id, user_id, month, word),
+            )
 
-        # Keep the table compact without deleting actually recurring words.
         connection.execute(
             """
             DELETE FROM member_word_counts
@@ -135,22 +167,30 @@ def _record_words_sync(bot_module, chat_id: int, user_id: int, text: str) -> Non
             """,
             (chat_id, user_id),
         )
+        # Keep only a small rolling history of monthly counters. The dossier only
+        # reads the current month, so this is deliberately bounded.
+        connection.execute(
+            """
+            DELETE FROM member_word_counts_monthly
+            WHERE last_seen < datetime('now', '-190 days')
+            """
+        )
         connection.commit()
 
 
 def _favorite_word_sync(bot_module, chat_id: int, user_id: int):
+    month = _current_month(bot_module)
     with bot_module.get_db_connection() as connection:
         rows = connection.execute(
             """
             SELECT word, occurrences
-            FROM member_word_counts
-            WHERE chat_id = ? AND user_id = ?
+            FROM member_word_counts_monthly
+            WHERE chat_id = ? AND user_id = ? AND month = ?
               AND occurrences >= 2
-              AND last_seen >= datetime('now', '-120 days')
             ORDER BY occurrences DESC, last_seen DESC, word ASC
             LIMIT 20
             """,
-            (chat_id, user_id),
+            (chat_id, user_id, month),
         ).fetchall()
     for word, count in rows:
         if _display_word_ok(str(word)):
@@ -159,31 +199,29 @@ def _favorite_word_sync(bot_module, chat_id: int, user_id: int):
 
 
 def _themes_sync(bot_module, chat_id: int, user_id: int) -> list[str]:
+    month = _current_month(bot_module)
     with bot_module.get_db_connection() as connection:
         try:
             rows = connection.execute(
                 """
-                SELECT term, occurrences, last_seen
-                FROM member_callback_terms
-                WHERE chat_id = ? AND user_id = ?
-                  AND last_seen >= datetime('now', '-45 days')
-                ORDER BY last_seen DESC, occurrences DESC
-                LIMIT 30
+                SELECT word, occurrences
+                FROM member_word_counts_monthly
+                WHERE chat_id = ? AND user_id = ? AND month = ?
+                  AND occurrences >= 4
+                ORDER BY occurrences DESC, last_seen DESC, word ASC
+                LIMIT 40
                 """,
-                (chat_id, user_id),
+                (chat_id, user_id, month),
             ).fetchall()
         except Exception:
             rows = []
 
     result: list[str] = []
-    seen: set[str] = set()
-    for term, _count, _seen_at in rows:
-        clean = str(term).strip()
-        norm = _normalize_word(clean)
-        if not _theme_ok(clean) or norm in seen:
+    for word, _count in rows:
+        clean = str(word).strip()
+        if not _theme_ok(clean):
             continue
         result.append(clean)
-        seen.add(norm)
         if len(result) >= 3:
             break
     return result
@@ -320,9 +358,6 @@ def _prepare_application(application: Application) -> None:
         return
 
     _initialize_tables(bot_module)
-    # Do NOT register legacy _whoami_v3. whoami_profile_v4_runtime owns the
-    # command at group=-30. v3 remains the stable data/helper layer used by
-    # monthly memory/theme patches and the text word observer below.
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _observe_words),
         group=6,
