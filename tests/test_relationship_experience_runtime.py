@@ -33,20 +33,30 @@ def test_hostility_labels():
     assert runtime.hostility_label(11) == "Гига-хейтер"
 
 
-def test_dossier_relationship_labels_are_reputation_based():
-    assert profile_v4._relationship_label(0, 0, 0) == "Нейтральный"
-    assert profile_v4._relationship_label(4, 0, 0) == "Нейтральный"
-    assert profile_v4._relationship_label(0, 0, 5) == "Доброжелательный"
-    assert profile_v4._relationship_label(4, 0, -5) == "Хейтерок"
-    assert profile_v4._relationship_label(4, 0, 12) == "Доброжелательный"
-    assert profile_v4._relationship_label(0, 0, 40) == "Хороший знакомый"
-    assert profile_v4._relationship_label(0, 0, 75) == "Друг"
-    assert profile_v4._relationship_label(4, 0, -20) == "Хейтерок"
-    assert profile_v4._relationship_label(4, 0, -40) == "Мини-хейтер"
-    assert profile_v4._relationship_label(4, 0, -80) == "Гига-хейтер"
-    assert profile_v4._relationship_label(4, 1, 100) == "Мини-хейтер"
-    assert profile_v4._relationship_label(4, 3, 100) == "Мега-хейтер"
-    assert profile_v4._relationship_label(4, 11, 100) == "Гига-хейтер"
+def test_dossier_relationship_uses_same_relationship_first_band_as_tone():
+    assert profile_v4._relationship_label_from_profile({}) == "Нейтральный"
+    assert profile_v4._relationship_label_from_profile({"chat_level": 4}) == "Знакомый нейтрал"
+    assert profile_v4._relationship_label_from_profile({"reputation_score": 19}) == "Доброжелательный"
+    assert profile_v4._relationship_label_from_profile({"reputation_score": 40}) == "Очень свой"
+    assert profile_v4._relationship_label_from_profile(
+        {"reputation_score": -20, "chat_level": 3}
+    ) == "Старый спорщик"
+    assert profile_v4._relationship_label_from_profile(
+        {"reputation_score": -20, "chat_level": 0}
+    ) == "Настороженный"
+
+
+def test_today_line_describes_only_current_day_climate():
+    assert profile_v4._today_line(0, 0, 0, False) == "Спокойно"
+    assert profile_v4._today_line(0, 2, 1, False) == "Помирились"
+    assert profile_v4._today_line(1, 1, 0, False) == "Лёгкий конфликт — 1 наезд сегодня"
+    assert profile_v4._today_line(3, 3, 0, False) == "Конфликтно — 3 наезда сегодня"
+    assert "ритуал" in profile_v4._today_line(0, 2, 1, True)
+
+
+def test_public_reputation_line_is_numeric_not_duplicate_relationship_label():
+    assert profile_v4._reputation_score_line({"reputation_score": 19}) == "+19"
+    assert profile_v4._reputation_score_line({"reputation_score": -7}) == "-7"
 
 
 def test_dossier_sympathy_is_separate_from_chat_level():
@@ -59,10 +69,7 @@ def test_dossier_sympathy_is_separate_from_chat_level():
         }
     ) == "Доброжелательная"
 
-    # Familiarity/XP by itself does not silently turn into affection.
     assert profile_v4._positive_line({"chat_level": 4}) == "Нейтральная"
-
-    # Lifetime reputation may only give a small baseline warmth.
     assert profile_v4._positive_line(
         {
             "chat_level": 0,
@@ -138,6 +145,8 @@ def test_theme_noise_is_filtered_but_milfs_survive():
     assert profile_v3._theme_ok("милфы") is True
     assert profile_v3._theme_ok("моду") is False
     assert profile_v3._theme_ok("одобряет") is False
+    assert profile_v3._theme_ok("ответ") is False
+    assert profile_v3._theme_ok("вроде") is False
 
 
 def test_theme_ok_rejects_phrase_with_any_noise_word():
