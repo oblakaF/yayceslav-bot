@@ -16,7 +16,8 @@ def test_second_text_attack_gets_rage_floor():
     )
     assert "ACTIVE CONFLICT RAGE" in text
     assert "дружище" in text
-    assert "без реальных угроз" in text
+    assert "Не угрожай" in text
+    assert "защищённые" in text
 
 
 def test_first_attack_is_hard_but_not_full_rage():
