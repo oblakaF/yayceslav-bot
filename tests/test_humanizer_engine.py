@@ -62,3 +62,24 @@ def test_serious_reply_is_never_humanized():
     )
     assert result.effect == "none"
     assert len(result.messages) == 1
+
+
+def test_second_hostile_turn_is_not_clipped_to_first_turn_limit():
+    class HostileTrace(Trace):
+        conversation_mode = "hostile"
+        message_intent = "provocation"
+
+    text = (
+        "Первый злой ответ уже достаточно длинный и конкретный по сути конфликта. "
+        "Вторая фраза продолжает жёсткий словесный отпор без угроз и лишней воды."
+    )
+    result = humanizer_engine.humanize_reply(
+        text,
+        user_text="иди нахуй",
+        trace=HostileTrace(),
+        hostile_streak=2,
+        rng=SeqRng([0.9]),
+    )
+    assert result.effect == "conflict_compact"
+    assert len(result.messages[0]) > 95
+    assert "Вторая фраза" in result.messages[0]
