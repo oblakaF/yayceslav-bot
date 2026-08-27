@@ -1,4 +1,11 @@
-"""Context recovery and clock-safe handling for explicit web-search follow-ups."""
+"""Context recovery and clock-safe handling for explicit web-search follow-ups.
+
+Besides bare ``проверь в интернете`` follow-ups, this layer treats relative-time
+phrases such as ``вчера``, ``сегодня`` and ``только что`` as freshness signals.
+Weak/anaphoric queries are combined with the previous chat topic so a request
+like ``он вчера прилетел, проверь`` does not lose the entity and accidentally
+surface an old but lexically similar story.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +30,26 @@ _CURRENT_DATE_QUERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+_FRESHNESS_RE = re.compile(
+    r"(?:"
+    r"\bсегодня\b|\bвчера\b|\bпозавчера\b|\bсейчас\b|"
+    r"\bтолько\s+что\b|\bнедавно\b|\bсвеж\w*\b|\bактуальн\w*\b|"
+    r"\bпоследн\w*\s+(?:новост\w*|событ\w*|данн\w*)\b|"
+    r"\bза\s+(?:сегодня|вчера|последн\w*\s+(?:час|день|сутк|недел)\w*)\b|"
+    r"\b(?:today|yesterday|just\s+now|latest|recent)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_WEAK_FOLLOWUP_RE = re.compile(
+    r"(?:"
+    r"^\s*(?:не\s+)?(?:вот\s+)?(?:он|она|они|это|там|так)\b|"
+    r"\b(?:он|она|они|это)\s+(?:же\s+)?(?:вчера|сегодня|недавно|только\s+что)\b|"
+    r"\b(?:я\s+же\s+говорю|вот\s+же|прям\s+вчера)\b"
+    r")",
+    re.IGNORECASE,
+)
+
 
 def _find_bot_module():
     for name in ("__main__", "bot"):
@@ -34,6 +61,20 @@ def _find_bot_module():
 
 def _is_current_date_query(query: str) -> bool:
     return bool(_CURRENT_DATE_QUERY_RE.search(query or ""))
+
+
+def is_freshness_query(query: str) -> bool:
+    return bool(_FRESHNESS_RE.search(str(query or "")))
+
+
+def _looks_weak_followup(query: str) -> bool:
+    text = " ".join(str(query or "").split()).strip()
+    if not text:
+        return True
+    if _WEAK_FOLLOWUP_RE.search(text):
+        return True
+    # Very short fresh requests often contain only a pronoun/action/time marker.
+    return is_freshness_query(text) and len(text.split()) <= 7
 
 
 def _previous_search_topic(module: Any, update: Any, context: Any) -> str:
@@ -76,12 +117,39 @@ def _previous_search_topic(module: Any, update: Any, context: Any) -> str:
     return ""
 
 
+def _combine_with_previous_topic(module: Any, update: Any, context: Any, query: str) -> str:
+    current = " ".join(str(query or "").split()).strip()
+    if not current or not _looks_weak_followup(current):
+        return current
+
+    previous = _previous_search_topic(module, update, context)
+    if not previous:
+        return current
+    if previous.lower() in current.lower() or current.lower() in previous.lower():
+        return current
+
+    combined = f"{previous}. Уточнение пользователя: {current}"
+    logging.info("Fresh/anaphoric search reused previous topic: %r", combined[:220])
+    return combined
+
+
 def install(bot_module: Any | None = None) -> bool:
     global _INSTALLED
 
     module = bot_module or _find_bot_module()
     if module is None:
         return False
+
+    # Extend the existing news/freshness gate without changing search cost or
+    # adding another network call. search_web will keep using the same DDGS call,
+    # but relative-date requests now receive the existing month timelimit.
+    original_is_news_query = getattr(module, "is_news_query", None)
+    if callable(original_is_news_query) and not getattr(original_is_news_query, "_yayceslav_freshness", False):
+        def is_news_query_with_freshness(query: str) -> bool:
+            return bool(original_is_news_query(query) or is_freshness_query(query))
+
+        is_news_query_with_freshness._yayceslav_freshness = True
+        module.is_news_query = is_news_query_with_freshness
 
     original = module.perform_web_search
     if getattr(original, "_yayceslav_search_context", False):
@@ -102,6 +170,10 @@ def install(bot_module: Any | None = None) -> bool:
                     "Bare search follow-up reused previous topic: %r",
                     resolved_query[:160],
                 )
+        else:
+            resolved_query = _combine_with_previous_topic(
+                module, update, context, resolved_query
+            )
 
         if resolved_query and _is_current_date_query(resolved_query):
             if not await module.enforce_rate_limit(update, "search"):
@@ -130,5 +202,7 @@ def install(bot_module: Any | None = None) -> bool:
     module.perform_web_search = perform_web_search_with_context
     module._yayceslav_search_context_installed = True
     _INSTALLED = True
-    logging.warning("Search context runtime ready: bare follow-ups + process-clock date answers")
+    logging.warning(
+        "Search context runtime ready: bare/anaphoric follow-ups + relative-date freshness + process-clock date answers"
+    )
     return True
