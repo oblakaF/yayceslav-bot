@@ -4,6 +4,11 @@ This is the warm counterpart to the hostile/dokop engines. It detects real
 positive events, keeps praise grounded in something the user actually said,
 and deliberately caps warmth so the character never turns into a sycophantic
 cheerleader.
+
+The public "sympathy" label is intentionally not the same thing as the raw
+positive-affinity level. Affinity counts recent positive events; sympathy is a
+human-readable current impression that also receives a small lifetime
+reputation tilt and cools immediately during active hostility.
 """
 
 from __future__ import annotations
@@ -145,6 +150,81 @@ def affinity_label(level: int) -> str:
     }.get(max(0, min(int(level), 4)), "нейтрально")
 
 
+def _reputation_sympathy_tilt(reputation_score: int) -> int:
+    """Small baseline tilt; reputation must not duplicate recent affinity."""
+
+    score = max(-100, min(100, int(reputation_score or 0)))
+    if score >= 70:
+        return 4
+    if score >= 35:
+        return 2
+    if score >= 10:
+        return 1
+    if score <= -70:
+        return -4
+    if score <= -35:
+        return -2
+    if score <= -10:
+        return -1
+    return 0
+
+
+def sympathy_score(
+    positive_points_30d: int,
+    *,
+    reputation_score: int = 0,
+    hostility_today: int = 0,
+    penance_pending: bool = False,
+) -> int:
+    """Human-facing current warmth score.
+
+    Recent positive events are the main signal. Lifetime reputation only nudges
+    the baseline, while today's unresolved directed hostility cools sympathy
+    immediately. This avoids weird states such as a clearly positive reputation
+    being displayed as numeric ``0/4`` sympathy while still keeping the two
+    concepts distinct.
+    """
+
+    value = max(0, int(positive_points_30d or 0))
+    value += _reputation_sympathy_tilt(reputation_score)
+    value -= 3 * min(max(0, int(hostility_today or 0)), 4)
+    if penance_pending:
+        value -= 2
+    return max(-20, min(50, value))
+
+
+def sympathy_label(score: int) -> str:
+    """Word-only public label used by /whoami."""
+
+    value = int(score or 0)
+    if value <= -8:
+        return "Явная антипатия"
+    if value <= -3:
+        return "Холодная"
+    if value <= 0:
+        return "Нейтральная"
+    if value <= 4:
+        return "Доброжелательная"
+    if value <= 11:
+        return "Лёгкая симпатия"
+    if value <= 23:
+        return "Тёплая"
+    return "Очень тёплая"
+
+
+def sympathy_from_profile(profile) -> tuple[int, str]:
+    """Best-effort public sympathy snapshot from already-loaded profile data."""
+
+    profile = profile or {}
+    score = sympathy_score(
+        int(profile.get("positive_affinity_points_30d", 0) or 0),
+        reputation_score=int(profile.get("reputation_score", 0) or 0),
+        hostility_today=int(profile.get("hostility_today", 0) or 0),
+        penance_pending=bool(profile.get("penance_pending", False)),
+    )
+    return score, sympathy_label(score)
+
+
 def spontaneous_warmth_probability(state: PositiveState) -> float:
     """Small, bounded chance; never turns every reply into praise."""
     level = affinity_level(state.affinity_points_30d)
@@ -205,7 +285,7 @@ def build_instruction(
 
     if decision.affinity_level >= 1:
         lines.append(
-            f"За последние 30 дней Яйцеслав к этому человеку расположен на уровне "
+            f"За последние 30 дней накоплены позитивные сигналы уровня "
             f"{decision.affinity_level}/4 ({decision.affinity_label}); позитивный streak={state.positive_streak}."
         )
     if decision.affinity_level >= 3:
