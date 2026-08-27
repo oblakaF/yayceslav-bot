@@ -26,6 +26,16 @@ def _norm(text: str) -> str:
     return re.sub(r"[^\wёЁ@]+", " ", (text or "").lower(), flags=re.UNICODE).strip()
 
 
+# Verbs such as "разнеси" have ordinary non-roast meanings too. Keep a small
+# deterministic object guard so phrases like "разнеси вещи по комнатам" do not
+# wake the bot. This is intentionally narrower than trying to infer semantics.
+_NON_ROAST_OBJECT_RE = re.compile(
+    r"\b(?:разнеси|размажь)\s+(?:вещи|файлы|папки|данные|заказы|коробки|"
+    r"документы|товары|краску|масло|крем|тесто)\b",
+    re.I,
+)
+
+
 _ROUTE_PATTERNS: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
     (
         "recap",
@@ -137,7 +147,10 @@ def classify_action(text: str) -> str | None:
     normalized = _norm(text)
     if not normalized:
         return None
+    non_roast_object = bool(_NON_ROAST_OBJECT_RE.search(normalized))
     for action, patterns in _ROUTE_PATTERNS:
+        if action == "roast" and non_roast_object:
+            continue
         if any(pattern.search(normalized) for pattern in patterns):
             return action
     return None
