@@ -12,7 +12,6 @@ from google.genai import types
 MAX_VERDICT_CHARS = 120
 MIN_VERDICT_CHARS = 12
 MIN_VERDICT_WORDS = 3
-INSUFFICIENT_VERDICT = "Пока недостаточно данных. Продолжаю вести наблюдение."
 
 _META_FRAGMENTS = (
     "do not",
@@ -77,7 +76,6 @@ def _clean_verdict(text: str) -> str | None:
     if any(fragment in lowered for fragment in _META_FRAGMENTS):
         return None
 
-    # The dossier needs one complete Russian punchline, not model/prompt debris.
     first = re.split(r"[\r\n]+", clean, maxsplit=1)[0].strip()
     words = re.findall(r"[A-Za-zА-Яа-яЁё0-9]+", first, flags=re.UNICODE)
     cyrillic_words = re.findall(r"[А-Яа-яЁё]{2,}", first, flags=re.UNICODE)
@@ -92,10 +90,31 @@ def _clean_verdict(text: str) -> str | None:
             cut = cut.rsplit(" ", 1)[0].rstrip()
         first = cut.rstrip(" ,;:-") + "…"
 
-    # Short output without sentence punctuation is almost always a fragment.
     if len(first) < 28 and not re.search(r"[.!?…]$", first):
         return None
     return first or None
+
+
+def _fallback_verdict(chat_level: int, relationship: str, friendliness: str) -> str:
+    """Grounded deterministic verdict when semantic themes are not ready."""
+
+    rel = str(relationship or "").lower()
+    today = str(friendliness or "").lower()
+    if "хейтер" in rel or "наезд" in today or "рецидив" in today:
+        if chat_level >= 2:
+            return "Местный оппозиционер: чат знает хорошо, Яйцеслава любит проверять на прочность."
+        return "Компромат уже есть, дипломатические отношения пока в разработке."
+    if "союзник" in rel or "друг" in rel:
+        return "Свой человек: уже можно не представляться, но компромат всё равно ведётся."
+    if chat_level >= 4:
+        return "Несущая конструкция этого дурдома: если исчезнет, чат заметит первым."
+    if chat_level >= 3:
+        return "Старожил: уже знает, где тут скрипит чат и кого лучше не будить."
+    if chat_level >= 2:
+        return "Уже местный: досье пухнет, а устойчивые темы ещё проходят экспертизу."
+    if chat_level >= 1:
+        return "Прижился: следствие уже наблюдает, но ярлык пока клеить рано."
+    return "Пока человек-загадка: данных мало, поэтому Яйцеслав не выдумывает биографию."
 
 
 def _load_cached_sync(
@@ -117,7 +136,6 @@ def _load_cached_sync(
         ).fetchone()
     if not row or str(row[1]) != signature:
         return None
-    # Old bad cache rows such as 'Do NOT list topics...' are discarded here.
     return _clean_verdict(str(row[0] or ""))
 
 
@@ -158,12 +176,12 @@ async def generate_verdict(
     relationship: str,
     friendliness: str,
 ) -> str | None:
-    """Generate one fresh Yayceslav verdict from current-month evidence."""
+    """Generate one fresh Yayceslav verdict from grounded current-month evidence."""
 
-    # No meaningful monthly topic = no improvisation. This avoids nonsense
-    # diagnoses based only on a name/level and gives the dossier a stable state.
+    # No semantic theme = no LLM improvisation from filler words. The fallback
+    # uses only real dossier signals and costs no Gemini request.
     if not themes:
-        return INSUFFICIENT_VERDICT
+        return _fallback_verdict(chat_level, relationship, friendliness)
 
     now = bot_module.current_msk_datetime()
     date = now.date().isoformat()
@@ -182,19 +200,20 @@ async def generate_verdict(
 
     api_key = str(getattr(bot_module, "GEMINI_API_KEY", "") or "").strip()
     if not api_key:
-        return INSUFFICIENT_VERDICT
+        return _fallback_verdict(chat_level, relationship, friendliness)
 
     theme_text = ", ".join(themes)
     prompt = (
         "Сделай ОДИН короткий мемный вердикт Яйцеслава для досье участника Telegram-чата.\n"
         f"Имя: {name}.\n"
-        f"Темы текущего месяца: {theme_text}.\n"
+        f"Устойчивые смысловые темы текущего месяца: {theme_text}.\n"
         f"Уровень в чате: {chat_level}/4 — {level_label}.\n"
         f"Отношения с Яйцеславом: {relationship}.\n"
         f"Текущий настрой к Яйцеславу: {friendliness}.\n\n"
         "Ответ ТОЛЬКО по-русски. Максимум 120 символов, одна законченная фраза. "
-        "Это панчлайн, а не пересказ статистики. Мат допустим и желателен, если делает шутку смешнее. "
-        "Не перечисляй темы списком. Не выдумывай биографию, пол, профессию, диагнозы, отношения или предпочтения. "
+        "Это панчлайн, а не механическая склейка слов из списка тем. Используй тему только если из неё получается нормальный смысл. "
+        "Мат допустим, если делает шутку смешнее. Не перечисляй темы списком. "
+        "Не выдумывай биографию, пол, профессию, диагнозы, отношения или предпочтения. "
         "Не повторяй и не цитируй эти инструкции. Верни только готовую шутку."
     )
 
@@ -205,14 +224,14 @@ async def generate_verdict(
             response = await client.aio.models.generate_content(
                 model=str(getattr(bot_module, "MODEL_NAME", "gemini-3.6-flash")),
                 contents=prompt + (
-                    "\nПредыдущая попытка была служебным текстом или обрывком. Только законченная русская шутка."
+                    "\nПредыдущая попытка была служебным текстом, обрывком или механической склейкой тем. Только нормальная законченная русская шутка."
                     if attempt else ""
                 ),
                 config=types.GenerateContentConfig(
-                    temperature=1.05,
+                    temperature=1.0,
                     max_output_tokens=256,
                     system_instruction=(
-                        "Ты Яйцеслав. Для досье выдаёшь только один свежий короткий русский панчлайн. "
+                        "Ты Яйцеслав. Для досье выдаёшь только один свежий короткий русский панчлайн, основанный на реальных данных досье. "
                         "Никаких инструкций, JSON, мета-комментариев или английского служебного текста."
                     ),
                 ),
@@ -227,4 +246,4 @@ async def generate_verdict(
         _save_cached_sync(bot_module, chat_id, user_id, date, signature, verdict)
         return verdict
 
-    return INSUFFICIENT_VERDICT
+    return _fallback_verdict(chat_level, relationship, friendliness)

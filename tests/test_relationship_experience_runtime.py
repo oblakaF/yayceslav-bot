@@ -34,7 +34,6 @@ def test_hostility_labels():
 
 
 def test_dossier_relationship_labels_are_reputation_based():
-    # Familiarity is shown separately as chat level. Relationship starts neutral.
     assert profile_v4._relationship_label(0, 0, 0) == "Нейтральный"
     assert profile_v4._relationship_label(4, 0, 0) == "Нейтральный"
     assert profile_v4._relationship_label(0, 0, 5) == "Доброжелательный"
@@ -45,30 +44,32 @@ def test_dossier_relationship_labels_are_reputation_based():
     assert profile_v4._relationship_label(4, 0, -20) == "Хейтерок"
     assert profile_v4._relationship_label(4, 0, -40) == "Мини-хейтер"
     assert profile_v4._relationship_label(4, 0, -80) == "Гига-хейтер"
-    # Today's active hostility still wins over the lifetime score.
     assert profile_v4._relationship_label(4, 1, 100) == "Мини-хейтер"
     assert profile_v4._relationship_label(4, 3, 100) == "Мега-хейтер"
     assert profile_v4._relationship_label(4, 11, 100) == "Гига-хейтер"
 
 
-def test_dossier_positive_affinity_is_separate_from_chat_level():
-    assert profile_v4._positive_line({}) == "0 (Нейтральная)"
+def test_dossier_sympathy_is_separate_from_chat_level():
+    assert profile_v4._positive_line({}) == "Нейтральная"
     assert profile_v4._positive_line(
         {
             "chat_level": 4,
-            "positive_affinity_level": 1,
             "positive_affinity_points_30d": 4,
             "positive_streak": 2,
         }
-    ) == "1 (Симпатия)"
+    ) == "Доброжелательная"
 
-    # Familiarity/XP does not silently turn into affection.
+    # Familiarity/XP by itself does not silently turn into affection.
+    assert profile_v4._positive_line({"chat_level": 4}) == "Нейтральная"
+
+    # Lifetime reputation may only give a small baseline warmth.
     assert profile_v4._positive_line(
         {
-            "chat_level": 4,
-            "positive_affinity_level": 0,
+            "chat_level": 0,
+            "reputation_score": 19,
+            "positive_affinity_points_30d": 0,
         }
-    ) == "0 (Нейтральная)"
+    ) == "Доброжелательная"
 
 
 def test_level_zero_non_hater_is_gentler():
@@ -140,10 +141,8 @@ def test_theme_noise_is_filtered_but_milfs_survive():
 
 
 def test_theme_ok_rejects_phrase_with_any_noise_word():
-    # Regression: a single real word next to filler used to be enough to
-    # pass ("тоже пройдено" showed up as a whoami monthly theme).
     assert profile_v3._theme_ok("тоже пройдено") is False
-    assert profile_v3._theme_ok("игры сегодня") is False  # "сегодня" is noise
+    assert profile_v3._theme_ok("игры сегодня") is False
     assert profile_v3._theme_ok("любимые игры") is True
 
 
