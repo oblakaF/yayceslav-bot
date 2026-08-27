@@ -54,6 +54,7 @@ import birthday_runtime
 # Free-tier smart tools and production guards. All are explicit, bounded runtime
 # layers: no readiness thread, browser, cache, vector DB, or transcript storage.
 import natural_router_runtime
+import roast_target_runtime
 import search_enrichment_runtime
 import chat_digest_runtime
 import date_grounding_runtime
@@ -95,6 +96,7 @@ RUNTIME_LOAD_ORDER = (
     "search_enrichment_runtime",
     "chat_digest_runtime",
     "natural_router_runtime",
+    "roast_target_runtime",
     "date_grounding_runtime",
     "social_priority_runtime",
     "conflict_rage_runtime",
@@ -238,6 +240,7 @@ def prepare_application_runtime(application: Application) -> None:
     if not search_slang_runtime.install():
         logging.warning("Search slang runtime: bot module not ready")
     chat_digest_runtime.prepare_application_runtime(application)
+    roast_target_runtime.prepare_application_runtime(application)
     natural_router_runtime.prepare_application_runtime(application)
     recent_video_note_runtime.prepare_application_runtime(application)
 
