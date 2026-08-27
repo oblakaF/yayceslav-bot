@@ -54,9 +54,9 @@ def test_today_line_describes_only_current_day_climate():
     assert "ритуал" in profile_v4._today_line(0, 2, 1, True)
 
 
-def test_reputation_line_is_numeric_not_duplicate_relationship_label():
-    assert profile_v4._reputation_line({"reputation_score": 19}) == "+19"
-    assert profile_v4._reputation_line({"reputation_score": -7}) == "-7"
+def test_public_reputation_line_is_numeric_not_duplicate_relationship_label():
+    assert profile_v4._reputation_score_line({"reputation_score": 19}) == "+19"
+    assert profile_v4._reputation_score_line({"reputation_score": -7}) == "-7"
 
 
 def test_dossier_sympathy_is_separate_from_chat_level():
