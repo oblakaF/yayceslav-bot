@@ -27,11 +27,11 @@ _ROAST_VERB_RE = re.compile(
 _MENTION_RE = re.compile(r"(?<!\w)@[A-Za-z0-9_]{3,32}\b")
 _NAMED_TARGET_RE = re.compile(
     r"(?:прожарь|подколи|оскорби|отжарь|разнеси|обосри|размажь)\s+"
-    r"(?:этого\s+|эту\s+)?([A-Za-zА-Яа-яЁё0-9_.-]{2,32})\b",
+    r"(?:(?:этого|эту|этот|это)\s+)?([A-Za-zА-Яа-яЁё0-9_.-]{2,32})\b",
     re.IGNORECASE,
 )
 _PRONOUNS = {
-    "его", "ее", "её", "ему", "ей", "него", "ней", "этого", "эту",
+    "его", "ее", "её", "ему", "ей", "него", "ней", "этого", "эту", "этот",
     "это", "сообщение", "пост", "реплика", "реплику", "текст",
     "чела", "человек", "человека", "типа", "его-то", "её-то",
 }
@@ -138,7 +138,14 @@ def prepare_application_runtime(application: Application) -> None:
         logging.warning("Roast target runtime: bot module not ready")
         return
 
-    application.add_handler(
+    # Some contract tests intentionally pass a sentinel object to verify the
+    # centralized bootstrap call order. Runtime installation above is enough in
+    # that case; a real PTB Application always supplies add_handler.
+    add_handler = getattr(application, "add_handler", None)
+    if not callable(add_handler):
+        return
+
+    add_handler(
         CommandHandler("roast", enhanced_roast_command),
         group=-3,
     )
