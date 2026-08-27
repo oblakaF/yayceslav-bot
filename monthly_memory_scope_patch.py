@@ -12,6 +12,27 @@ _PATCHED = False
 # dropped or migrated in this safe cleanup.
 _ORIGINAL_PROFILE_INIT = profile_runtime._initialize_tables
 
+# These may legitimately be frequent personal words, so they can still appear
+# as "favorite word". They are not topics, however, and must never be fed to the
+# dossier verdict generator as if they described a person's interests.
+_GENERIC_SINGLE_THEME_WORDS = {
+    "вроде", "всех", "всем", "всего", "весь", "вся", "все",
+    "починил", "починила", "починили", "починить", "почини", "чинить",
+    "сделал", "сделала", "сделали", "делал", "делала", "делали",
+    "проверил", "проверила", "проверили", "проверить", "проверь",
+    "говорил", "говорила", "говорили", "сказали", "сказать",
+    "посмотрел", "посмотрела", "посмотрели", "посмотреть", "смотри",
+    "увидел", "увидела", "увидели", "видел", "видела",
+    "понял", "поняла", "поняли", "понимаю", "понять",
+    "хотел", "хотела", "хотели", "хотеть",
+    "решил", "решила", "решили", "решить",
+    "получил", "получила", "получили", "получить",
+    "работает", "работал", "работала", "работали", "работать",
+    "нравится", "нравилось", "понравилось",
+    "кажется", "кажись", "наверное", "наверно", "скорее",
+    "пока", "прям", "точно", "реально", "правда", "просто",
+}
+
 
 def _month(bot_module) -> str:
     now = bot_module.current_msk_datetime()
@@ -53,7 +74,6 @@ def _record_member_terms_monthly(bot_module, chat_id: int, user_id: int, text: s
                     (chat_id, user_id, term),
                 )
             elif old:
-                # New calendar month: same word starts a fresh social season.
                 connection.execute(
                     """
                     UPDATE member_callback_terms
@@ -116,11 +136,6 @@ def _load_member_memory_monthly(bot_module, chat_id: int, user_id: int):
 
 
 def _profile_init_monthly(bot_module) -> None:
-    """Initialize only the live calendar-month word-count schema.
-
-    The old all-time member_word_counts table is deliberately left untouched if
-    it already exists in a production DB, but new databases no longer create it.
-    """
     with bot_module.get_db_connection() as connection:
         connection.execute(
             """
@@ -192,7 +207,7 @@ def _favorite_word_monthly(bot_module, chat_id: int, user_id: int):
 
 
 def _themes_monthly(bot_module, chat_id: int, user_id: int) -> list[str]:
-    """Recurring meaningful current-month themes; recurrence beats recency."""
+    """Recurring semantic current-month themes; recurrence beats recency."""
     month_start = _month_start(bot_module)
     with bot_module.get_db_connection() as connection:
         try:
@@ -232,13 +247,18 @@ def _themes_monthly(bot_module, chat_id: int, user_id: int) -> list[str]:
             continue
 
         count = int(occurrences or 0)
-        # A single word needs three mentions; a recurring multi-word topic can
-        # qualify from two mentions. This prevents random swears/verbs becoming
-        # dossier themes while retaining useful phrases.
-        if len(meaningful) == 1 and count < 3:
+        if len(meaningful) == 1:
+            # Generic predicates/pronouns/adverbs are not topics regardless of
+            # frequency. A legitimate one-word subject (Steam, крипта, котята,
+            # Abaqus...) needs a little more recurrence than a multi-word topic.
+            if meaningful[0] in _GENERIC_SINGLE_THEME_WORDS:
+                continue
+            if count < 4:
+                continue
+        elif count < 2:
             continue
 
-        score = float(count) * (1.18 if len(meaningful) >= 2 else 1.0)
+        score = float(count) * (1.25 if len(meaningful) >= 2 else 1.0)
         candidates.append((score, clean, norm))
         seen.add(norm)
 
