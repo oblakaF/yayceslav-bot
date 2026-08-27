@@ -6,6 +6,7 @@ import sys
 
 import positive_engine
 import social_engine
+import social_priority_runtime
 import whoami_dynamic_verdict
 import whoami_profile_v3_runtime as v3
 from telegram.ext import Application, ApplicationHandlerStop, CommandHandler
@@ -22,24 +23,27 @@ def _find_bot_module():
     return None
 
 
-def _friendliness_line(
+def _today_line(
     active_insults: int,
     total_today: int,
     apologies_today: int,
     penance_pending: bool,
 ) -> str:
-    label = social_engine.hostility_label(active_insults)
-    if label == "Не хейтер":
-        label = "Нейтрально"
+    """Describe only today's interaction climate, not lifetime attitude."""
+
     if penance_pending:
-        return f"{label} — рецидив, помилование через мемный ритуал"
-    if active_insults == 0:
-        if apologies_today > 0 and total_today > 0:
-            return f"{label} — сегодня уже помирились"
-        return label
+        return "Напряжённо — рецидив, помилование через мемный ритуал"
+    if active_insults >= 11:
+        return f"Война — {active_insults} наездов сегодня"
+    if active_insults >= 3:
+        return f"Конфликтно — {active_insults} наезда сегодня"
+    if active_insults == 2:
+        return "Напряжённо — 2 наезда сегодня"
     if active_insults == 1:
-        return f"{label} — 1 наезд сегодня"
-    return f"{label} — {active_insults} наезда сегодня"
+        return "Лёгкий конфликт — 1 наезд сегодня"
+    if apologies_today > 0 and total_today > 0:
+        return "Помирились"
+    return "Спокойно"
 
 
 def _score_relationship_label(reputation_score: int) -> str:
@@ -63,19 +67,34 @@ def _score_relationship_label(reputation_score: int) -> str:
     return "Союзник"
 
 
+def _relationship_label_from_profile(profile) -> str:
+    """Expose the same relationship-first band that actually controls tone."""
+
+    snapshot = social_priority_runtime.snapshot_from_profile(profile or {})
+    band = social_priority_runtime.resolve_relationship_band(snapshot)
+    return {
+        "trusted": "Очень свой",
+        "friendly": "Доброжелательный",
+        "neutral_familiar": "Знакомый нейтрал",
+        "feuding_familiar": "Старый спорщик",
+        "wary": "Настороженный",
+        "neutral": "Нейтральный",
+    }.get(band, "Нейтральный")
+
+
 def _relationship_label(
     chat_level: int,
     active_hostility: int,
     reputation_score: int = 0,
 ) -> str:
-    del chat_level  # familiarity/XP is shown separately; relationship follows reputation.
-    if active_hostility >= 11:
-        return "Гига-хейтер"
-    if active_hostility >= 3:
-        return "Мега-хейтер"
-    if active_hostility >= 1:
-        return "Мини-хейтер"
-    return _score_relationship_label(reputation_score)
+    """Legacy compatibility helper used by older tests/callers."""
+
+    profile = {
+        "chat_level": chat_level,
+        "hostility_today": active_hostility,
+        "reputation_score": reputation_score,
+    }
+    return _relationship_label_from_profile(profile)
 
 
 def _positive_line(profile) -> str:
@@ -85,7 +104,7 @@ def _positive_line(profile) -> str:
 
 def _reputation_line(profile) -> str:
     score = max(-100, min(100, int(profile.get("reputation_score", 0) or 0)))
-    return f"{score} ({_score_relationship_label(score)})"
+    return f"{score:+d}"
 
 
 def _next_level_progress(messages_month: int, chat_level: int, is_king: bool) -> str | None:
@@ -143,10 +162,9 @@ async def _whoami_v4(update, context) -> None:
     total_hostility = int(profile.get("hostility_total_today", active_hostility) or 0)
     apologies = int(profile.get("apologies_today", 0) or 0)
     penance_pending = bool(profile.get("penance_pending", False))
-    reputation_score = int(profile.get("reputation_score", 0) or 0)
 
-    relationship = _relationship_label(chat_level, active_hostility, reputation_score)
-    friendliness = _friendliness_line(active_hostility, total_hostility, apologies, penance_pending)
+    relationship = _relationship_label_from_profile(profile)
+    today = _today_line(active_hostility, total_hostility, apologies, penance_pending)
     positive = _positive_line(profile)
     reputation = _reputation_line(profile)
 
@@ -170,10 +188,10 @@ async def _whoami_v4(update, context) -> None:
 
     lines = [
         f"🥚 ДОСЬЕ ЯЙЦЕСЛАВА НА {name}",
-        f"🤝 Базовое отношение: {relationship}",
+        f"🤝 Отношение: {relationship}",
         f"⭐ Репутация: {reputation}",
         f"💚 Симпатия: {positive}",
-        f"🌡 Сегодня: {friendliness}",
+        f"🌡 Сегодня: {today}",
         f"🏅 Титул: {title}",
         f"💬 Сообщений: {total} всего / {messages_month} в этом месяце",
         f"🏚 Уровень: {chat_level}/4 — {level_label}",
@@ -205,7 +223,7 @@ async def _whoami_v4(update, context) -> None:
                 chat_level=chat_level,
                 level_label=level_label,
                 relationship=relationship,
-                friendliness=friendliness,
+                friendliness=today,
             ),
             timeout=14.0,
         )
