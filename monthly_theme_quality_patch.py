@@ -7,10 +7,6 @@ import whoami_profile_v3_runtime as profile_runtime
 
 _PATCHED = False
 
-# /whoami should show subjects the person actually talks about, not arbitrary
-# neighboring words from callback n-grams. Be deliberately conservative here:
-# when unsure, showing no theme is better than claiming nonsense like
-# "другой стороны" or "ответ него".
 _TOPIC_NOISE = profile_runtime._THEME_NOISE | {
     "ответ", "ответа", "ответы", "ответом", "ответить", "отвечать",
     "сторона", "стороны", "другой", "другая", "другие", "другое",
@@ -31,14 +27,6 @@ _TOKEN_RE = re.compile(r"^[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9+_.#-
 
 
 def _topic_word_ok(term: str) -> bool:
-    """Return True only for a conservative, atomic topic candidate.
-
-    Multi-word callback terms are intentionally rejected. They are generated as
-    adjacent n-grams and are not semantic phrases, so promoting them to themes
-    caused outputs such as "кота ответ". Real recurring subjects still survive
-    as atomic words: крипта, котята, Steam, Abaqus, тренировки, Python, etc.
-    """
-
     clean = str(term or "").strip()
     norm = profile_runtime._normalize_word(clean)
     if not clean or not _TOKEN_RE.fullmatch(clean):
@@ -55,37 +43,29 @@ def _topic_word_ok(term: str) -> bool:
 
 
 def _themes_monthly_ranked(bot_module, chat_id: int, user_id: int) -> list[str]:
-    """Return up to three recurring subject words from the current month.
+    """Return true calendar-month subjects from the dedicated monthly table."""
 
-    Quality beats filling all three slots. A subject must recur at least four
-    times. Phrase n-grams are ignored because this storage does not know whether
-    they form a real noun phrase.
-    """
-
-    month_start = bot_module.current_msk_datetime().date().replace(day=1).isoformat()
-
+    month = profile_runtime._current_month(bot_module)
     with bot_module.get_db_connection() as connection:
         try:
             rows = connection.execute(
                 """
-                SELECT term, occurrences, last_seen
-                FROM member_callback_terms
-                WHERE chat_id = ? AND user_id = ?
-                  AND date(last_seen) >= date(?)
+                SELECT word, occurrences, last_seen
+                FROM member_word_counts_monthly
+                WHERE chat_id = ? AND user_id = ? AND month = ?
                   AND occurrences >= 4
-                ORDER BY occurrences DESC, last_seen DESC, term ASC
+                ORDER BY occurrences DESC, last_seen DESC, word ASC
                 LIMIT 100
                 """,
-                (chat_id, user_id, month_start),
+                (chat_id, user_id, month),
             ).fetchall()
         except Exception:
             rows = []
 
     candidates: list[tuple[int, str, str]] = []
     seen: set[str] = set()
-
-    for term, occurrences, _last_seen in rows:
-        clean = str(term or "").strip()
+    for word, occurrences, _last_seen in rows:
+        clean = str(word or "").strip()
         norm = profile_runtime._normalize_word(clean)
         if norm in seen or not _topic_word_ok(clean):
             continue
