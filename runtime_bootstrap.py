@@ -58,6 +58,7 @@ import search_enrichment_runtime
 import chat_digest_runtime
 import date_grounding_runtime
 import social_priority_runtime
+import conflict_rage_runtime
 import search_context_runtime
 import search_slang_runtime
 import voice2_runtime
@@ -96,6 +97,7 @@ RUNTIME_LOAD_ORDER = (
     "natural_router_runtime",
     "date_grounding_runtime",
     "social_priority_runtime",
+    "conflict_rage_runtime",
     "search_context_runtime",
     "search_slang_runtime",
     "voice2_runtime",
@@ -214,14 +216,17 @@ def prepare_application_runtime(application: Application) -> None:
     if not date_grounding_runtime.install():
         logging.warning("Date grounding runtime: bot module not ready")
 
-    # Relationship priority is the final social arbiter: it sees the complete
-    # reputation/affinity/history/mood stack, sanitizes media service prompts,
-    # and prevents generic roughness from overriding a neutral relationship.
+    # Relationship priority is the final persistent social arbiter. Conflict
+    # rage is installed one layer later: it may temporarily set a minimum
+    # intensity during an active fight, but never changes long-term reputation.
     if not social_priority_runtime.install():
         logging.warning("Social priority runtime: bot module not ready")
+    if not conflict_rage_runtime.install():
+        logging.warning("Conflict rage runtime: bot module not ready")
 
-    # Voice 2.0 captures the completed ask_gemini stack and owns its JSON leak
-    # containment. No delayed readiness thread is needed anymore.
+    # Voice 2.0 captures the completed ask_gemini stack. The conflict runtime
+    # has already attached its post-hook to the structured voice decision, so
+    # addressed voice/video notes share the same short-lived hostility heat.
     if not voice2_runtime.install():
         logging.warning("Voice 2.0 runtime: bot module not ready")
 
