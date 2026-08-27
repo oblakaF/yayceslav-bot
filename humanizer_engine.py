@@ -4,6 +4,8 @@ import random
 import re
 from dataclasses import dataclass
 
+import hostile_streak_engine
+
 
 SPLIT_CHANCE = 0.08
 CONFLICT_TWO_MESSAGE_CHANCE = 0.38
@@ -215,13 +217,17 @@ def humanize_reply(
     important = _important_request(user_text, trace)
     mode = getattr(trace, "conversation_mode", "normal") if trace else "normal"
 
-    # Conflict rhythm is enforced after Gemini, not merely requested in the prompt.
-    # First/second hostile turn and ordinary challenge: one or two compact phrases.
-    # Third/fourth hostile turn remains the intentional longer flare-up.
+    # Conflict rhythm is enforced after Gemini, not merely requested in the
+    # prompt. First direct hostile turn stays compact; from the second attack
+    # the same threshold as hostile_streak_engine's RAGE gate is used so the
+    # post-processor cannot accidentally blunt the escalation back to 95 chars.
     raw_conflict = _looks_like_conflict(user_text)
     compact_conflict = raw_conflict or mode in {"challenge", "hostile"}
     if compact_conflict and not important:
-        escalated = mode == "hostile" and int(hostile_streak) >= 3
+        escalated = (
+            mode == "hostile"
+            and hostile_streak_engine.is_escalated(int(hostile_streak))
+        )
         if escalated:
             max_chars = 220
             max_sentences = 3
