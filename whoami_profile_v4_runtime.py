@@ -23,6 +23,28 @@ def _find_bot_module():
     return None
 
 
+def _friendliness_line(
+    active_insults: int,
+    total_today: int,
+    apologies_today: int,
+    penance_pending: bool,
+) -> str:
+    """Legacy helper retained for compatibility with older callers/tests."""
+
+    label = social_engine.hostility_label(active_insults)
+    if label == "Не хейтер":
+        label = "Нейтрально"
+    if penance_pending:
+        return f"{label} — рецидив, помилование через мемный ритуал"
+    if active_insults == 0:
+        if apologies_today > 0 and total_today > 0:
+            return f"{label} — сегодня уже помирились"
+        return label
+    if active_insults == 1:
+        return f"{label} — 1 наезд сегодня"
+    return f"{label} — {active_insults} наезда сегодня"
+
+
 def _today_line(
     active_insults: int,
     total_today: int,
@@ -87,14 +109,16 @@ def _relationship_label(
     active_hostility: int,
     reputation_score: int = 0,
 ) -> str:
-    """Legacy compatibility helper used by older tests/callers."""
+    """Legacy reputation-only relationship helper retained for compatibility."""
 
-    profile = {
-        "chat_level": chat_level,
-        "hostility_today": active_hostility,
-        "reputation_score": reputation_score,
-    }
-    return _relationship_label_from_profile(profile)
+    del chat_level
+    if active_hostility >= 11:
+        return "Гига-хейтер"
+    if active_hostility >= 3:
+        return "Мега-хейтер"
+    if active_hostility >= 1:
+        return "Мини-хейтер"
+    return _score_relationship_label(reputation_score)
 
 
 def _positive_line(profile) -> str:
@@ -103,6 +127,15 @@ def _positive_line(profile) -> str:
 
 
 def _reputation_line(profile) -> str:
+    """Legacy labeled representation retained for API/test compatibility."""
+
+    score = max(-100, min(100, int(profile.get("reputation_score", 0) or 0)))
+    return f"{score} ({_score_relationship_label(score)})"
+
+
+def _reputation_score_line(profile) -> str:
+    """Public dossier representation: raw score, without duplicating relationship."""
+
     score = max(-100, min(100, int(profile.get("reputation_score", 0) or 0)))
     return f"{score:+d}"
 
@@ -166,7 +199,7 @@ async def _whoami_v4(update, context) -> None:
     relationship = _relationship_label_from_profile(profile)
     today = _today_line(active_hostility, total_hostility, apologies, penance_pending)
     positive = _positive_line(profile)
-    reputation = _reputation_line(profile)
+    reputation = _reputation_score_line(profile)
 
     try:
         favorite_word, favorite_count = await asyncio.to_thread(
