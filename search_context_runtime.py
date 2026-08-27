@@ -58,9 +58,6 @@ _WEAK_FOLLOWUP_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Deliberately requires an explicit web/location word (or a dedicated web verb)
-# so ordinary phrases such as ``ты не проверяешь факты`` remain accountability
-# signals rather than silently spending a search request.
 _NATURAL_WEB_REQUEST_RE = re.compile(
     r"(?:"
     r"\b(?:проверь|проверить|посмотри|глянь|поищи|найди|чекни)\b"
@@ -134,7 +131,6 @@ def _looks_weak_followup(query: str) -> bool:
         return True
     if _WEAK_FOLLOWUP_RE.search(text):
         return True
-    # Very short fresh requests often contain only a pronoun/action/time marker.
     return is_freshness_query(text) and len(text.split()) <= 7
 
 
@@ -143,18 +139,12 @@ def _clean_candidate(text: str) -> str:
 
 
 def extract_natural_search_query(text: str) -> str | None:
-    """Return a concrete query, ``""`` for prior-topic reuse, or ``None``.
-
-    This supplements bot.py's prefix-only SEARCH_TRIGGER_RE. Empty-string is a
-    meaningful result: ``perform_web_search`` already knows how to recover the
-    previous group/private topic for a bare follow-up.
-    """
+    """Return a concrete query, ``""`` for prior-topic reuse, or ``None``."""
 
     value = " ".join(str(text or "").split()).strip()
     if not value:
         return None
 
-    # Proof/source challenges refer to the immediately preceding factual topic.
     if _PROOF_REQUEST_RE.search(value) or _NEWS_VERIFY_RE.search(value):
         return ""
 
@@ -162,13 +152,19 @@ def extract_natural_search_query(text: str) -> str | None:
     if not match:
         return None
 
+    before = _clean_candidate(value[:match.start()])
     after = _clean_candidate(value[match.end():])
+    meaningful_before = bool(before and not _FILLER_ONLY_RE.fullmatch(before))
+
+    # Preserve the topic when a web verb sits in the middle: e.g.
+    # ``ЦРУ прилетало в Москву, глянь в инете зачем`` must search the whole
+    # subject, not the useless one-word suffix ``зачем``.
+    if meaningful_before and after:
+        return f"{before} {after}".strip()
+    if meaningful_before:
+        return before
     if after:
         return after
-
-    before = _clean_candidate(value[:match.start()])
-    if before and not _FILLER_ONLY_RE.fullmatch(before):
-        return before
     return ""
 
 
@@ -282,10 +278,7 @@ def _install_search_source_proof(module: Any) -> None:
     async def ask_gemini_with_search_proof(contents: Any, *args, **kwargs):
         answer = await original(contents, *args, **kwargs)
         prompt = contents if isinstance(contents, str) else ""
-        if (
-            _SEARCH_RESULTS_MARKER not in prompt
-            or _TEXT_SOURCE_RULE_MARKER not in prompt
-        ):
+        if _SEARCH_RESULTS_MARKER not in prompt or _TEXT_SOURCE_RULE_MARKER not in prompt:
             return answer
 
         urls = _unique_prompt_urls(prompt)
@@ -298,8 +291,7 @@ def _install_search_source_proof(module: Any) -> None:
         if len(present) >= 2:
             return answer
 
-        needed = max(0, 2 - len(present))
-        selected = missing[:needed]
+        selected = missing[: max(0, 2 - len(present))]
         if not selected:
             return answer
 
@@ -323,9 +315,6 @@ def install(bot_module: Any | None = None) -> bool:
     _install_no_fake_browsing_instruction(module)
     _install_search_source_proof(module)
 
-    # Extend the existing news/freshness gate without changing search cost or
-    # adding another network call. search_web will keep using the same DDGS call,
-    # but relative-date requests now receive the existing month timelimit.
     original_is_news_query = getattr(module, "is_news_query", None)
     if callable(original_is_news_query) and not getattr(original_is_news_query, "_yayceslav_freshness", False):
         def is_news_query_with_freshness(query: str) -> bool:
@@ -354,9 +343,7 @@ def install(bot_module: Any | None = None) -> bool:
                     resolved_query[:160],
                 )
         else:
-            resolved_query = _combine_with_previous_topic(
-                module, update, context, resolved_query
-            )
+            resolved_query = _combine_with_previous_topic(module, update, context, resolved_query)
 
         if resolved_query and _is_current_date_query(resolved_query):
             if not await module.enforce_rate_limit(update, "search"):
