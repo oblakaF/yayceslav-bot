@@ -134,15 +134,16 @@ def build_conflict_instruction(
     return ""
 
 
-async def _mirror_voice_hostility_to_daily_profile(
+async def _mirror_voice_social_state(
     bot_module: Any,
     chat_id: int,
     user_id: int,
     *,
+    transcript: str,
     hostile: bool,
     apology: bool,
 ) -> None:
-    """Reuse the existing tiny daily hostility table for addressed media."""
+    """Make addressed media affect the same bounded social state as text."""
 
     try:
         import relationship_experience_runtime as relationship_runtime
@@ -156,38 +157,57 @@ async def _mirror_voice_hostility_to_daily_profile(
                 int(user_id),
                 current_date,
             )
-            return
-
-        if not apology:
-            return
-
-        existing = await asyncio.to_thread(
-            relationship_runtime._hostility_today_sync,
-            bot_module,
-            int(chat_id),
-            int(user_id),
-            current_date,
-        )
-        if int(existing.get("active_insults", 0) or 0) <= 0:
-            return
-        if bool(existing.get("penance_pending")) or int(existing.get("forgiveness_count", 0) or 0) > 0:
-            await asyncio.to_thread(
-                relationship_runtime._record_relapse_apology_sync,
+        elif apology:
+            existing = await asyncio.to_thread(
+                relationship_runtime._hostility_today_sync,
                 bot_module,
                 int(chat_id),
                 int(user_id),
                 current_date,
             )
-        else:
-            await asyncio.to_thread(
-                relationship_runtime._record_first_apology_sync,
-                bot_module,
-                int(chat_id),
-                int(user_id),
-                current_date,
-            )
+            if int(existing.get("active_insults", 0) or 0) > 0:
+                if bool(existing.get("penance_pending")) or int(existing.get("forgiveness_count", 0) or 0) > 0:
+                    await asyncio.to_thread(
+                        relationship_runtime._record_relapse_apology_sync,
+                        bot_module,
+                        int(chat_id),
+                        int(user_id),
+                        current_date,
+                    )
+                else:
+                    await asyncio.to_thread(
+                        relationship_runtime._record_first_apology_sync,
+                        bot_module,
+                        int(chat_id),
+                        int(user_id),
+                        current_date,
+                    )
     except Exception as error:
-        logging.warning("Conflict rage: media hostility mirror failed: %s", error)
+        logging.warning("Conflict rage: media daily hostility mirror failed: %s", error)
+
+    # Text insults already pass through reputation_runtime's MessageHandler.
+    # Voice/video notes do not, so score only this media transcript here.
+    if hostile:
+        try:
+            import reputation_engine
+            import reputation_runtime
+
+            decision = reputation_engine.score_message(
+                transcript,
+                directed_at_bot=True,
+                hostile_mode=True,
+            )
+            if decision.delta:
+                await asyncio.to_thread(
+                    reputation_runtime._apply_delta_sync,
+                    bot_module,
+                    int(chat_id),
+                    int(user_id),
+                    int(decision.delta),
+                    f"media_{decision.reason}",
+                )
+        except Exception as error:
+            logging.warning("Conflict rage: media reputation mirror failed: %s", error)
 
 
 def _install_instruction_wrapper(bot_module: Any) -> None:
@@ -292,10 +312,11 @@ def _install_voice2_post_hook(bot_module: Any) -> None:
             hostile_streak_engine.reset(int(chat_id), int(user_id))
 
         if hostile or apology:
-            await _mirror_voice_hostility_to_daily_profile(
+            await _mirror_voice_social_state(
                 bot_module,
                 int(chat_id),
                 int(user_id),
+                transcript=transcript,
                 hostile=hostile,
                 apology=apology,
             )
@@ -319,6 +340,6 @@ def install(bot_module: Any | None = None) -> bool:
     _install_voice2_post_hook(module)
     _INSTALLED = True
     logging.warning(
-        "Conflict rage runtime ready: second directed attack => RAGE; neutral turns do not erase heat; Voice 2.0 shares the same heat"
+        "Conflict rage runtime ready: second directed attack => RAGE; neutral turns do not erase heat; Voice 2.0 shares heat and social state"
     )
     return True
