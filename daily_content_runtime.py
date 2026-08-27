@@ -22,6 +22,17 @@ NEWS_HOUR_MSK = 20
 NEWS_MINUTE_MSK = 0
 
 JOKE_API_URL = "https://v2.jokeapi.dev/joke/Any"
+JOKE_API_LANGUAGE = "en"
+JOKE_API_MAX_ATTEMPTS = 3
+
+# Small local fallback pool: if JokeAPI or translation fails, save one complete
+# joke for the day so the scheduler does not retry every minute and spam logs.
+_LOCAL_JOKE_FALLBACKS: tuple[str, ...] = (
+    "— Почему программист перепутал Хэллоуин и Рождество?\n— Потому что OCT 31 = DEC 25.",
+    "— Доктор, у меня странная болезнь: я всё превращаю в шутку.\n— Давно?\n— С тех пор как понял, что ипотека сама себя не высмеет.",
+    "— У тебя есть план на день?\n— Есть.\n— Какой?\n— Не дать плану узнать, что у меня его нет.",
+    "Кот сел на клавиатуру и отправил код в прод. Самое обидное — тесты прошли.",
+)
 
 # Government/Kremlin scraping was fragile (HTML markup drift silently
 # broke it) and produced only dry official-speak. RSS is a standardized,
@@ -29,7 +40,7 @@ JOKE_API_URL = "https://v2.jokeapi.dev/joke/Any"
 # -- and several popular sources are tried per run so one feed being down
 # doesn't stop news from arriving at all. Content doesn't need to be
 # serious; it just needs to reliably show up.
-NEWS_RSS_SOURCES: tuple[tuple[str, str], ...] = (
+NEWS_RSS_SOURCES: tuple[tuple[str, str]] = (
     ("Lenta.ru", "https://lenta.ru/rss/news"),
     ("РИА Новости", "https://ria.ru/export/rss2/archive/index.xml"),
     ("РБК", "https://rssexport.rbc.ru/rbcnews/news/30/full.rss"),
@@ -231,13 +242,19 @@ def _joke_text_from_payload(payload: dict) -> tuple[str | None, str | None]:
 
 
 def _fetch_external_joke_sync(language: str, recent_keys: set[str]) -> tuple[str, str, str]:
+    # JokeAPI's production joke languages do not include Russian. Keeping this
+    # guard deterministic prevents the old 400-response loop from ever coming
+    # back if a caller passes "ru" again.
+    if str(language).lower() != JOKE_API_LANGUAGE:
+        raise ValueError(f"Unsupported JokeAPI joke language: {language}")
+
     params = {
-        "lang": language,
+        "lang": JOKE_API_LANGUAGE,
         "blacklistFlags": "racist,sexist,religious",
         "format": "json",
     }
     last_error: Exception | None = None
-    for _attempt in range(6):
+    for _attempt in range(JOKE_API_MAX_ATTEMPTS):
         try:
             response = requests.get(
                 JOKE_API_URL,
@@ -250,21 +267,45 @@ def _fetch_external_joke_sync(language: str, recent_keys: set[str]) -> tuple[str
             text, item_key = _joke_text_from_payload(payload)
             if not text or not item_key or item_key in recent_keys:
                 continue
-            source_url = f"{JOKE_API_URL}?lang={language}"
+            source_url = f"{JOKE_API_URL}?lang={JOKE_API_LANGUAGE}"
             return text, item_key, source_url
         except Exception as error:
             last_error = error
+            # 4xx responses are deterministic request failures; retrying the
+            # exact same request six times only wastes network and floods logs.
+            status_code = getattr(getattr(error, "response", None), "status_code", None)
+            if status_code is not None and 400 <= int(status_code) < 500:
+                break
     if last_error:
         raise last_error
     raise RuntimeError("JokeAPI returned no usable non-repeating joke")
 
 
 _SENTENCE_END_CHARS = (".", "!", "?", "…", "»", '"')
+_META_TRANSLATION_RE = re.compile(
+    r"(?:^|\b)(?:wait|translation|перевод|пояснен|примечан|буквальн|на самом деле|scientific|latin)\b",
+    flags=re.IGNORECASE,
+)
+_CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
+_LATIN_RE = re.compile(r"[A-Za-z]")
 
 
 def _looks_like_complete_joke(text: str) -> bool:
     stripped = text.strip()
     return bool(stripped) and stripped[-1] in _SENTENCE_END_CHARS
+
+
+def _looks_like_clean_russian_translation(text: str) -> bool:
+    stripped = _clean_space(text)
+    if len(stripped) < 12 or not _looks_like_complete_joke(stripped):
+        return False
+    if _META_TRANSLATION_RE.search(stripped):
+        return False
+    cyrillic = len(_CYRILLIC_RE.findall(stripped))
+    latin = len(_LATIN_RE.findall(stripped))
+    # Names/acronyms are fine, but the translation must be predominantly
+    # Russian rather than an English/meta explanation with a few Cyrillic words.
+    return cyrillic >= 8 and cyrillic >= latin * 2
 
 
 async def _translate_joke(bot_module, english_text: str) -> str | None:
@@ -274,7 +315,8 @@ async def _translate_joke(bot_module, english_text: str) -> str | None:
     prompt = (
         "Переведи этот АНГЛИЙСКИЙ анекдот ПОЛНОСТЬЮ на естественный разговорный русский, "
         "не обрывая на середине. Не придумывай новую шутку, не меняй смысл, не добавляй "
-        "пояснений, цензуру или комментарии. Верни только перевод.\n\n" + english_text
+        "пояснений, цензуру, английские ремарки или комментарии. Верни только готовый русский перевод.\n\n"
+        + english_text
     )
     try:
         client = genai.Client(api_key=api_key)
@@ -282,28 +324,39 @@ async def _translate_joke(bot_module, english_text: str) -> str | None:
             model=str(getattr(bot_module, "MODEL_NAME", "gemini-3.6-flash")),
             contents=prompt,
             config=types.GenerateContentConfig(
-                temperature=0.15,
-                # Generous margin over the 900-char cap on the source joke --
-                # a truncated mid-sentence punchline (finish_reason=MAX_TOKENS
-                # with no retry, unlike ask_gemini's Gemini calls) previously
-                # got sent to users as-is.
+                temperature=0.1,
                 max_output_tokens=768,
-                system_instruction="Ты точный переводчик юмора. Не сочиняй ничего от себя.",
+                system_instruction="Ты точный переводчик юмора. Верни только полный русский перевод без мета-комментариев.",
             ),
         )
         translated = _clean_space(getattr(response, "text", "") or "")
     except Exception as error:
         logging.warning("Daily joke translation failed: %s", error)
         return None
-    if len(translated) < 12:
-        return None
-    if not _looks_like_complete_joke(translated):
-        # Doesn't end on a sentence boundary -- treat as a truncated/failed
-        # translation rather than showing a joke that stops mid-word. The
-        # caller falls back to a native-language joke instead.
-        logging.warning("Daily joke translation looked truncated, discarding it")
+    if not _looks_like_clean_russian_translation(translated):
+        logging.warning("Daily joke translation failed quality/completeness checks, discarding it")
         return None
     return translated
+
+
+def _fallback_joke_item(current_date: date_type, recent_keys: set[str]) -> DailyItem:
+    start = current_date.toordinal() % len(_LOCAL_JOKE_FALLBACKS)
+    chosen_index = start
+    for offset in range(len(_LOCAL_JOKE_FALLBACKS)):
+        candidate_index = (start + offset) % len(_LOCAL_JOKE_FALLBACKS)
+        candidate_key = f"local-joke:{candidate_index}"
+        if candidate_key not in recent_keys:
+            chosen_index = candidate_index
+            break
+    joke_text = _LOCAL_JOKE_FALLBACKS[chosen_index]
+    return DailyItem(
+        kind="joke",
+        source_name="Yayceslav local fallback",
+        source_url="local",
+        raw_text=joke_text,
+        rendered_text="🥚 ВНИМАНИЕ, АНЕКДОТ:\n\n" + joke_text,
+        item_key=f"local-joke:{chosen_index}",
+    )
 
 
 async def _build_joke_item(bot_module, current_date: date_type) -> DailyItem | None:
@@ -313,45 +366,39 @@ async def _build_joke_item(bot_module, current_date: date_type) -> DailyItem | N
         return cached
 
     recent = await asyncio.to_thread(_recent_item_keys_sync, bot_module, "joke", 30)
-    # Stable daily alternation: both Russian and English material appear over time.
-    preferred = "ru" if current_date.toordinal() % 2 else "en"
-    languages = (preferred, "en" if preferred == "ru" else "ru")
-
-    for language in languages:
-        try:
-            joke_text, item_key, source_url = await asyncio.to_thread(
-                _fetch_external_joke_sync,
-                language,
-                recent,
-            )
-        except Exception as error:
-            logging.warning("Daily joke source failed lang=%s: %s", language, error)
-            continue
-
-        if language == "en":
-            translated = await _translate_joke(bot_module, joke_text)
-            if not translated:
-                continue
-            rendered = (
-                "🥚 ВНИМАНИЕ, АНЕКДОТ:\n\n"
-                + joke_text
-                + "\n\nДля тех, кто прогуливал английский:\n"
-                + translated
-            )
-        else:
-            rendered = "🥚 ВНИМАНИЕ, АНЕКДОТ:\n\n" + joke_text
-
-        item = DailyItem(
-            kind="joke",
-            source_name="JokeAPI",
-            source_url=source_url,
-            raw_text=joke_text,
-            rendered_text=rendered,
-            item_key=item_key,
+    try:
+        joke_text, item_key, source_url = await asyncio.to_thread(
+            _fetch_external_joke_sync,
+            JOKE_API_LANGUAGE,
+            recent,
         )
-        await asyncio.to_thread(_save_item_sync, bot_module, day, item)
-        return item
-    return None
+        translated = await _translate_joke(bot_module, joke_text)
+        if translated:
+            item = DailyItem(
+                kind="joke",
+                source_name="JokeAPI",
+                source_url=source_url,
+                raw_text=joke_text,
+                rendered_text=(
+                    "🥚 ВНИМАНИЕ, АНЕКДОТ:\n\n"
+                    + joke_text
+                    + "\n\nДля тех, кто прогуливал английский:\n"
+                    + translated
+                ),
+                item_key=item_key,
+            )
+            await asyncio.to_thread(_save_item_sync, bot_module, day, item)
+            return item
+        logging.warning("Daily joke translation unavailable; using local fallback")
+    except Exception as error:
+        logging.warning("Daily joke source failed lang=%s: %s", JOKE_API_LANGUAGE, error)
+
+    # Always persist a complete fallback item for the day. This guarantees one
+    # delivery attempt instead of rebuilding/retrying the failed external joke
+    # on every scheduler tick.
+    item = _fallback_joke_item(current_date, recent)
+    await asyncio.to_thread(_save_item_sync, bot_module, day, item)
+    return item
 
 
 def _fetch_html_sync(url: str) -> str:
@@ -398,10 +445,6 @@ def _fetch_news_candidates_sync() -> list[tuple[str, str, str]]:
             logging.warning("News RSS source failed %s: %s", source_name, error)
             continue
         if not items:
-            # The fetch succeeded (no exception) but zero usable items came
-            # out -- most likely the feed's shape changed or it returned an
-            # empty/error body. Unlike a fetch exception, this failure mode
-            # would otherwise leave no trace and repeat silently all day.
             logging.warning(
                 "News RSS source returned zero usable items %s (feed length=%s)",
                 source_name,
@@ -464,11 +507,9 @@ async def _build_news_item(bot_module, current_date: date_type) -> DailyItem | N
     if not candidates:
         return None
 
-    # Alternate the primary official source by date for variety, while keeping
-    # the other source as fallback. We still publish only one news item.
-    preferred = "Правительство России" if current_date.toordinal() % 2 else "Президент России"
-    ordered = sorted(candidates, key=lambda item: 0 if item[0] == preferred else 1)
     recent = await asyncio.to_thread(_recent_item_keys_sync, bot_module, "news", 14)
+    ordered = list(candidates)
+    random.Random(current_date.toordinal()).shuffle(ordered)
 
     chosen = None
     for source_name, title, url in ordered:
@@ -493,8 +534,6 @@ async def _build_news_item(bot_module, current_date: date_type) -> DailyItem | N
             + url
         )
     else:
-        # The factual headline is still useful and sourced; if AI commentary
-        # fails we do not invent a canned reaction.
         rendered = "📰 НОВОСТЬ ДНЯ СЕГОДНЯ ТАКАЯ:\n\n" + title + "\n\nИсточник: " + url
 
     item = DailyItem(
@@ -568,7 +607,7 @@ def _prepare_application(application: Application) -> None:
     _patch_scheduler(bot_module)
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning(
-        "Daily external content ready: joke=19:30 MSK (JokeAPI ru/en); "
+        "Daily external content ready: joke=19:30 MSK (JokeAPI en + local fallback); "
         "news=20:00 MSK (%s)",
         ", ".join(name for name, _url in NEWS_RSS_SOURCES),
     )
