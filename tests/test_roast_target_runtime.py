@@ -24,9 +24,12 @@ def test_explicit_target_is_stable(text, expected):
         "оскорби его",
         "разнеси её",
         "пройдись по нему",
+        "прожарь это",
+        "подколи сообщение",
+        "разнеси этот пост",
     ],
 )
-def test_pronoun_only_target_is_not_guessed(text):
+def test_pronoun_or_generic_target_is_not_guessed(text):
     assert extract_explicit_target(text) is None
 
 
