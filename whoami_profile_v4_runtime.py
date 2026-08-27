@@ -85,8 +85,7 @@ def _positive_line(profile) -> str:
 
 def _reputation_line(profile) -> str:
     score = max(-100, min(100, int(profile.get("reputation_score", 0) or 0)))
-    sign = "+" if score > 0 else ""
-    return f"{sign}{score} ({_score_relationship_label(score)})"
+    return f"{score} ({_score_relationship_label(score)})"
 
 
 def _next_level_progress(messages_month: int, chat_level: int, is_king: bool) -> str | None:
@@ -135,9 +134,6 @@ async def _whoami_v4(update, context) -> None:
         await message.reply_text("Досье пока не собрано. Яйцеслав ещё не успел оформить компромат.")
         raise ApplicationHandlerStop
 
-    # Both counters are explicitly scoped to THIS chat. Do not reconcile them
-    # with other chats or global totals: one person may have 145 messages in
-    # one group and 51 in another, and both values are correct.
     total = int(profile.get("total_messages", 0) or 0)
     messages_month = int(profile.get("messages_month", profile.get("messages_30d", 0)) or 0)
 
@@ -197,8 +193,6 @@ async def _whoami_v4(update, context) -> None:
     else:
         lines.append("🧠 Темы месяца: пока нет устойчивых тем")
 
-    # Gemini is decoration, not a dependency of /whoami. Timeout/error/odd
-    # model output simply removes the verdict line instead of killing dossier.
     verdict = None
     try:
         verdict = await asyncio.wait_for(
