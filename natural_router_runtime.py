@@ -16,6 +16,7 @@ from telegram.constants import ChatType
 from telegram.ext import Application, ApplicationHandlerStop, MessageHandler, filters
 
 import chat_digest_runtime
+import roast_target_runtime
 
 
 _PREPARED_APPLICATION_IDS: set[int] = set()
@@ -23,6 +24,16 @@ _PREPARED_APPLICATION_IDS: set[int] = set()
 
 def _norm(text: str) -> str:
     return re.sub(r"[^\wёЁ@]+", " ", (text or "").lower(), flags=re.UNICODE).strip()
+
+
+# Verbs such as "разнеси" have ordinary non-roast meanings too. Keep a small
+# deterministic object guard so phrases like "разнеси вещи по комнатам" do not
+# wake the bot. This is intentionally narrower than trying to infer semantics.
+_NON_ROAST_OBJECT_RE = re.compile(
+    r"\b(?:разнеси|размажь)\s+(?:вещи|файлы|папки|данные|заказы|коробки|"
+    r"документы|товары|краску|масло|крем|тесто)\b",
+    re.I,
+)
 
 
 _ROUTE_PATTERNS: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
@@ -84,9 +95,12 @@ _ROUTE_PATTERNS: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = (
         "roast",
         (
             re.compile(r"\bпрожарь(?:\s+@?[\wёЁ][\wёЁ._-]*)?\b", re.I),
-            re.compile(r"\bподколи\s+(?:его|её|это|сообщение|@?[\wёЁ][\wёЁ._-]*)\b", re.I),
-            re.compile(r"\bразъеби\s+(?:его|её|@?[\wёЁ][\wёЁ._-]*)\b", re.I),
+            re.compile(r"\bподколи\s+(?:его|её|ее|это|сообщение|@?[\wёЁ][\wёЁ._-]*)\b", re.I),
+            re.compile(r"\bразъеби\s+(?:его|её|ее|@?[\wёЁ][\wёЁ._-]*)\b", re.I),
             re.compile(r"\bпрожарка\s+(?:для\s+)?@?[\wёЁ][\wёЁ._-]*\b", re.I),
+            re.compile(r"\b(?:оскорби|отжарь|разнеси|обосри|размажь)\s+(?:его|её|ее|этого|эту|@?[\wёЁ][\wёЁ._-]*)\b", re.I),
+            re.compile(r"\b(?:пройдись|проедься)\s+по\s+(?:нему|ней|этому|этой|@?[\wёЁ][\wёЁ._-]*)\b", re.I),
+            re.compile(r"\b(?:дай|устрой)\s+(?:ему|ей|@?[\wёЁ][\wёЁ._-]*)\s+(?:прожарк\w*|разнос\w*)\b", re.I),
         ),
     ),
     (
@@ -133,7 +147,10 @@ def classify_action(text: str) -> str | None:
     normalized = _norm(text)
     if not normalized:
         return None
+    non_roast_object = bool(_NON_ROAST_OBJECT_RE.search(normalized))
     for action, patterns in _ROUTE_PATTERNS:
+        if action == "roast" and non_roast_object:
+            continue
         if any(pattern.search(normalized) for pattern in patterns):
             return action
     return None
@@ -185,12 +202,13 @@ async def _route_message(update, context) -> None:
 
     if action == "recap":
         handler = chat_digest_runtime.missed_recap_command
+    elif action == "roast":
+        handler = roast_target_runtime.enhanced_roast_command
     else:
         handler_name = {
             "leaderboard": "leaderboard_command",
             "judge": "judge_command",
             "fact_or_bayan": "fact_or_bayan_command",
-            "roast": "roast_command",
             "debate": "debate_command",
             "argument": "argument_command",
             "meme": "meme_command",

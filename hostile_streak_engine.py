@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 HOSTILE_STREAK_WINDOW_SECONDS = 10 * 60
 HOSTILE_STREAK_MAX = 4
-HOSTILE_ESCALATION_FROM = 3
+HOSTILE_ESCALATION_FROM = 2
 
 
 @dataclass(frozen=True)
@@ -25,41 +25,42 @@ def observe(
     hostile: bool,
     now: float | None = None,
 ) -> int:
-    """Tracks consecutive hostile turns per (chat, user) and returns 0..4."""
+    """Track directed hostility heat per ``(chat, user)``.
 
-    current = time.monotonic() if now is None else float(now)
+    A neutral turn no longer erases a hot conflict. The heat expires naturally
+    after the window, or can be cleared explicitly by the reconciliation layer.
+    Repeated attacks saturate at ``HOSTILE_STREAK_MAX`` instead of wrapping back
+    to one, so a long argument cannot accidentally make the bot soft again.
+    """
+
+    current_time = time.monotonic() if now is None else float(now)
     key = (int(chat_id), int(user_id))
+    previous = _STREAKS.get(key)
+
+    if previous is not None and current_time - previous.last_at > HOSTILE_STREAK_WINDOW_SECONDS:
+        _STREAKS.pop(key, None)
+        previous = None
 
     if not hostile:
-        _STREAKS.pop(key, None)
-        return 0
+        return previous.count if previous is not None else 0
 
-    previous = _STREAKS.get(key)
-    if (
-        previous is None
-        or current - previous.last_at > HOSTILE_STREAK_WINDOW_SECONDS
-    ):
-        count = 1
-    else:
-        count = previous.count + 1
-        if count > HOSTILE_STREAK_MAX:
-            # After the 3rd/4th-turn flare-up, return to a short fuse cycle.
-            count = 1
-
-    _STREAKS[key] = HostileStreak(count=count, last_at=current)
+    count = 1 if previous is None else min(HOSTILE_STREAK_MAX, previous.count + 1)
+    _STREAKS[key] = HostileStreak(count=count, last_at=current_time)
     return count
 
 
 def is_escalated(count: int) -> bool:
-    return HOSTILE_ESCALATION_FROM <= int(count) <= HOSTILE_STREAK_MAX
+    return int(count) >= HOSTILE_ESCALATION_FROM
 
 
 def current(chat_id: int, user_id: int, *, now: float | None = None) -> int:
     current_time = time.monotonic() if now is None else float(now)
-    entry = _STREAKS.get((int(chat_id), int(user_id)))
+    key = (int(chat_id), int(user_id))
+    entry = _STREAKS.get(key)
     if entry is None:
         return 0
     if current_time - entry.last_at > HOSTILE_STREAK_WINDOW_SECONDS:
+        _STREAKS.pop(key, None)
         return 0
     return entry.count
 
@@ -84,11 +85,11 @@ def prune_stale_state(
     *,
     now: float | None = None,
 ) -> int:
-    current = time.monotonic() if now is None else float(now)
+    current_time = time.monotonic() if now is None else float(now)
     stale = [
         key
         for key, entry in _STREAKS.items()
-        if current - entry.last_at > max_age_seconds
+        if current_time - entry.last_at > max_age_seconds
     ]
     for key in stale:
         _STREAKS.pop(key, None)
