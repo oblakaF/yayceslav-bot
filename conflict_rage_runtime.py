@@ -26,6 +26,11 @@ _APOLOGY_RE = re.compile(
     r"(?:^|\b)(?:извини(?:сь|те)?|прости(?:те)?|сорян|сори|виноват|мир)(?:\b|$)",
     re.IGNORECASE,
 )
+_QUESTION_RE = re.compile(
+    r"(?:\?|^\s*(?:что|че|чё|кто|где|когда|почему|зачем|как|сколько|какой|какая|какие|"
+    r"можешь|скажи|объясни|проверь|посмотри|глянь|расскажи)\b)",
+    re.IGNORECASE,
+)
 _PROACTIVE_VIDEO_MARKERS = (
     "тебя никто не звал",
     "сам решил вклиниться",
@@ -69,12 +74,18 @@ def _media_kind(style_text: str) -> str:
     return "text"
 
 
+def _looks_like_question(text: str) -> bool:
+    value = " ".join(str(text or "").split()).strip()
+    return bool(value and _QUESTION_RE.search(value))
+
+
 def build_conflict_instruction(
     heat: int,
     *,
     current_mode: str,
     media_kind: str,
     serious_topic: bool,
+    is_question: bool = False,
 ) -> str:
     """Return the final intensity floor for an already-hot conversation."""
 
@@ -100,8 +111,13 @@ def build_conflict_instruction(
             "\n\nACTIVE CONFLICT HEAT: конфликт с этим человеком сейчас уже горячий. "
             "Если текущее медиа снова прямо атакует Яйцеслава — сохраняй RAGE: "
             "зубасто, резко и последовательно, без внезапного дружелюбного "
-            "отката. Если текущая реплика нейтральная — не атакуй первым, но "
-            "оставайся сухим/настороженным, а не ласковым."
+            "отката. Если текущее медиа нейтральное и содержит вопрос или просьбу, "
+            "ОБЯЗАТЕЛЬНО ответь по существу и не отказывай из-за срача, но закончи "
+            "ответ одной короткой жёсткой колкой в адрес собеседника: последнее "
+            "слово в этой реплике должно остаться за Яйцеславом. Не превращай "
+            "колкость в угрозу, травлю или атаку по личным/защищённым признакам. "
+            "Если медиа нейтральное и вопроса нет — не атакуй первым, но оставайся "
+            "сухим/настороженным, а не ласковым."
         )
 
     if current_mode == "hostile":
@@ -120,6 +136,20 @@ def build_conflict_instruction(
             "\n\nACTIVE CONFLICT HEAT: это первый прямой наезд. Ответь коротко и "
             "жёстко; не заискивай и не изображай внезапную дружелюбность. "
             "Полный RAGE включится, если человек продолжит прямой наезд."
+        )
+
+    if count >= hostile_streak_engine.HOSTILE_ESCALATION_FROM and is_question:
+        return (
+            "\n\nACTIVE CONFLICT ANSWER-AND-STING: конфликт с этим человеком уже "
+            "в RAGE, но текущая реплика — вопрос/просьба, а не новый прямой наезд. "
+            "ОБЯЗАТЕЛЬНО сначала нормально и по существу ответь на вопрос: не "
+            "скрывай полезную информацию, не отказывай и не подменяй ответ одним "
+            "матом. После содержательного ответа добавь РОВНО ОДНУ короткую, "
+            "жёсткую и уместную колкость/словесную осадку в адрес собеседника. "
+            "ФИНАЛЬНАЯ фраза ответа должна быть этой колкостью — последнее слово "
+            "остаётся за Яйцеславом, пока конфликт горячий. Можно использовать "
+            "естественный мат и злой стёб, но без реальных угроз, травли и атак "
+            "по личным/защищённым признакам. Не называй его «дружище» или «бро»."
         )
 
     if count >= hostile_streak_engine.HOSTILE_ESCALATION_FROM:
@@ -254,9 +284,11 @@ def _install_instruction_wrapper(bot_module: Any) -> None:
                 hostile_streak_engine.reset(int(chat_id), int(user_id))
 
             heat = hostile_streak_engine.current(int(chat_id), int(user_id))
+            question = _looks_like_question(raw_style_text)
         else:
             current_mode = "media_unknown"
             serious_topic = False
+            question = False
             # For media this is the number of attacks *before* the current clip.
             # The same Voice 2.0 call will determine its transcript and the
             # post-hook below will record the new attack if there is one.
@@ -267,6 +299,7 @@ def _install_instruction_wrapper(bot_module: Any) -> None:
             current_mode=current_mode,
             media_kind=media_kind,
             serious_topic=serious_topic,
+            is_question=question,
         )
 
     build_with_conflict_rage._yayceslav_conflict_rage = True
@@ -340,6 +373,6 @@ def install(bot_module: Any | None = None) -> bool:
     _install_voice2_post_hook(module)
     _INSTALLED = True
     logging.warning(
-        "Conflict rage runtime ready: second directed attack => RAGE; neutral turns do not erase heat; Voice 2.0 shares heat and social state"
+        "Conflict rage runtime ready: second directed attack => RAGE; hot-conflict questions get answer+sting; Voice 2.0 shares heat and social state"
     )
     return True
