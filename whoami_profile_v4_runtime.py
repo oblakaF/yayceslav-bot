@@ -4,6 +4,7 @@ import asyncio
 import logging
 import sys
 
+import positive_engine
 import social_engine
 import whoami_dynamic_verdict
 import whoami_profile_v3_runtime as v3
@@ -77,24 +78,15 @@ def _relationship_label(
     return _score_relationship_label(reputation_score)
 
 
-_POSITIVE_AFFINITY_LABELS = {
-    0: "Нейтральная",
-    1: "Симпатия",
-    2: "Хорошее отношение",
-    3: "Доверие",
-    4: "Близкий контакт",
-}
-
-
 def _positive_line(profile) -> str:
-    level = max(0, min(int(profile.get("positive_affinity_level", 0) or 0), 4))
-    label = _POSITIVE_AFFINITY_LABELS[level]
-    return f"{level} ({label})"
+    _score, label = positive_engine.sympathy_from_profile(profile)
+    return label
 
 
 def _reputation_line(profile) -> str:
     score = max(-100, min(100, int(profile.get("reputation_score", 0) or 0)))
-    return f"{score} ({_score_relationship_label(score)})"
+    sign = "+" if score > 0 else ""
+    return f"{sign}{score} ({_score_relationship_label(score)})"
 
 
 def _next_level_progress(messages_month: int, chat_level: int, is_king: bool) -> str | None:
@@ -182,10 +174,10 @@ async def _whoami_v4(update, context) -> None:
 
     lines = [
         f"🥚 ДОСЬЕ ЯЙЦЕСЛАВА НА {name}",
-        f"🤝 Отношение: {relationship}",
+        f"🤝 Базовое отношение: {relationship}",
         f"⭐ Репутация: {reputation}",
         f"💚 Симпатия: {positive}",
-        f"🌡 Отношение сегодня: {friendliness}",
+        f"🌡 Сегодня: {friendliness}",
         f"🏅 Титул: {title}",
         f"💬 Сообщений: {total} всего / {messages_month} в этом месяце",
         f"🏚 Уровень: {chat_level}/4 — {level_label}",
@@ -203,7 +195,7 @@ async def _whoami_v4(update, context) -> None:
     if themes:
         lines.append("🧠 Темы месяца: " + ", ".join(themes))
     else:
-        lines.append("🧠 Темы месяца: ещё не набрались")
+        lines.append("🧠 Темы месяца: пока нет устойчивых тем")
 
     # Gemini is decoration, not a dependency of /whoami. Timeout/error/odd
     # model output simply removes the verdict line instead of killing dossier.
@@ -238,6 +230,7 @@ async def _whoami_v4(update, context) -> None:
         await message.reply_text(
             f"🥚 ДОСЬЕ ЯЙЦЕСЛАВА НА {name}\n"
             f"⭐ Репутация: {reputation}\n"
+            f"💚 Симпатия: {positive}\n"
             f"🏅 Титул: {title}\n"
             f"💬 Сообщений: {total} всего / {messages_month} в этом месяце\n"
             f"🏚 Уровень: {chat_level}/4 — {level_label}"
