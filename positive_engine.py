@@ -160,10 +160,13 @@ def _reputation_sympathy_tilt(reputation_score: int) -> int:
         return 2
     if score >= 10:
         return 1
+    # Persistent negative reputation should be visible as coolness even when
+    # there were no recent positive events, while still leaving room for actual
+    # recent reconciliation/warmth to pull the current feeling back upward.
     if score <= -70:
-        return -4
+        return -6
     if score <= -35:
-        return -2
+        return -3
     if score <= -10:
         return -1
     return 0
