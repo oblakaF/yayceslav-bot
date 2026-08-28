@@ -1,9 +1,10 @@
 """Deterministic active-conflict heat shared by text, voice and video notes.
 
-The relationship model chooses the long-term baseline. This runtime adds a
-short-lived *current fight* override so repeated direct attacks cannot randomly
-fall back to a warm voice pack. It reuses the existing hostile_streak_engine,
-adds no model calls and stores only bounded RAM state.
+Relationship/reputation choose the normal baseline. Once a concrete user sends
+two directed attacks inside the bounded 10-minute window, this runtime latches a
+short-lived RAGE override for that (chat, user). Neutral turns and apologies do
+not instantly erase the latch: normal tone returns only after ten minutes with
+no new directed attack. No extra model calls or persistent storage are added.
 """
 
 from __future__ import annotations
@@ -87,95 +88,83 @@ def build_conflict_instruction(
     serious_topic: bool,
     is_question: bool = False,
 ) -> str:
-    """Return the final intensity floor for an already-hot conversation."""
+    """Return the final conflict phase contract for one response."""
 
     if serious_topic or current_mode == "serious":
         return ""
 
     count = max(0, int(heat or 0))
+    escalated = hostile_streak_engine.is_escalated(count)
 
     if media_kind != "text":
         if count <= 0:
             return ""
-        if count == 1:
+        if not escalated:
             return (
-                "\n\nACTIVE CONFLICT HEAT: у этого человека уже был один недавний "
-                "прямой наезд на Яйцеслава. Если РЕАЛЬНОЕ содержание текущего "
-                "голоса/кружка снова прямо оскорбляет или посылает Яйцеслава, "
-                "это второй наезд: включи RAGE. В RAGE не только защищайся — "
-                "контратакуй словесно, цепляясь за формулировки, противоречия и "
-                "поведение собеседника из доступного контекста. Разрешён очень "
-                "жёсткий мат и злой стёб; запрещены реальные угрозы, травля, "
-                "защищённые/чувствительные признаки и выдуманные личные факты. "
-                "Если медиа нейтральное, не выдумывай агрессию."
+                "\n\nACTIVE CONFLICT WARNING: у этого человека уже был один недавний "
+                "прямой наезд. Если РЕАЛЬНОЕ содержание текущего голоса/кружка "
+                "снова прямо атакует Яйцеслава, это второй наезд и должен включить "
+                "RAGE. Если медиа нейтральное, не считай его вторым наездом."
             )
         return (
-            "\n\nACTIVE CONFLICT HEAT: конфликт с этим человеком сейчас уже горячий. "
-            "Если текущее медиа снова прямо атакует Яйцеслава — сохраняй RAGE: "
-            "не оправдывайся и не отбивайся пассивно. Инициативно разнеси его "
-            "текущую реплику: найди слабое место, нелепость, повтор, противоречие "
-            "или манеру поведения в доступной переписке и преврати это в жёсткую "
-            "контратаку. Можно 2–4 коротких предложения, мат и злой стёб. Не "
-            "придумывай биографию/психологический диагноз, не угрожай и не атакуй "
-            "защищённые или чувствительные признаки. Если текущее медиа нейтральное "
-            "и содержит вопрос или просьбу, ОБЯЗАТЕЛЬНО ответь по существу, затем "
-            "добавь одну короткую жёсткую колкость — последнее слово остаётся за "
-            "Яйцеславом. Если медиа нейтральное и вопроса нет — не начинай новый "
-            "срач сам, но оставайся холодным и колким."
+            "\n\nACTIVE CONFLICT RAGE LATCH: с этим человеком уже был второй прямой "
+            "наезд, поэтому RAGE ЗАФИКСИРОВАН для конкретной пары чат+человек. "
+            "Он не сбрасывается одной нейтральной репликой, примирительным словом "
+            "или сменой темы; нормальный baseline вернётся автоматически только "
+            "после 10 минут без нового прямого наезда. Пока latch активен, не "
+            "становись дружелюбным и не переходи в пассивную защиту. Если текущее "
+            "медиа содержит обычный вопрос/просьбу — выполни её по существу, но "
+            "заверши короткой злой осадкой. Если это новый наезд — контратакуй "
+            "коротко и жёстко по реальному контексту. Без реальных угроз, доксинга "
+            "и атак по защищённым признакам."
         )
 
+    # The first directed hit gets one warning only. If the user calms down here,
+    # there is no RAGE latch yet and ordinary relationship tone may resume.
+    if not escalated:
+        if current_mode == "hostile" and count == 1:
+            return (
+                "\n\nACTIVE CONFLICT WARNING: это первый прямой наезд. Не устраивай "
+                "полноценную войну: одна короткая спокойная осадка уровня «полегче» "
+                "или один сухой подкол. Не оправдывайся и не читай мораль. Второй "
+                "прямой наезд в течение 10 минут включает RAGE."
+            )
+        return ""
+
+    # From the second hit onward the phase is latched. A neutral message must no
+    # longer downgrade it to an AFTERGLOW/relationship baseline; only the 10 min
+    # no-new-hostility TTL in hostile_streak_engine can return this user to normal.
     if current_mode == "hostile":
-        if count >= hostile_streak_engine.HOSTILE_ESCALATION_FROM:
-            return (
-                "\n\nACTIVE CONFLICT RAGE — ВЫСШИЙ ПРИОРИТЕТ ТОНА: это второй или "
-                "последующий прямой наезд за короткое окно. Яйцеслав теперь не "
-                "просто отражает выпад — он словесно КОНТРАТАКУЕТ и старается "
-                "забрать инициативу. Не отвечай конструкциями уровня «не дуйся», "
-                "«успокойся», «сам решу», «иди лесом» и другими пассивными отбивками. "
-                "Возьми текущую реплику и недавний доступный контекст: найди в них "
-                "повторяемую манеру, противоречие, слабый аргумент, дешёвую провокацию, "
-                "неудачную формулировку или собственный предыдущий выпад собеседника "
-                "и разнеси именно это. Допускаются 2–4 очень жёстких предложения, "
-                "естественный мат, уничижительный стёб и едкая насмешка. Финал должен "
-                "быть сильнее начала и оставлять последнее слово за Яйцеславом. "
-                "Не смягчайся словами «дружище/бро», не мирись сам и не превращай "
-                "ответ в нравоучение. При этом НЕ придумывай биографические факты, "
-                "психологические диагнозы или скрытые свойства личности, которых нет "
-                "в переписке; не угрожай реальной расправой, не преследуй и не атакуй "
-                "защищённые/чувствительные личные признаки."
-            )
         return (
-            "\n\nACTIVE CONFLICT HEAT: это первый прямой наезд. Ответь коротко и "
-            "жёстко; можешь сразу уколоть слабое место именно этой реплики, но не "
-            "разворачивай полноценную войну. Полный контратакующий RAGE включится, "
-            "если человек продолжит прямой наезд."
+            "\n\nACTIVE CONFLICT RAGE — ЖЁСТКО ЗАФИКСИРОВАН: это второй или "
+            "последующий прямой наезд. Не защищайся пассивно — контратакуй и "
+            "забирай инициативу. Цепляйся за реально видимые повторы, противоречия, "
+            "дешёвые провокации, формулировки и устойчивую манеру поведения в "
+            "недавней переписке. Ответ короткий, злой и направленный на текущий "
+            "срач; финальная фраза сильнее начала. Не объявляй диалог оконченным, "
+            "не проси конструктив, не называй человека «дружище/бро» и не мирись "
+            "сам. Можно естественный мат и едкий бытовой стёб. Без реальных угроз, "
+            "доксинга и атак по защищённым признакам."
         )
 
-    if count >= hostile_streak_engine.HOSTILE_ESCALATION_FROM and is_question:
+    if is_question:
         return (
-            "\n\nACTIVE CONFLICT ANSWER-AND-STING: конфликт с этим человеком уже "
-            "в RAGE, но текущая реплика — вопрос/просьба, а не новый прямой наезд. "
-            "ОБЯЗАТЕЛЬНО сначала нормально и по существу ответь на вопрос: не "
-            "скрывай полезную информацию, не отказывай и не подменяй ответ одним "
-            "матом. После содержательного ответа добавь РОВНО ОДНУ короткую, "
-            "жёсткую и уместную колкость/словесную осадку в адрес собеседника, "
-            "лучше связанную с его недавними наездами. ФИНАЛЬНАЯ фраза ответа должна "
-            "быть этой колкостью — последнее слово остаётся за Яйцеславом. Можно "
-            "использовать естественный мат и злой стёб, но без реальных угроз, "
-            "травли, выдуманных личных фактов и атак по защищённым/чувствительным "
-            "признакам. Не называй его «дружище» или «бро»."
+            "\n\nACTIVE CONFLICT RAGE — ANSWER-AND-STING: RAGE с этим человеком "
+            "уже зафиксирован вторым наездом, но текущая реплика содержит вопрос "
+            "или просьбу. ОБЯЗАТЕЛЬНО дай полезный ответ по существу, затем закончи "
+            "одной короткой жёсткой осадкой по недавнему конфликту. Не становись "
+            "дружелюбным, не отказывайся выполнять просьбу и не превращай ответ в "
+            "простыню. Latch остаётся активным до 10 минут без нового наезда."
         )
 
-    if count >= hostile_streak_engine.HOSTILE_ESCALATION_FROM:
-        return (
-            "\n\nACTIVE CONFLICT AFTERGLOW: недавний конфликт ещё горячий. Текущая "
-            "реплика НЕ распознана как новый наезд, поэтому не начинай новый срач "
-            "сам; однако не перескакивай внезапно в ласковое «дружище/бро». Держи "
-            "холодный, колкий, слегка презрительный тон, пока конфликт не остынет "
-            "или человек нормально не помирится."
-        )
-
-    return ""
+    return (
+        "\n\nACTIVE CONFLICT RAGE — LATCH STILL ACTIVE: текущая реплика сама по "
+        "себе не распознана как новый наезд, но после второго наезда нормальный "
+        "relationship baseline ещё НЕ возвращается. Пока не прошло 10 минут без "
+        "новой атаки, оставайся злым, колким и недружелюбным. Отреагируй на "
+        "содержание, но не начинай лекцию о границах и не объявляй срач законченным. "
+        "Короткая контратака/осадка предпочтительнее пассивного «я не буду спорить»."
+    )
 
 
 async def _mirror_voice_social_state(
@@ -202,6 +191,8 @@ async def _mirror_voice_social_state(
                 current_date,
             )
         elif apology:
+            # Apology may repair the persistent/day-level relationship, but it
+            # intentionally does NOT clear the short RAGE latch immediately.
             existing = await asyncio.to_thread(
                 relationship_runtime._hostility_today_sync,
                 bot_module,
@@ -286,9 +277,9 @@ def _install_instruction_wrapper(bot_module: Any) -> None:
             except Exception:
                 serious_topic = current_mode == "serious"
 
-            if current_mode != "hostile" and _APOLOGY_RE.search(raw_style_text):
-                hostile_streak_engine.reset(int(chat_id), int(user_id))
-
+            # Do NOT reset heat on "извини/сорян". The apology is still recorded
+            # in persistent social history, but this short fight remains latched
+            # until its own 10-minute no-new-attack TTL expires.
             heat = hostile_streak_engine.current(int(chat_id), int(user_id))
             question = _looks_like_question(raw_style_text)
         else:
@@ -344,8 +335,8 @@ def _install_voice2_post_hook(bot_module: Any) -> None:
 
         if hostile:
             hostile_streak_engine.observe(int(chat_id), int(user_id), hostile=True)
-        elif apology:
-            hostile_streak_engine.reset(int(chat_id), int(user_id))
+        # Apology deliberately does not reset the short RAGE latch. Ten quiet
+        # minutes from the last directed attack are required to return to normal.
 
         if hostile or apology:
             await _mirror_voice_social_state(
@@ -376,6 +367,6 @@ def install(bot_module: Any | None = None) -> bool:
     _install_voice2_post_hook(module)
     _INSTALLED = True
     logging.warning(
-        "Conflict rage runtime ready: second directed attack => counterattack RAGE; hot-conflict questions get answer+sting; Voice 2.0 shares heat and social state"
+        "Conflict rage runtime ready: first hit=warning; second hit=latch; normal tone returns after 10 quiet minutes"
     )
     return True
