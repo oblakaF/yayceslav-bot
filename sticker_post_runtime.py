@@ -1,13 +1,9 @@
 """Rare semantic sticker punchlines after a normal Yayceslav text answer.
 
-This is deliberately separate from:
-- sticker -> sticker/text replies;
-- <=5% direct-question sticker replacement;
-- rare background sticker interventions.
-
-A post-answer tag is a SECOND message after a real text answer, e.g. a concise
-argument followed by ПЕРЕИГРАЛ И УНИЧТОЖИЛ, or an obvious explanation followed
-by БАЗА. It never replaces the actual answer.
+This is deliberately separate from sticker->sticker replies, direct-question
+replacement and background interventions. During an already-hot directed fight,
+a small additional chance may use an aggressive sticker as a visual full stop;
+the existing shared sticker cooldown/window remains authoritative.
 """
 
 from __future__ import annotations
@@ -21,13 +17,23 @@ from typing import Final
 
 from telegram.constants import ChatType
 
+import hostile_streak_engine
 import sticker_engine
 import sticker_interaction
 
 
-# Rare even after a semantic match. The shared sticker_runtime anti-spam gate
-# further limits the actual rate in a group.
+# Normal post-answer tag is tuned later by sticker_tuning_runtime. RAGE has its
+# own bounded chance but still passes the 8m/chat, 15m/user and 3/hour slot gate.
 POST_TEXT_TAG_CHANCE: Final = 0.05
+RAGE_POST_TEXT_TAG_CHANCE: Final = 0.20
+
+_RAGE_POST_STICKERS: Final[tuple[str, ...]] = (
+    "obtekay",
+    "pereigral_i_unichtozhil",
+    "ne_vyvez",
+    "idi_nahui",
+    "vremya_zavalit_ebalo",
+)
 
 _OUTPLAY_EVENTS: Final[frozenset[str]] = frozenset(
     {
@@ -80,11 +86,7 @@ _WRAPPER_INSTALLED = False
 
 
 def choose_post_text_tag(source_user_text: str, answer_text: str) -> str | None:
-    """Return a semantic SECOND-message sticker tag, or None.
-
-    This function does not roll probability; it only decides whether one of the
-    two currently approved post-answer punchlines actually fits the exchange.
-    """
+    """Return a normal semantic SECOND-message sticker tag, or None."""
 
     source = (source_user_text or "").strip()
     answer = (answer_text or "").strip()
@@ -96,12 +98,9 @@ def choose_post_text_tag(source_user_text: str, answer_text: str) -> str | None:
 
     event = sticker_engine.detect_event(source, direct=False)
 
-    # Textual counterargument / roast lands first, then the visual victory tag.
     if event in _OUTPLAY_EVENTS and len(answer) >= 24 and _OUTPLAY_ANSWER_RE.search(answer):
         return "pereigral_i_unichtozhil"
 
-    # Short non-serious question gets a real explanation first; БАЗА can then
-    # work as the dry mocking full stop when the answer states something basic.
     if (
         len(source) <= 240
         and sticker_interaction.is_question(source)
@@ -113,19 +112,26 @@ def choose_post_text_tag(source_user_text: str, answer_text: str) -> str | None:
     return None
 
 
-def _extract_send_answer_call(args, kwargs):
-    """Read send_answer optional args without depending on call style."""
+def _is_rage_exchange(chat_id: int, user_id: int, source_user_text: str) -> bool:
+    if hostile_streak_engine.current(int(chat_id), int(user_id)) < hostile_streak_engine.HOSTILE_ESCALATION_FROM:
+        return False
+    try:
+        import rage_hotfix_runtime
+        return rage_hotfix_runtime.is_extra_hostile(source_user_text) or rage_hotfix_runtime._is_hostile(
+            rage_hotfix_runtime._find_bot_module(), source_user_text
+        )
+    except Exception:
+        return False
 
+
+def _extract_send_answer_call(args, kwargs):
     force_voice = bool(kwargs.get("force_voice", args[0] if len(args) >= 1 else False))
-    source_user_text = kwargs.get(
-        "source_user_text",
-        args[2] if len(args) >= 3 else None,
-    )
+    source_user_text = kwargs.get("source_user_text", args[2] if len(args) >= 3 else None)
     return force_voice, source_user_text
 
 
 async def maybe_send_post_text_tag(update, context, source_user_text: str, answer_text: str) -> bool:
-    """Send the rare second-message sticker if all semantic/rate gates pass."""
+    """Send a rare semantic/RAGE sticker if all rate gates pass."""
 
     chat = getattr(update, "effective_chat", None)
     user = getattr(update, "effective_user", None)
@@ -137,15 +143,21 @@ async def maybe_send_post_text_tag(update, context, source_user_text: str, answe
     ):
         return False
 
-    sticker_key = choose_post_text_tag(source_user_text, answer_text)
-    if not sticker_key:
+    if sticker_engine.is_serious_text(source_user_text) or sticker_engine.is_serious_text(answer_text):
         return False
 
-    if random.random() >= POST_TEXT_TAG_CHANCE:
-        return False
+    rage_exchange = _is_rage_exchange(chat.id, user.id, source_user_text)
+    if rage_exchange:
+        if random.random() >= RAGE_POST_TEXT_TAG_CHANCE:
+            return False
+        sticker_key = random.choice(_RAGE_POST_STICKERS)
+    else:
+        sticker_key = choose_post_text_tag(source_user_text, answer_text)
+        if not sticker_key or random.random() >= POST_TEXT_TAG_CHANCE:
+            return False
 
-    # Import lazily: sticker_runtime is fully initialized by the time an answer
-    # can be sent, and this avoids a circular import during startup.
+    # Import lazily to avoid a startup cycle. The same shared slot protects
+    # normal and RAGE post-answer stickers from spam.
     import sticker_runtime
 
     now = __import__("time").monotonic()
@@ -163,8 +175,9 @@ async def maybe_send_post_text_tag(update, context, source_user_text: str, answe
 
     sticker_runtime._record_sticker_slot(chat.id, user.id, now)
     logging.info(
-        "Yayceslav post-answer sticker tag: sticker=%s chat=%s user=%s",
+        "Yayceslav post-answer sticker tag: sticker=%s rage=%s chat=%s user=%s",
         sticker_engine.STICKER_LABELS.get(sticker_key, sticker_key),
+        rage_exchange,
         chat.id,
         user.id,
     )
@@ -172,8 +185,6 @@ async def maybe_send_post_text_tag(update, context, source_user_text: str, answe
 
 
 def _find_bot_module():
-    # Railway starts the project as `python bot.py`, where the live module is
-    # __main__. Tests/imported runs may expose it as `bot` instead.
     for name in ("__main__", "bot"):
         module = sys.modules.get(name)
         if module is not None and callable(getattr(module, "send_answer", None)):
@@ -208,19 +219,13 @@ def install_send_answer_wrapper() -> bool:
         if not source_user_text:
             return result
 
-        await maybe_send_post_text_tag(
-            update,
-            context,
-            str(source_user_text),
-            str(text or ""),
-        )
+        await maybe_send_post_text_tag(update, context, str(source_user_text), str(text or ""))
         return result
 
     wrapped_send_answer._yayceslav_post_sticker_wrapped = True
     module.send_answer = wrapped_send_answer
     _WRAPPER_INSTALLED = True
     logging.warning(
-        "Post-answer sticker tags installed: БАЗА / ПЕРЕИГРАЛ И УНИЧТОЖИЛ; "
-        "semantic-only, chance<=5%%, shared anti-spam gate"
+        "Post-answer sticker tags installed: normal semantic tag + bounded RAGE visual; shared anti-spam gate"
     )
     return True
