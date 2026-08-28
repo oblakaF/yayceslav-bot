@@ -60,6 +60,7 @@ import chat_digest_runtime
 import date_grounding_runtime
 import social_priority_runtime
 import conflict_rage_runtime
+import title_conflict_runtime
 import search_context_runtime
 import search_slang_runtime
 import voice2_runtime
@@ -100,6 +101,7 @@ RUNTIME_LOAD_ORDER = (
     "date_grounding_runtime",
     "social_priority_runtime",
     "conflict_rage_runtime",
+    "title_conflict_runtime",
     "search_context_runtime",
     "search_slang_runtime",
     "voice2_runtime",
@@ -225,6 +227,11 @@ def prepare_application_runtime(application: Application) -> None:
         logging.warning("Social priority runtime: bot module not ready")
     if not conflict_rage_runtime.install():
         logging.warning("Conflict rage runtime: bot module not ready")
+
+    # The command gate must attach before the ordinary group-0 /title handler.
+    # It reuses today's hostility state and forces a negative title only when a
+    # still-hostile user asks for a title for themselves.
+    title_conflict_runtime.prepare_application_runtime(application)
 
     # Voice 2.0 captures the completed ask_gemini stack. The conflict runtime
     # has already attached its post-hook to the structured voice decision, so
