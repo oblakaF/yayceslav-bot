@@ -7,17 +7,20 @@ def setup_function():
     streaks.reset()
 
 
-def test_second_text_attack_gets_rage_floor():
+def test_second_text_attack_gets_counterattack_rage_floor():
     text = build_conflict_instruction(
         2,
         current_mode="hostile",
         media_kind="text",
         serious_topic=False,
     )
+    lowered = text.lower()
     assert "ACTIVE CONFLICT RAGE" in text
-    assert "дружище" in text
-    assert "Не угрожай" in text
-    assert "защищённые" in text
+    assert "контратак" in lowered
+    assert "дружище" in lowered
+    assert "не угрожай" in lowered
+    assert "защищён" in lowered
+    assert "последнее слово" in lowered
 
 
 def test_first_attack_is_hard_but_not_full_rage():
@@ -28,7 +31,7 @@ def test_first_attack_is_hard_but_not_full_rage():
         serious_topic=False,
     )
     assert "первый прямой наезд" in text
-    assert "Полный RAGE" in text
+    assert "Полный контратакующий RAGE" in text
     assert "ACTIVE CONFLICT RAGE —" not in text
 
 
@@ -47,7 +50,7 @@ def test_hot_conflict_question_gets_answer_and_sting():
     assert "дружище" in text
 
 
-def test_hot_conflict_statement_stays_cold_without_attacking_first():
+def test_hot_conflict_statement_does_not_restart_fight_but_stays_cold():
     text = build_conflict_instruction(
         3,
         current_mode="normal",
@@ -55,9 +58,12 @@ def test_hot_conflict_statement_stays_cold_without_attacking_first():
         serious_topic=False,
         is_question=False,
     )
+    lowered = text.lower()
     assert "AFTERGLOW" in text
-    assert "не нападай первым" in text
-    assert "дружище" in text
+    assert "не начинай новый срач" in lowered
+    assert "холодный" in lowered
+    assert "колкий" in lowered
+    assert "дружище" in lowered
 
 
 def test_serious_topic_suppresses_rage_even_when_heat_is_high():
@@ -70,17 +76,19 @@ def test_serious_topic_suppresses_rage_even_when_heat_is_high():
     ) == ""
 
 
-def test_second_voice_attack_is_conditionally_rage_without_calling_it_hostile_first():
+def test_second_voice_attack_is_conditionally_counterattack_rage_without_calling_it_hostile_first():
     text = build_conflict_instruction(
         1,
         current_mode="media_unknown",
         media_kind="voice_or_audio",
         serious_topic=False,
     )
+    lowered = text.lower()
     assert "второй наезд" in text
-    assert "если" in text.lower()
+    assert "если" in lowered
     assert "RAGE" in text
-    assert "нейтральное" in text
+    assert "контратак" in lowered
+    assert "нейтральное" in lowered
 
 
 def test_hot_media_question_must_answer_and_end_with_sting():
