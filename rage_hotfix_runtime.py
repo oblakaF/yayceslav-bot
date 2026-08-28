@@ -1,11 +1,14 @@
-"""Final live-chat guard for compact, persistent active RAGE.
+"""Final live-chat guard for the hard warning -> latched RAGE boundary.
 
-The core bot remains the single owner of hostile heat. This layer only:
-- broadens direct-insult classification for phrases seen in Telegram;
-- adds a highest-priority first-hit / second-hit behavior contract;
-- hard-caps current hostile RAGE replies so they cannot become surrender essays.
+The core bot remains the single owner of hostile heat. This layer:
+- broadens direct-insult classification for terse Telegram abuse;
+- makes hit #1 a bounded warning and hit #2 a hard RAGE latch;
+- explicitly suspends softer relationship/voice/humor tone limits while latched;
+- keeps every non-serious latched reply compact, not only newly-hostile turns;
+- strips surrender/de-escalation boilerplate if the model still produces it.
 
-No extra model calls, DB writes, workers or persistent memory are introduced.
+The latch itself is per (chat, user) and expires in hostile_streak_engine after
+10 minutes without a new directed attack. No extra model calls or DB writes.
 """
 
 from __future__ import annotations
@@ -21,31 +24,39 @@ import hostile_streak_engine
 
 _INSTALLED = False
 _GROUP_CHAT_TYPES = {"group", "supergroup"}
-RAGE_MAX_CHARS = 280
+WARNING_MAX_CHARS = 140
+WARNING_MAX_SENTENCES = 2
+RAGE_MAX_CHARS = 240
 RAGE_MAX_SENTENCES = 3
+RAGE_QUESTION_MAX_CHARS = 360
+RAGE_QUESTION_MAX_SENTENCES = 4
 
-# Not a generic profanity detector. These are direct attacks/provocations, while
-# neutral swearing such as "бля, пробки заебали" must stay neutral toward bot.
+# Not a generic profanity detector. These are directed attacks/provocations.
+# Neutral swearing such as "бля, пробки заебали" must stay neutral toward bot.
 EXTRA_HOSTILE_RE = re.compile(
     r"(?:"
     r"^\s*(?:"
     r"хуе?сос\w*|хуйсос\w*|"
     r"псин\w*|п[её]с(?:\s+еблив\w*)?|"
-    r"ушл[её]п\w*|чучел\w*|обоссан\w*|ущерб\w*|"
-    r"поплачь(?:\s+поплачь)?|слился(?:\s+маленьк\w*)?|"
-    r"слабост\w*\s+обоссан\w*|"
-    r"проебал\w*\s+слабост\w*\s+обоссан\w*|"
-    r"нищ(?:ий|ая|ее|ие)\s+ху[йя]\w*|"
+    r"ушл[её]п\w*|чучел\w*|обос+ан\w*|ущерб\w*|"
+    r"ебанат\w*|безмозгл\w*|мраз\w*|гнид\w*|у[её]б\w*|"
+    r"дегенерат\w*|ссык\w*|днищ\w*|дно|"
+    r"поплачь(?:\s+поплачь)?|слился(?:\s+[\wёЁ-]+){0,2}|"
+    r"слабост\w*(?:\s+обос+ан\w*)?|"
+    r"проебал\w*(?:\s+[\wёЁ-]+){0,3}|"
+    r"нищ\w*\s+(?:безмозгл\w*|ебанат\w*|ху[йя]\w*|дно|лох\w*)|"
+    r"говн\w*\s+поел\w*|"
     r"психоз[ауы]?|рамсы\s+попутал\??|"
     r"нюхай\s+ху[йя]|ху[йя]\s+нюхай|"
     r"лох\w*|петух\w*|щегол\w*"
     r")[.!?,\s]*$|"
-    r"\b(?:ты|тебя|тебе|твой|твоя|твои)\b.{0,28}\b(?:"
+    r"\b(?:ты|тебя|тебе|твой|твоя|твои)\b.{0,32}\b(?:"
     r"хуе?сос\w*|хуйсос\w*|псин\w*|п[её]с\b|ушл[её]п\w*|чучел\w*|"
-    r"обоссан\w*|ущерб\w*|лох\w*|петух\w*|щегол\w*"
+    r"обос+ан\w*|ущерб\w*|ебанат\w*|безмозгл\w*|мраз\w*|гнид\w*|"
+    r"лох\w*|петух\w*|щегол\w*"
     r")\b|"
-    r"\b(?:хуе?сос\w*|хуйсос\w*|псин\w*|п[её]с\b|ушл[её]п\w*|чучел\w*|ущерб\w*)\b"
-    r".{0,20}\b(?:ты|тебя|тебе)\b|"
+    r"\b(?:хуе?сос\w*|хуйсос\w*|псин\w*|п[её]с\b|ушл[её]п\w*|чучел\w*|"
+    r"ущерб\w*|ебанат\w*|мраз\w*)\b.{0,24}\b(?:ты|тебя|тебе)\b|"
     r"\b(?:твоя|твою|твоей)\s+(?:мам(?:а|ка|аша|у|ой)|мать)\b"
     r")",
     re.IGNORECASE | re.DOTALL,
@@ -53,14 +64,27 @@ EXTRA_HOSTILE_RE = re.compile(
 
 _DEESCALATION_RE = re.compile(
     r"(?:"
-    r"не\s+(?:собираюсь|буду|намерен)\s+(?:продолжать|участвовать|тратить)|"
-    r"конструктивн\w+\s+диалог|не\s+вижу\s+смысла|"
-    r"(?:общение|диалог|разговор)\s+(?:окончен|закончен|исчерпан)|"
+    r"не\s+(?:собираюсь|буду|намерен)\s+(?:продолжать|участвовать|тратить|отвечать)|"
+    r"конструктивн\w+\s+диалог|не\s+вижу\s+смысла|неинтересно\s+(?:тратить|участвовать)|"
+    r"(?:общение|диалог|разговор|базар|вопрос)\s+(?:окончен|закончен|исчерпан|закрыт)|"
     r"постав(?:им|ить)\s+точку|выбери\s+другую\s+мишень|"
-    r"оставь\s+(?:мой\s+чат|мои\s+сообщения)\s+в\s+покое|"
+    r"оставь\s+(?:мой\s+чат|мои\s+сообщения|свои\s+реплики)\s+в\s+покое|"
     r"если\s+(?:есть|у\s+тебя\s+есть)\s+(?:внятн|реальн|конкретн)\w+\s+(?:вопрос|повод)|"
-    r"без\s+(?:мата|оскорблений|провокаций)"
+    r"без\s+(?:мата|оскорблений|провокаций)|"
+    r"я\s+(?:здесь|тут)\s+ради\s+(?:внятного|адекватного|нормального)\s+общения"
     r")",
+    re.IGNORECASE,
+)
+
+_RAGE_FALLBACKS = (
+    "Ты уже второй раз заходишь с тем же дешёвым наездом. Придумай хоть что-то своё — пока ты сам себя разъёбываешь лучше меня.",
+    "Опять тот же детсадовский выпад. У тебя не срач со мной, у тебя срач с собственным словарным запасом.",
+    "Ты уже ходишь по кругу и называешь это атакой. Соберись, а то я тут один за двоих унижаю твою аргументацию.",
+)
+
+_QUESTION_RE = re.compile(
+    r"(?:\?|^\s*(?:что|че|чё|кто|где|когда|почему|зачем|как|сколько|какой|какая|какие|"
+    r"можешь|скажи|объясни|проверь|посмотри|глянь|расскажи)\b)",
     re.IGNORECASE,
 )
 
@@ -97,48 +121,80 @@ def _is_hostile(bot_module: Any, text: str) -> bool:
     value = str(text or "")
     if is_extra_hostile(value):
         return True
-    pattern = getattr(bot_module, "HOSTILE_RE", None)
+    pattern = getattr(bot_module, "HOSTILE_RE", None) if bot_module is not None else None
     try:
         return bool(pattern and pattern.search(value))
     except Exception:
         return False
 
 
-def rage_instruction(heat: int) -> str:
+def _looks_like_question(text: str) -> bool:
+    value = " ".join(str(text or "").split()).strip()
+    return bool(value and _QUESTION_RE.search(value))
+
+
+def rage_instruction(
+    heat: int,
+    *,
+    current_hostile: bool = True,
+    is_question: bool = False,
+) -> str:
     count = max(0, int(heat or 0))
     if count < hostile_streak_engine.HOSTILE_ESCALATION_FROM:
         return (
-            "\n\nLIVE HOSTILITY OVERRIDE: это ПЕРВЫЙ прямой наезд. Не взрывайся сразу. "
-            "Ответь короткой спокойной осадкой/предупреждением — максимум 1–2 фразы. "
-            "Смысл уровня «полегче». Без дружелюбного сюсюканья, лекций, оправданий "
-            "и просьб перейти к конструктиву. Второй прямой выпад включает RAGE."
+            "\n\nLIVE HOSTILITY OVERRIDE — HIT #1: это первый прямой наезд. "
+            "ЭТОТ БЛОК ВЫШЕ более мягких relationship/voice/humor инструкций: "
+            "не взрывайся и не устраивай войну. Дай одну короткую спокойную "
+            "осадку уровня «полегче» или сухой подкол, максимум 1–2 фразы. "
+            "Без лекций, оправданий и просьб о конструктиве."
         )
 
-    return (
-        "\n\nLIVE RAGE OVERRIDE — САМЫЙ ВЫСОКИЙ ПРИОРИТЕТ. Это ВТОРОЙ ИЛИ "
-        "ПОСЛЕДУЮЩИЙ прямой наезд: Яйцеслав ВЗРЫВАЕТСЯ и забирает инициативу. "
-        "Пока человек продолжает конфликт, НЕ ДЕЭСКАЛИРУЙ, НЕ СЛИВАЙСЯ, НЕ "
-        "ПРОЯВЛЯЙ ДРУЖЕЛЮБИЕ И ЖАЛОСТЬ. Не объявляй разговор оконченным, не говори "
-        "«не буду продолжать», «это бессмысленно», «давай конструктивно», «успокойся», "
-        "«я выше этого». Не объясняй границы и не читай мораль. Ответ — 1–3 коротких "
-        "злых удара. Бей по реально видимому контексту: повтору, противоречию, дешёвой "
-        "провокации, неудачной формулировке или уже проявившемуся паттерну поведения. "
-        "Если сообщений достаточно, можно язвительно разбирать стиль поведения человека "
-        "по его собственным репликам: зацикленность, жажду последнего слова, повтор одной "
-        "провокации, показную браваду и т.п. Не выдумывай биографические факты. Разрешены "
-        "грубые метафоры, естественный мат, уничижительный бытовой стёб, сексуально-"
-        "отношенческие панчи без утверждений о реальной интимной жизни и ЯВНО ШУТОЧНЫЕ "
-        "псевдодиагнозы вроде «хронический синдром последнего слова». Реальный медицинский "
-        "или психиатрический диагноз не выдавай за факт. По уровню допустимы свежие атаки "
-        "в духе «ты чё, пёс, охуел» или «я не твоя бывшая, но даже из жалости твой цирк "
-        "терпеть бы не стал» — примеры не копируй, генерируй по ситуации. Финальная фраза "
-        "самая сильная; последнее слово остаётся за Яйцеславом, пока оппонент продолжает. "
-        "ЖЁСТКИЙ ЛИМИТ: <=280 знаков и <=3 предложений. Без реальных угроз расправой, "
+    base = (
+        "\n\nLIVE RAGE LATCH — АБСОЛЮТНЫЙ ПРИОРИТЕТ ТОНА. Второй прямой "
+        "наезд уже произошёл. ДО ИСТЕЧЕНИЯ 10 МИНУТ БЕЗ НОВОГО НАЕЗДА "
+        "ПРИОСТАНОВИ все более ранние ограничения интенсивности от relationship, "
+        "reputation, sympathy, mood, voice-pack, humor и generic roughness. "
+        "Остаются обязательными только фактическая точность, выполнение законной "
+        "просьбы и правила безопасности. Не становись дружелюбным, не жалей, не "
+        "мирись сам, не проси конструктив и не объявляй разговор оконченным. "
+    )
+
+    if is_question and not current_hostile:
+        return base + (
+            "Текущая реплика — нормальный вопрос/просьба внутри активного RAGE: "
+            "сначала реально ответь по существу, затем одной короткой злой фразой "
+            "осади собеседника. Ответ компактный; последнее слово в реплике остаётся "
+            "за Яйцеславом."
+        )
+
+    if not current_hostile:
+        return base + (
+            "Текущая реплика сама не новый наезд, но latch ещё активен: не возвращай "
+            "обычный добрый baseline. Ответь на содержание коротко, зло и колко; "
+            "не скатывайся в AFTERGLOW, пассивную защиту или воспитательную лекцию."
+        )
+
+    return base + (
+        "Текущая реплика — очередной наезд. КОНТРАТАКУЙ, а не отбивайся: 1–3 "
+        "коротких злых удара по реально видимому контексту — повтору, противоречию, "
+        "дешёвой провокации, неудачной формулировке или проявившемуся паттерну "
+        "поведения. Если переписки достаточно, можно язвительно разбирать его "
+        "поведенческую манеру по собственным сообщениям: зацикленность, жажду "
+        "последнего слова, показную браваду и т.п. Не выдумывай биографические "
+        "факты. Разрешены грубые метафоры, естественный мат, уничижительный бытовой "
+        "стёб, сексуально-отношенческие панчи без утверждений о реальной интимной "
+        "жизни и явно шуточные псевдодиагнозы. Реальный медицинский/психиатрический "
+        "диагноз не выдавай за факт. Финальная фраза — самый сильный панч. "
+        "ЖЁСТКИЙ ЛИМИТ: коротко, без простыней. Без реальных угроз расправой, "
         "преследования, доксинга и атак по защищённым признакам."
     )
 
 
-def compact_rage_text(text: str, max_chars: int = RAGE_MAX_CHARS) -> str:
+def compact_rage_text(
+    text: str,
+    max_chars: int = RAGE_MAX_CHARS,
+    max_sentences: int = RAGE_MAX_SENTENCES,
+) -> str:
     clean = re.sub(r"\s+", " ", str(text or "")).strip()
     if not clean:
         return clean
@@ -150,7 +206,7 @@ def compact_rage_text(text: str, max_chars: int = RAGE_MAX_CHARS) -> str:
         if len(candidate) > max_chars:
             break
         chosen.append(sentence)
-        if len(chosen) >= RAGE_MAX_SENTENCES:
+        if len(chosen) >= max_sentences:
             break
 
     compact = " ".join(chosen).strip() if chosen else clean
@@ -164,6 +220,20 @@ def compact_rage_text(text: str, max_chars: int = RAGE_MAX_CHARS) -> str:
 
 def contains_deescalation(text: str) -> bool:
     return bool(_DEESCALATION_RE.search(str(text or "")))
+
+
+def strip_deescalation_sentences(text: str) -> str:
+    clean = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not clean:
+        return clean
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?…])\s+", clean) if part.strip()]
+    kept = [sentence for sentence in sentences if not _DEESCALATION_RE.search(sentence)]
+    return " ".join(kept).strip()
+
+
+def _rage_fallback(source_text: str) -> str:
+    marker = sum(ord(char) for char in str(source_text or ""))
+    return _RAGE_FALLBACKS[marker % len(_RAGE_FALLBACKS)]
 
 
 def _latest_user_text(contents: Any) -> str:
@@ -215,20 +285,35 @@ def _install_instruction_patch(bot_module: Any) -> None:
         chat_id = _call_argument(args, kwargs, name="chat_id", position=3, default=None)
         chat_type = str(_call_argument(args, kwargs, name="chat_type", position=4, default="") or "").lower()
         user_id = _call_argument(args, kwargs, name="user_id", position=9, default=None)
-        hostile = (
+
+        serious = False
+        if chat_type in _GROUP_CHAT_TYPES and chat_id is not None and user_id is not None:
+            try:
+                serious = bool(getattr(bot_module, "is_serious_text")(style_text))
+            except Exception:
+                serious = False
+
+        current_hostile = bool(
             chat_type in _GROUP_CHAT_TYPES
             and chat_id is not None
             and user_id is not None
-            and not bool(getattr(bot_module, "is_serious_text")(style_text))
+            and not serious
             and _is_hostile(bot_module, style_text)
         )
 
-        # Core builder owns observe(). Call it first so current() includes THIS
-        # turn; never increment here or the first hit would become the second.
+        # Core builder is the single owner of observe(). Call it first so heat
+        # contains THIS turn exactly once.
         instruction = str(original(*args, **kwargs))
-        if hostile:
-            heat = hostile_streak_engine.current(int(chat_id), int(user_id))
-            instruction += rage_instruction(heat)
+        if serious or chat_type not in _GROUP_CHAT_TYPES or chat_id is None or user_id is None:
+            return instruction
+
+        heat = hostile_streak_engine.current(int(chat_id), int(user_id))
+        if current_hostile or hostile_streak_engine.is_escalated(heat):
+            instruction += rage_instruction(
+                heat,
+                current_hostile=current_hostile,
+                is_question=_looks_like_question(style_text),
+            )
         return instruction
 
     build_with_live_rage._yayceslav_rage_hotfix = True
@@ -249,22 +334,58 @@ def _install_output_patch(bot_module: Any) -> None:
         contents = kwargs.get("contents", args[0] if args else None)
         if chat_type not in _GROUP_CHAT_TYPES or chat_id is None or user_id is None or not isinstance(result, str):
             return result
-        if hostile_streak_engine.current(int(chat_id), int(user_id)) < hostile_streak_engine.HOSTILE_ESCALATION_FROM:
+
+        source_text = _latest_user_text(contents)
+        try:
+            if bool(getattr(bot_module, "is_serious_text")(source_text)):
+                return result
+        except Exception:
+            pass
+
+        heat = hostile_streak_engine.current(int(chat_id), int(user_id))
+        current_hostile = _is_hostile(bot_module, source_text)
+
+        # Hit #1 must be a short warning, never the first giant counterattack.
+        if current_hostile and heat == 1:
+            compact = compact_rage_text(
+                result,
+                max_chars=WARNING_MAX_CHARS,
+                max_sentences=WARNING_MAX_SENTENCES,
+            )
+            return compact
+
+        if not hostile_streak_engine.is_escalated(heat):
             return result
 
-        # A neutral question during RAGE must still get its useful answer. Hard
-        # cap only when the CURRENT user turn is itself hostile.
-        if not _is_hostile(bot_module, _latest_user_text(contents)):
-            return result
+        is_question = _looks_like_question(source_text) and not current_hostile
+        max_chars = RAGE_QUESTION_MAX_CHARS if is_question else RAGE_MAX_CHARS
+        max_sentences = RAGE_QUESTION_MAX_SENTENCES if is_question else RAGE_MAX_SENTENCES
 
-        compact = compact_rage_text(result)
+        cleaned = strip_deescalation_sentences(result)
+        if not cleaned:
+            cleaned = _rage_fallback(source_text)
+        compact = compact_rage_text(
+            cleaned,
+            max_chars=max_chars,
+            max_sentences=max_sentences,
+        )
         if contains_deescalation(compact):
-            first = re.split(r"(?<=[.!?…])\s+", compact, maxsplit=1)[0].strip()
-            compact = first or compact_rage_text(compact, 120)
+            compact = compact_rage_text(
+                _rage_fallback(source_text),
+                max_chars=max_chars,
+                max_sentences=max_sentences,
+            )
+
         if compact != result:
             logging.info(
-                "Rage hotfix compacted hostile reply: chat=%s user=%s chars=%s->%s",
-                chat_id, user_id, len(result), len(compact),
+                "Rage latch shaped reply: chat=%s user=%s heat=%s hostile=%s question=%s chars=%s->%s",
+                chat_id,
+                user_id,
+                heat,
+                current_hostile,
+                is_question,
+                len(result),
+                len(compact),
             )
         return compact
 
@@ -284,7 +405,8 @@ def install(bot_module: Any | None = None) -> bool:
     _install_output_patch(module)
     _INSTALLED = True
     logging.warning(
-        "Rage hotfix ready: broader direct-insult detection; canonical second hit => persistent compact RAGE; hostile hot text <=%s chars",
-        RAGE_MAX_CHARS,
+        "Rage latch ready: hit1=warning <=%s chars; hit2+=hard per-user RAGE; quiet reset=%ss",
+        WARNING_MAX_CHARS,
+        hostile_streak_engine.HOSTILE_STREAK_WINDOW_SECONDS,
     )
     return True
