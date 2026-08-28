@@ -79,11 +79,17 @@ def _apply_tuning() -> None:
         directed_own_pack_listener._yayceslav_directed_stickers = True
         sticker_runtime.own_pack_sticker_listener = directed_own_pack_listener
 
+    # The focused fight layer reuses the existing semantic sticker registry and
+    # conflict FSM. It is installed only after the base sticker runtime exists,
+    # so no duplicate handlers or second conflict state machine are introduced.
+    import fight_mode_v2_tuning
+    fight_mode_v2_tuning.install()
+
     _APPLIED = True
     logging.warning(
         "Sticker tuning ready: background<=8%%, question<=12%%, post-tag<=13%%, "
-        "aggressive-events<=6%%, cooldown=8m/chat 15m/user, max=3/hour; "
-        "group sticker replies must target bot"
+        "aggressive-events<=6%% (+ fight-v2 RAGE override), cooldown=8m/chat "
+        "15m/user, max=3/hour; group sticker replies must target bot"
     )
 
 
