@@ -60,6 +60,7 @@ import chat_digest_runtime
 import date_grounding_runtime
 import social_priority_runtime
 import conflict_rage_runtime
+import rage_hotfix_runtime
 import title_conflict_runtime
 import search_context_runtime
 import search_slang_runtime
@@ -101,6 +102,7 @@ RUNTIME_LOAD_ORDER = (
     "date_grounding_runtime",
     "social_priority_runtime",
     "conflict_rage_runtime",
+    "rage_hotfix_runtime",
     "title_conflict_runtime",
     "search_context_runtime",
     "search_slang_runtime",
@@ -227,6 +229,13 @@ def prepare_application_runtime(application: Application) -> None:
         logging.warning("Social priority runtime: bot module not ready")
     if not conflict_rage_runtime.install():
         logging.warning("Conflict rage runtime: bot module not ready")
+
+    # Live Telegram tests showed that some short insults bypass the canonical
+    # HOSTILE_RE and that Gemini can still generate surrender essays. Install
+    # this final text-only guard AFTER conflict_rage so it sees the completed
+    # instruction stack, but BEFORE Voice 2.0 captures ask_gemini.
+    if not rage_hotfix_runtime.install():
+        logging.warning("Rage hotfix runtime: bot module not ready")
 
     # The command gate must attach before the ordinary group-0 /title handler.
     # It reuses today's hostility state and forces a negative title only when a
