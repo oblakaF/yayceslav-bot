@@ -1,0 +1,289 @@
+name: Apply fight mode v2 tuning
+
+on:
+  push:
+    branches:
+      - fight-mode-v2
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fight-mode-v2
+          fetch-depth: 0
+
+      - name: Patch fight behavior
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str, label: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{path} / {label}: expected 1 match, got {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          # 1) First hostile hit should already have teeth instead of sounding timid.
+          replace_once(
+              'rage_hotfix_runtime.py',
+              '''        return (
+            "\\n\\nLIVE HOSTILITY OVERRIDE — HIT #1: это первый прямой наезд. "
+            "ЭТОТ БЛОК ВЫШЕ более мягких relationship/voice/humor инструкций: "
+            "не взрывайся и не устраивай войну. Дай одну короткую спокойную "
+            "осадку уровня «полегче» или сухой подкол, максимум 1–2 фразы. "
+            "Без лекций, оправданий и просьб о конструктиве."
+        )''',
+              '''        return (
+            "\\n\\nLIVE HOSTILITY OVERRIDE — HIT #1: это первый прямой наезд. "
+            "ЭТОТ БЛОК ВЫШЕ более мягких relationship/voice/humor инструкций. "
+            "Не разворачивай простыню, но отвечай сразу зубасто: один короткий "
+            "контрудар по конкретной реплике пользователя, максимум 1–2 фразы. "
+            "Если пользователь сам пришёл с матом, естественный мат в ответе допустим. "
+            "Не говори «полегче», не оправдывайся, не читай мораль и не проси конструктив."
+        )''',
+              'first-hit rage instruction',
+          )
+
+          replace_once(
+              'rage_hotfix_runtime.py',
+              '''        "стёб, сексуально-отношенческие панчи без утверждений о реальной интимной "
+        "жизни и явно шуточные псевдодиагнозы. Реальный медицинский/психиатрический "
+        "диагноз не выдавай за факт. Финальная фраза — самый сильный панч. "''',
+              '''        "стёб, сексуально-отношенческие панчи без утверждений о реальной интимной "
+        "жизни и явно шуточные псевдодиагнозы. Формулировки вроде «клиническая "
+        "фиксация», «это уже граничит с диагнозом», «проекция» или метафорический "
+        "«каминг-аут» допустимы как очевидный злой roast по реально повторяющейся "
+        "теме в сообщениях. Не превращай их в утверждение о настоящем диагнозе, "
+        "сексуальной ориентации или интимной жизни человека. Финальная фраза — "
+        "самый сильный панч. "''',
+              'pseudo-clinical roast wording',
+          )
+
+          replace_once(
+              'conflict_rage_runtime.py',
+              '''            return (
+                "\\n\\nACTIVE CONFLICT WARNING: это первый прямой наезд. Не устраивай "
+                "полноценную войну: одна короткая спокойная осадка уровня «полегче» "
+                "или один сухой подкол. Не оправдывайся и не читай мораль. Второй "
+                "прямой наезд в течение 10 минут включает RAGE."
+            )''',
+              '''            return (
+                "\\n\\nACTIVE CONFLICT WARNING: это первый прямой наезд. Не устраивай "
+                "длинную войну, но сразу ответь зубасто: один короткий контрудар "
+                "по конкретной реплике, при уместности с естественным матом. Не "
+                "говори «полегче», не оправдывайся и не читай мораль. Второй прямой "
+                "наезд в течение 10 минут включает RAGE."
+            )''',
+              'conflict first hit',
+          )
+
+          # 2) Make long RAGE exchanges reliably use at least two own-pack stickers.
+          replace_once(
+              'sticker_post_runtime.py',
+              '''POST_TEXT_TAG_CHANCE: Final = 0.05
+RAGE_POST_TEXT_TAG_CHANCE: Final = 0.20
+''',
+              '''POST_TEXT_TAG_CHANCE: Final = 0.05
+RAGE_POST_TEXT_TAG_CHANCE: Final = 0.28
+RAGE_GUARANTEED_STICKERS: Final = 2
+RAGE_SECOND_STICKER_FROM_TURN: Final = 3
+RAGE_STICKER_SESSION_SECONDS: Final = 10 * 60.0
+RAGE_STICKER_MAX_PER_SESSION: Final = 3
+''',
+              'rage sticker constants',
+          )
+
+          anchor = '''def _extract_send_answer_call(args, kwargs):
+    force_voice = bool(kwargs.get("force_voice", args[0] if len(args) >= 1 else False))
+    source_user_text = kwargs.get("source_user_text", args[2] if len(args) >= 3 else None)
+    return force_voice, source_user_text
+
+
+'''
+          helper = '''def _extract_send_answer_call(args, kwargs):
+    force_voice = bool(kwargs.get("force_voice", args[0] if len(args) >= 1 else False))
+    source_user_text = kwargs.get("source_user_text", args[2] if len(args) >= 3 else None)
+    return force_voice, source_user_text
+
+
+def _rage_sticker_state(context, user_id: int, now: float) -> dict:
+    """Bounded per-user state for visual punctuation during one RAGE session."""
+
+    states = context.chat_data.setdefault("rage_post_sticker_state", {})
+    state = states.get(int(user_id))
+
+    if (
+        not isinstance(state, dict)
+        or now - float(state.get("last_turn_at", 0.0)) > RAGE_STICKER_SESSION_SECONDS
+    ):
+        state = {
+            "turns": 0,
+            "sent": 0,
+            "used_keys": [],
+            "last_turn_at": now,
+        }
+        states[int(user_id)] = state
+
+    state["turns"] = int(state.get("turns", 0)) + 1
+    state["last_turn_at"] = now
+    return state
+
+
+def _choose_rage_sticker_key(state: dict) -> str:
+    used = set(state.get("used_keys", []))
+    fresh = [key for key in _RAGE_POST_STICKERS if key not in used]
+    return random.choice(fresh or list(_RAGE_POST_STICKERS))
+
+
+'''
+          replace_once('sticker_post_runtime.py', anchor, helper, 'rage sticker state helpers')
+
+          old_block = '''    rage_exchange = _is_rage_exchange(chat.id, user.id, source_user_text)
+    if rage_exchange:
+        if random.random() >= RAGE_POST_TEXT_TAG_CHANCE:
+            return False
+        sticker_key = random.choice(_RAGE_POST_STICKERS)
+    else:
+        sticker_key = choose_post_text_tag(source_user_text, answer_text)
+        if not sticker_key or random.random() >= POST_TEXT_TAG_CHANCE:
+            return False
+
+    # Import lazily to avoid a startup cycle. The same shared slot protects
+    # normal and RAGE post-answer stickers from spam.
+    import sticker_runtime
+
+    now = __import__("time").monotonic()
+    if not sticker_runtime.sticker_slot_allowed(chat.id, user.id, now):
+        return False
+
+    try:
+        sent = await sticker_runtime.reply_sticker_by_key(update, context, sticker_key)
+    except Exception as error:
+        logging.warning("Post-answer sticker tag failed key=%s: %s", sticker_key, error)
+        return False
+
+    if not sent:
+        return False
+
+    sticker_runtime._record_sticker_slot(chat.id, user.id, now)
+'''
+
+          new_block = '''    rage_exchange = _is_rage_exchange(chat.id, user.id, source_user_text)
+
+    # Import lazily to avoid a startup cycle.
+    import sticker_runtime
+
+    now = __import__("time").monotonic()
+    rage_state = None
+    guaranteed_rage_visual = False
+
+    if rage_exchange:
+        rage_state = _rage_sticker_state(context, user.id, now)
+        rage_turn = int(rage_state.get("turns", 0))
+        rage_sent = int(rage_state.get("sent", 0))
+
+        # Long fights used to produce only one sticker because the ordinary
+        # 8m/chat + 15m/user cooldown blocked a second visual. The first two
+        # RAGE visuals now have a dedicated bounded guarantee: #1 on the first
+        # latched RAGE answer and #2 no earlier than the third RAGE answer.
+        guaranteed_rage_visual = (
+            rage_sent < RAGE_GUARANTEED_STICKERS
+            and (
+                rage_sent == 0
+                or rage_turn >= RAGE_SECOND_STICKER_FROM_TURN
+            )
+        )
+
+        if rage_sent >= RAGE_STICKER_MAX_PER_SESSION:
+            return False
+
+        if not guaranteed_rage_visual:
+            if random.random() >= RAGE_POST_TEXT_TAG_CHANCE:
+                return False
+            if not sticker_runtime.sticker_slot_allowed(chat.id, user.id, now):
+                return False
+
+        sticker_key = _choose_rage_sticker_key(rage_state)
+    else:
+        sticker_key = choose_post_text_tag(source_user_text, answer_text)
+        if not sticker_key or random.random() >= POST_TEXT_TAG_CHANCE:
+            return False
+        if not sticker_runtime.sticker_slot_allowed(chat.id, user.id, now):
+            return False
+
+    try:
+        sent = await sticker_runtime.reply_sticker_by_key(update, context, sticker_key)
+    except Exception as error:
+        logging.warning("Post-answer sticker tag failed key=%s: %s", sticker_key, error)
+        return False
+
+    if not sent:
+        return False
+
+    sticker_runtime._record_sticker_slot(chat.id, user.id, now)
+
+    if rage_state is not None:
+        rage_state["sent"] = int(rage_state.get("sent", 0)) + 1
+        used_keys = list(rage_state.get("used_keys", []))
+        used_keys.append(sticker_key)
+        rage_state["used_keys"] = used_keys[-len(_RAGE_POST_STICKERS):]
+'''
+          replace_once('sticker_post_runtime.py', old_block, new_block, 'guaranteed rage sticker flow')
+
+          replace_once(
+              'sticker_post_runtime.py',
+              '''        "Yayceslav post-answer sticker tag: sticker=%s rage=%s chat=%s user=%s",
+        sticker_engine.STICKER_LABELS.get(sticker_key, sticker_key),
+        rage_exchange,
+        chat.id,
+        user.id,
+''',
+              '''        "Yayceslav post-answer sticker tag: sticker=%s rage=%s guaranteed=%s chat=%s user=%s",
+        sticker_engine.STICKER_LABELS.get(sticker_key, sticker_key),
+        rage_exchange,
+        guaranteed_rage_visual,
+        chat.id,
+        user.id,
+''',
+              'sticker logging',
+          )
+
+          # 3) Slightly raise other aggressive semantic sticker events, while
+          # leaving global anti-spam intact for ordinary chat.
+          replace_once(
+              'sticker_tuning_runtime.py',
+              'AGGRESSIVE_EVENT_CAP = 0.06',
+              'AGGRESSIVE_EVENT_CAP = 0.10',
+              'aggressive sticker cap',
+          )
+          replace_once(
+              'sticker_tuning_runtime.py',
+              '"aggressive-events<=6%%, cooldown=8m/chat 15m/user, max=3/hour; "',
+              '"aggressive-events<=10%%, cooldown=8m/chat 15m/user, max=3/hour; "',
+              'tuning log',
+          )
+          PY
+
+      - name: Validate changed modules
+        run: |
+          python -m py_compile rage_hotfix_runtime.py conflict_rage_runtime.py sticker_post_runtime.py sticker_tuning_runtime.py
+          python -m pytest -q tests/test_rage_counterattack_policy.py tests/test_rage_sticker_post.py tests/test_sticker_tuning_runtime.py
+
+      - name: Commit and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/apply-fight-mode-v2.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rage_hotfix_runtime.py conflict_rage_runtime.py sticker_post_runtime.py sticker_tuning_runtime.py .github/workflows/apply-fight-mode-v2.yml
+          git commit -m "Tune rage punches and guarantee fight stickers"
+          git push origin HEAD:fight-mode-v2
