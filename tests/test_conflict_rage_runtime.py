@@ -18,7 +18,7 @@ def test_second_text_attack_gets_counterattack_rage_floor():
     assert "ACTIVE CONFLICT RAGE" in text
     assert "контратак" in lowered
     assert "дружище" in lowered
-    assert "последнее слово" not in lowered or "финаль" in lowered
+    assert "финаль" in lowered
 
 
 def test_first_attack_is_warning_not_full_rage():
@@ -61,7 +61,7 @@ def test_hot_neutral_statement_stays_rage_latched_not_afterglow():
     )
     lowered = text.lower()
     assert "LATCH STILL ACTIVE" in text
-    assert "afterglow" in lowered
+    assert "afterglow" not in lowered
     assert "не возвращается" in lowered
     assert "10 минут" in lowered
     assert "не объявляй срач законченным" in lowered
