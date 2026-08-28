@@ -24,6 +24,7 @@ import search_context_runtime as search_context
 import search_enrichment_runtime as search_enrichment
 import sticker_post_runtime
 import sticker_runtime
+import title_conflict_runtime as title_conflict
 import unified_daily_title_runtime as unified_titles
 import voice2_runtime as voice2
 import whoami_profile_v3_runtime as v3
@@ -134,6 +135,11 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         lambda: calls.append(("date_grounding", None)) or True,
     )
     monkeypatch.setattr(
+        title_conflict,
+        "prepare_application_runtime",
+        lambda app: calls.append(("title_conflict", app)),
+    )
+    monkeypatch.setattr(
         voice2,
         "install",
         lambda: calls.append(("voice2", None)) or True,
@@ -186,6 +192,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("daily_content", application),
         ("initiative", application),
         ("date_grounding", None),
+        ("title_conflict", application),
         ("voice2", None),
         ("search_enrichment", None),
         ("search_context", None),
