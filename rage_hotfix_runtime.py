@@ -7,7 +7,7 @@ Live Telegram testing exposed two gaps that prompt wording alone did not fix:
 
 This runtime adds no model calls and no persistent storage. bot.py remains the
 single owner of hostility counting; this layer only broadens classification,
-adds the final high-priority RAGE instruction, and hard-caps hot text replies.
+adds the final high-priority RAGE instruction, and hard-caps hot hostile replies.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import hostile_streak_engine
 
 _INSTALLED = False
 _GROUP_CHAT_TYPES = {"group", "supergroup"}
-RAGE_MAX_CHARS = 240
+RAGE_MAX_CHARS = 280
 RAGE_MAX_SENTENCES = 3
 
 # Focused on direct abuse/provocation observed in real chat. This is not a
@@ -34,20 +34,24 @@ EXTRA_HOSTILE_RE = re.compile(
     r"хуе?сос\w*|хуйсос\w*|"
     r"псин\w*|п[её]с(?:\s+еблив\w*)?|"
     r"ушл[её]п\w*|чучел\w*|"
-    r"обоссан\w*|"
+    r"обоссан\w*|ущерб\w*|"
     r"поплачь(?:\s+поплачь)?|"
     r"слился(?:\s+маленьк\w*)?|"
     r"слабост\w*\s+обоссан\w*|"
     r"нищ(?:ий|ая|ее|ие)\s+ху[йя]\w*|"
     r"психоз[ауы]?|"
-    r"рамсы\s+попутал\??"
+    r"рамсы\s+попутал\??|"
+    r"нюхай\s+ху[йя]|ху[йя]\s+нюхай|"
+    r"лох\w*|петух\w*|щегол\w*"
     r")[.!?,\s]*$|"
     r"\b(?:ты|тебя|тебе|твой|твоя|твои)\b.{0,28}\b(?:"
-    r"хуе?сос\w*|хуйсос\w*|псин\w*|п[её]с\b|ушл[её]п\w*|чучел\w*|обоссан\w*"
+    r"хуе?сос\w*|хуйсос\w*|псин\w*|п[её]с\b|ушл[её]п\w*|чучел\w*|обоссан\w*|"
+    r"ущерб\w*|лох\w*|петух\w*|щегол\w*"
     r")\b|"
-    r"\b(?:хуе?сос\w*|хуйсос\w*|псин\w*|п[её]с\b|ушл[её]п\w*|чучел\w*)\b.{0,20}\b(?:"
+    r"\b(?:хуе?сос\w*|хуйсос\w*|псин\w*|п[её]с\b|ушл[её]п\w*|чучел\w*|ущерб\w*)\b.{0,20}\b(?:"
     r"ты|тебя|тебе"
-    r")\b"
+    r")\b|"
+    r"\b(?:твоя|твою|твоей)\s+(?:мам(?:а|ка|аша|у|ой)|мать)\b"
     r")",
     re.IGNORECASE | re.DOTALL,
 )
@@ -121,18 +125,22 @@ def rage_instruction(heat: int) -> str:
         "последующий прямой наезд. Яйцеслав ВЗРЫВАЕТСЯ и держит инициативу, пока "
         "оппонент продолжает конфликт. НЕ ДЕЭСКАЛИРУЙ, НЕ СЛИВАЙСЯ, НЕ ПРОСИ "
         "перейти к конструктиву и НЕ объявляй разговор оконченным. Не объясняй "
-        "свои границы, не читай мораль и не жалей собеседника. Ответ — 1–3 коротких "
-        "злых удара по тому, что реально видно в текущей реплике и недавнем контексте: "
-        "его повтору, противоречию, дешёвой провокации, манере сраться или уже "
-        "проявившемуся поведенческому паттерну. Если контекста накопилось достаточно, "
-        "можно язвительно разбирать его стиль поведения по его же словам. Можно "
-        "придумывать ЯВНО ШУТОЧНЫЕ псевдодиагнозы вроде «синдром последнего слова» "
-        "или «острая стадия интернет-героизма», но нельзя выдавать реальный медицинский "
-        "или психиатрический диагноз за установленный факт. Допустимы естественный мат, "
-        "очень злой стёб и уничижительный панч. Финальная фраза должна быть сильнейшей: "
-        "последнее слово в этой реплике остаётся за Яйцеславом. ЖЁСТКИЙ ЛИМИТ: не "
-        "более 240 знаков и не более 3 предложений. Без реальных угроз, преследования, "
-        "выдуманной биографии и атак по защищённым/чувствительным признакам."
+        "свои границы, не читай мораль, не жалей собеседника и не становись вежливее. "
+        "Ответ — 1–3 коротких злых удара по тому, что реально видно в текущей реплике "
+        "и недавнем контексте: его повтору, противоречию, дешёвой провокации, манере "
+        "сраться или уже проявившемуся поведенческому паттерну. Если контекста накопилось "
+        "достаточно, можно язвительно разбирать его стиль поведения по его же словам. "
+        "Можно использовать грубый бытовой стёб, сексуально-отношенческие панчи без "
+        "утверждений о реальной интимной жизни и ЯВНО ШУТОЧНЫЕ псевдодиагнозы вроде "
+        "«синдром последнего слова» или «острая стадия интернет-героизма». Нельзя "
+        "выдавать реальный медицинский/психиатрический диагноз за установленный факт. "
+        "Допустимы естественный мат, очень злой стёб и уничижительный панч. По уровню "
+        "допустимы свежие реплики в духе «ты чё, пёс, охуел», «я не твоя бывшая, но "
+        "даже из жалости твой цирк терпеть бы не стал» — не копируй примеры механически, "
+        "а бей по текущему контексту. Финальная фраза должна быть сильнейшей: последнее "
+        "слово в этой реплике остаётся за Яйцеславом. ЖЁСТКИЙ ЛИМИТ: не более 280 знаков "
+        "и не более 3 предложений. Без реальных угроз физической расправой, преследования, "
+        "доксинга, выдуманной биографии и атак по защищённым признакам."
     )
 
 
@@ -163,6 +171,14 @@ def compact_rage_text(text: str, max_chars: int = RAGE_MAX_CHARS) -> str:
 
 def contains_deescalation(text: str) -> bool:
     return bool(_DEESCALATION_RE.search(str(text or "")))
+
+
+def _latest_user_text(contents: Any) -> str:
+    try:
+        import primitive_compact_guard
+        return primitive_compact_guard.latest_user_text(contents)
+    except Exception:
+        return str(contents or "") if isinstance(contents, str) else ""
 
 
 def _install_mode_patch(bot_module: Any) -> None:
@@ -218,17 +234,11 @@ def _install_instruction_patch(bot_module: Any) -> None:
             and _is_hostile(bot_module, style_text)
         )
 
-        # bot.py already records this text turn in hostile_streak_engine before
-        # building the instruction. Never increment here: doing so would turn
-        # the first insult into an accidental second insult.
-        heat = (
-            hostile_streak_engine.current(int(chat_id), int(user_id))
-            if hostile and chat_id is not None and user_id is not None
-            else 0
-        )
-
+        # The wrapped core builder is the single owner of observe(). Call it
+        # first so current() below sees THIS turn. Never increment heat here.
         instruction = str(original(*args, **kwargs))
         if hostile:
+            heat = hostile_streak_engine.current(int(chat_id), int(user_id))
             instruction += rage_instruction(heat)
         return instruction
 
@@ -248,6 +258,7 @@ def _install_output_patch(bot_module: Any) -> None:
         chat_id = kwargs.get("chat_id")
         user_id = kwargs.get("user_id")
         chat_type = str(kwargs.get("chat_type", "") or "").lower()
+        contents = kwargs.get("contents", args[0] if args else None)
         if (
             chat_type not in _GROUP_CHAT_TYPES
             or chat_id is None
@@ -260,17 +271,23 @@ def _install_output_patch(bot_module: Any) -> None:
         if heat < hostile_streak_engine.HOSTILE_ESCALATION_FROM:
             return result
 
+        # Preserve useful long answers to neutral questions asked during a hot
+        # conflict. Hard-cap only a current hostile turn; answer-and-sting logic
+        # remains free to answer substantive questions before the final jab.
+        current_text = _latest_user_text(contents)
+        if not _is_hostile(bot_module, current_text):
+            return result
+
         compact = compact_rage_text(result)
         if contains_deescalation(compact):
-            # Do not fabricate a replacement insult here: the model must still
-            # own wording. Strip the lecture after its first usable sentence so
-            # a failed generation cannot become a multi-paragraph surrender.
+            # Never replace with a canned insult. Keep only the first usable
+            # sentence so a failed generation cannot turn into a surrender essay.
             first = re.split(r"(?<=[.!?…])\s+", compact, maxsplit=1)[0].strip()
             compact = first or compact_rage_text(compact, 120)
 
         if compact != result:
             logging.info(
-                "Rage hotfix compacted hot reply: chat=%s user=%s chars=%s->%s",
+                "Rage hotfix compacted hot hostile reply: chat=%s user=%s chars=%s->%s",
                 chat_id,
                 user_id,
                 len(result),
@@ -296,7 +313,7 @@ def install(bot_module: Any | None = None) -> bool:
     _install_output_patch(module)
     _INSTALLED = True
     logging.warning(
-        "Rage hotfix ready: expanded short-insult detection; canonical second attack => persistent compact RAGE; hot text <=%s chars",
+        "Rage hotfix ready: expanded direct-insult detection; canonical second attack => persistent compact RAGE; hostile hot text <=%s chars",
         RAGE_MAX_CHARS,
     )
     return True
