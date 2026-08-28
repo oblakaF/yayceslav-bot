@@ -1,14 +1,9 @@
-"""Ground screenshot/link proof disputes instead of defending stale guesses.
+"""Ground proof screenshots and terse proof challenges with bounded web search.
 
-This runtime handles the narrow failure seen in live Telegram tests: a user sends
-an addressed screenshot/caption such as "official Rockstar site, look at the
-proof", but the model keeps defending an earlier stale claim.
-
-We do not browse every photo.  Only evidence/challenge captions are intercepted.
-For those, the existing Gemini vision call extracts a compact search query and
-visible claims, then the existing bounded Search 2.0 pipeline verifies the claim.
-The final answer is grounded in search results, and the conflict FSM still owns
-tone.  No persistent screenshot text is stored and no new background work exists.
+Only explicit evidence disputes are intercepted. Ordinary photos still use the
+existing handler. The flow is: screenshot -> compact claim/search-query extract
+with the existing Gemini vision path -> existing bounded Search 2.0 -> grounded
+answer. Conflict tone remains owned by conflict_fsm_runtime.
 """
 
 from __future__ import annotations
@@ -32,10 +27,8 @@ _PREPARED_APPLICATION_IDS: set[int] = set()
 
 _EVIDENCE_CAPTION_RE = re.compile(
     r"(?:"
-    r"\b(?:пруф\w*|доказательств\w*|официальн\w*\s+(?:сайт|страниц|источник)|"
-    r"источник\w*|ссылк\w*)\b|"
-    r"\b(?:посмотри|проверь|глянь|чекни)\b.{0,32}\b(?:скрин\w*|сайт\w*|"
-    r"пруф\w*|источник\w*|официальн\w*)\b|"
+    r"\b(?:пруф\w*|доказательств\w*|официальн\w*\s+(?:сайт|страниц|источник)|источник\w*|ссылк\w*)\b|"
+    r"\b(?:посмотри|проверь|глянь|чекни)\b.{0,32}\b(?:скрин\w*|сайт\w*|пруф\w*|источник\w*|официальн\w*)\b|"
     r"\b(?:вот|держи)\b.{0,24}\b(?:скрин\w*|пруф\w*|доказательств\w*)\b|"
     r"\bты\s+(?:ошибся|пиздишь|вр[её]шь|неправ)\b"
     r")",
@@ -90,14 +83,12 @@ def _extract_json(text: str) -> dict[str, Any] | None:
 def _fallback_query(caption: str) -> str:
     clean = " ".join(str(caption or "").split()).strip()
     clean = re.sub(
-        r"\b(?:пруф\w*|проверь|посмотри|глянь|официальн\w*\s+сайт|"
-        r"ты\s+(?:ошибся|пиздишь|вр[её]шь))\b",
+        r"\b(?:пруф\w*|проверь|посмотри|глянь|официальн\w*\s+сайт|ты\s+(?:ошибся|пиздишь|вр[её]шь))\b",
         " ",
         clean,
         flags=re.IGNORECASE,
     )
-    clean = re.sub(r"\s+", " ", clean).strip(" ,.!?:;—-")
-    return clean[:280]
+    return re.sub(r"\s+", " ", clean).strip(" ,.!?:;—-")[:280]
 
 
 async def _vision_claim_query(bot_module: Any, image_bytes: bytes, caption: str) -> tuple[str, list[str]]:
@@ -106,27 +97,25 @@ async def _vision_claim_query(bot_module: Any, image_bytes: bytes, caption: str)
         "проверяемый внешний факт и поисковый запрос. Верни СТРОГО JSON: "
         '{"search_query":"...","visible_claims":["..."],"needs_web":true}. '
         "search_query должен содержать сущность, событие и при наличии дату/длительность; "
-        "не включай оскорбления пользователя. Если на скриншоте виден домен/официальный "
-        "источник, включи его название в claims. Не решай сам, правда это или нет.\n\n"
+        "не включай оскорбления пользователя. Если на скриншоте виден домен или "
+        "официальный источник, включи его название в visible_claims. Не решай сам, "
+        "правда это или нет.\n\n"
         f"Подпись пользователя: {caption[:500]}"
     )
     raw = await bot_module.ask_gemini(
-        contents=[
-            types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-            prompt,
-        ],
+        contents=[types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"), prompt],
         max_output_tokens=220,
         thinking_level="low",
     )
     payload = _extract_json(raw) or {}
-    query = " ".join(str(payload.get("search_query") or "").split()).strip()
+    query = " ".join(str(payload.get("search_query") or "").split()).strip()[:320]
     claims_raw = payload.get("visible_claims") or []
     claims = [" ".join(str(item).split()).strip()[:300] for item in claims_raw if str(item).strip()]
-    return query[:320], claims[:6]
+    return query, claims[:6]
 
 
 def _grounding_prompt(caption: str, claims: list[str], search_context: str) -> str:
-    claims_text = "\n".join(f"- {item}" for item in claims) or "- явный claim со скриншота"
+    claims_text = "\n".join(f"- {item}" for item in claims) or "- проверяемый claim со скриншота"
     return (
         "Пользователь предъявил screenshot/пруф и оспаривает недавний фактический ответ.\n\n"
         f"Реплика пользователя:\n{caption[:700]}\n\n"
@@ -136,8 +125,7 @@ def _grounding_prompt(caption: str, claims: list[str], search_context: str) -> s
         "важнее предыдущих ответов бота. Ответь только по этим данным. Если предыдущий "
         "ответ Яйцеслава оказался неверным, прямо исправь факт без оправданий. Если "
         "источники не подтверждают claim — скажи это. Не называй screenshot фейком без "
-        "основания в текущих результатах. В текстовом ответе дай 1–3 полезных ссылки из "
-        "реальных результатов. Тон определит активный conflict FSM."
+        "основания в текущих результатах. Тон определяет active conflict FSM."
     )
 
 
@@ -148,58 +136,43 @@ async def _evidence_photo_handler(update, context) -> None:
     if message is None or chat is None or user is None or not getattr(message, "photo", None):
         return
 
-    caption = str(getattr(message, "caption", "") or "").strip()
-    if not is_evidence_caption(caption):
+    raw_caption = str(getattr(message, "caption", "") or "").strip()
+    if not is_evidence_caption(raw_caption):
         return
 
     bot_module = _find_bot_module()
     if bot_module is None:
         return
 
-    # Respect the same group-addressing rules as ordinary photo handling.
     prepared = await bot_module.prepare_request_text(
         update=update,
         context=context,
-        original_text=caption,
+        original_text=raw_caption,
         default_text="",
     )
     if prepared is None:
         return
-    caption = prepared or caption
+    caption = prepared or raw_caption
 
     if not await bot_module.enforce_rate_limit(update, "media"):
         raise ApplicationHandlerStop
 
-    # This high-priority handler replaces ordinary answer_photo, so it owns this
-    # turn's conflict observation exactly once.
     if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
-        conflict_fsm_runtime.observe_external_text(
-            bot_module,
-            int(chat.id),
-            int(user.id),
-            caption,
-        )
+        conflict_fsm_runtime.observe_external_text(bot_module, int(chat.id), int(user.id), caption)
 
     await context.bot.send_chat_action(chat_id=chat.id, action=ChatAction.TYPING)
+    file_path = Path(bot_module.TEMP_DIR) / f"evidence_{chat.id}_{message.message_id}_{uuid.uuid4().hex}.jpg"
 
-    file_path = Path(bot_module.TEMP_DIR) / (
-        f"evidence_{chat.id}_{message.message_id}_{uuid.uuid4().hex}.jpg"
-    )
     try:
         photo = message.photo[-1]
         telegram_file = await photo.get_file()
         await telegram_file.download_to_drive(custom_path=str(file_path))
-        image_bytes = file_path.read_bytes()
-
-        query, claims = await _vision_claim_query(bot_module, image_bytes, caption)
+        query, claims = await _vision_claim_query(bot_module, file_path.read_bytes(), caption)
+        query = query or _fallback_query(caption)
         if not query:
-            query = _fallback_query(caption)
-        if not query:
-            await message.reply_text("На скрине вижу спор, но поисковый факт не вытащил. Сформулируй одним предложением, что именно проверить.")
+            await message.reply_text("На скрине вижу спор, но не вытащил конкретный проверяемый факт. Скажи одной фразой, что проверить.")
             raise ApplicationHandlerStop
 
-        # Reuse the already bounded Search 2.0 implementation: semaphore, max
-        # results, page enrichment and current source ranking remain unchanged.
         results = await bot_module.search_web(query=query, max_results=5)
         if not results:
             await message.reply_text("Проверил, но выдача пустая. Не буду выдумывать, кто тут прав.")
@@ -207,7 +180,6 @@ async def _evidence_photo_handler(update, context) -> None:
 
         search_context = bot_module.format_search_results(results)
         prompt = _grounding_prompt(caption, claims, search_context)
-
         user_settings = await bot_module.get_user_settings(user.id)
         answer = await bot_module.ask_gemini(
             contents=prompt,
@@ -220,9 +192,6 @@ async def _evidence_photo_handler(update, context) -> None:
             thinking_level="medium",
         )
 
-        # The normal search source-proof wrapper may append URLs only when its
-        # marker is present.  This prompt contains that marker, but we also add a
-        # deterministic fallback so a factual correction always exposes proof.
         urls: list[str] = []
         for item in results:
             url = str(item.get("url") or "").strip()
@@ -233,12 +202,7 @@ async def _evidence_photo_handler(update, context) -> None:
         if urls and not any(url in answer for url in urls):
             answer = answer.rstrip() + "\n\nИсточники:\n" + "\n".join(f"- {url}" for url in urls)
 
-        await bot_module.send_answer(
-            update,
-            context,
-            answer,
-            source_user_text=caption,
-        )
+        await bot_module.send_answer(update, context, answer, source_user_text=caption)
         await bot_module.increment_stat("total_requests")
         await bot_module.increment_stat("photo_requests")
         await bot_module.increment_stat("search_requests")
@@ -249,23 +213,15 @@ async def _evidence_photo_handler(update, context) -> None:
 
 
 def _install_extra_proof_text_routing(bot_module: Any) -> None:
-    """Teach the existing search extractor terse proof challenges."""
-
     original = getattr(bot_module, "extract_search_query", None)
     if not callable(original) or getattr(original, "_yayceslav_evidence_grounding", False):
         return
-
-    @re.compile(r"\s+").sub  # type: ignore[misc]
-    def _unused():
-        pass
 
     def extract_with_proof(text: str):
         existing = original(text)
         if existing is not None:
             return existing
         if is_proof_text(text):
-            # Empty string deliberately asks search_context_runtime to recover
-            # the previous topic from chat memory.
             return ""
         return None
 
@@ -284,9 +240,6 @@ def prepare_application_runtime(application: Application) -> None:
         return
 
     _install_extra_proof_text_routing(bot_module)
-    application.add_handler(
-        MessageHandler(filters.PHOTO, _evidence_photo_handler),
-        group=-6,
-    )
+    application.add_handler(MessageHandler(filters.PHOTO, _evidence_photo_handler), group=-6)
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning("Evidence grounding ready: proof screenshots => vision claim extraction + bounded web verification")
