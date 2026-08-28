@@ -1,14 +1,16 @@
 """Focused tuning for Yayceslav's live verbal fights.
 
 This layer keeps the existing conflict FSM and sticker semantics as the single
-owners of state/meaning.  It only adjusts three user-facing behaviors agreed in
-live-chat testing:
+owners of state/meaning. It only adjusts user-facing behavior agreed in live
+Telegram testing:
 
 * the first directed hit already gets a sharp answer instead of a timid warning;
 * RAGE explicitly rewards contextual, darkly hyperbolic roasts while keeping
   diagnoses/orientation as jokes about visible chat behavior, not factual claims;
 * a sufficiently long RAGE exchange gets two different Yayceslav stickers even
-  though ordinary sticker cooldowns are intentionally much longer.
+  though ordinary sticker cooldowns are intentionally much longer;
+* one incoming Telegram message cannot accidentally produce two normal text
+  answers through overlapping runtime routes.
 
 No extra model calls and no persistent storage are introduced.
 """
@@ -19,6 +21,7 @@ import functools
 import logging
 import random
 import re
+import sys
 import time
 from typing import Any
 
@@ -27,8 +30,8 @@ from telegram.constants import ChatType
 
 _INSTALLED = False
 
-# Extra direct bait observed in the real fight transcript.  This is not a
-# generic profanity detector; the conflict FSM only asks this on a directed turn.
+# Extra direct bait observed in the real fight transcript. This is not a generic
+# profanity detector; the conflict FSM only asks this on a directed turn.
 _EXTRA_FIGHT_BAIT_RE = re.compile(
     r"(?:"
     r"^\s*сосал\??\s*$|"
@@ -47,6 +50,15 @@ RAGE_GUARANTEED_STICKERS = 2
 RAGE_SECOND_STICKER_FROM_TURN = 3
 RAGE_STICKER_MAX_PER_SESSION = 3
 RAGE_OPTIONAL_STICKER_CHANCE = 0.28
+DUPLICATE_ANSWER_TTL_SECONDS = 3 * 60.0
+
+
+def _find_bot_module() -> Any | None:
+    for name in ("__main__", "bot"):
+        module = sys.modules.get(name)
+        if module is not None and callable(getattr(module, "send_answer", None)):
+            return module
+    return None
 
 
 def _patch_conflict_fsm() -> None:
@@ -104,6 +116,76 @@ def _patch_conflict_fsm() -> None:
         conflict_fsm_runtime.build_rage_system_prompt = rage_prompt_v2
 
 
+def _patch_duplicate_send_answer() -> None:
+    """Suppress a second normal text answer to the same incoming group message."""
+
+    bot_module = _find_bot_module()
+    if bot_module is None:
+        logging.warning("Fight-v2 duplicate guard: bot.send_answer not found")
+        return
+
+    original = bot_module.send_answer
+    if getattr(original, "_yayceslav_fight_v2_dedup", False):
+        return
+
+    @functools.wraps(original)
+    async def send_answer_once(update: Any, context: Any, text: str, *args: Any, **kwargs: Any):
+        chat = getattr(update, "effective_chat", None)
+        message = getattr(update, "message", None)
+        callback_query = getattr(update, "callback_query", None)
+
+        source_user_text = kwargs.get(
+            "source_user_text",
+            args[2] if len(args) >= 3 else None,
+        )
+        force_voice = bool(
+            kwargs.get(
+                "force_voice",
+                args[0] if len(args) >= 1 else False,
+            )
+        )
+
+        # Buttons, private chat, voice output and responses without a concrete
+        # source text keep their original behavior. The live duplicate bug was
+        # observed in a group text fight.
+        should_guard = bool(
+            chat
+            and message
+            and callback_query is None
+            and chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+            and source_user_text
+            and not force_voice
+        )
+
+        if should_guard:
+            now = time.monotonic()
+            seen = context.chat_data.setdefault("fight_v2_answered_message_ids", {})
+
+            stale = [
+                key
+                for key, seen_at in tuple(seen.items())
+                if now - float(seen_at) > DUPLICATE_ANSWER_TTL_SECONDS
+            ]
+            for key in stale:
+                seen.pop(key, None)
+
+            message_key = int(message.message_id)
+            if message_key in seen:
+                logging.warning(
+                    "Fight-v2 duplicate answer suppressed: chat=%s message=%s",
+                    chat.id,
+                    message_key,
+                )
+                return None
+
+            seen[message_key] = now
+
+        return await original(update, context, text, *args, **kwargs)
+
+    send_answer_once._yayceslav_fight_v2_dedup = True
+    bot_module.send_answer = send_answer_once
+
+
 def _rage_sticker_state(context: Any, user_id: int, now: float) -> dict[str, Any]:
     states = context.chat_data.setdefault("fight_v2_rage_stickers", {})
     state = states.get(int(user_id))
@@ -136,6 +218,7 @@ def _choose_distinct_rage_key(sticker_post_runtime: Any, state: dict[str, Any]) 
 
 
 def _patch_rage_stickers() -> None:
+    import conflict_fsm_runtime
     import sticker_engine
     import sticker_post_runtime
     import sticker_runtime
@@ -165,12 +248,17 @@ def _patch_rage_stickers() -> None:
         if (
             sticker_engine.is_serious_text(source_user_text)
             or sticker_engine.is_serious_text(answer_text)
-            or not sticker_post_runtime._is_rage_exchange(
-                chat.id,
-                user.id,
-                source_user_text,
-            )
         ):
+            return await original(update, context, source_user_text, answer_text)
+
+        # Use the actual production FSM phase, not the older rage-hotfix helper.
+        # This makes sticker continuity survive taunts such as "сосал?" and also
+        # neutral follow-ups while the same user's 10-minute RAGE latch is active.
+        rage_active = (
+            conflict_fsm_runtime.phase(chat.id, user.id)
+            == conflict_fsm_runtime.ConflictPhase.RAGE
+        )
+        if not rage_active:
             return await original(update, context, source_user_text, answer_text)
 
         now = time.monotonic()
@@ -183,7 +271,7 @@ def _patch_rage_stickers() -> None:
 
         # Sticker #1 punctuates the first latched RAGE response. Sticker #2 is
         # guaranteed only from the third RAGE response, so they never arrive on
-        # two consecutive turns.  This dedicated two-sticker budget intentionally
+        # two consecutive turns. This dedicated two-sticker budget intentionally
         # bypasses the ordinary 8m/15m sticker cooldown that caused the live log
         # to show only one sticker during an entire argument.
         guaranteed = (
@@ -265,12 +353,13 @@ def install() -> bool:
         return True
 
     _patch_conflict_fsm()
+    _patch_duplicate_send_answer()
     _patch_rage_stickers()
     _raise_aggressive_sticker_events()
 
     _INSTALLED = True
     logging.warning(
         "Fight mode v2 ready: sharper hit #1, contextual RAGE roasts, "
-        "two guaranteed own-pack stickers in long RAGE exchanges"
+        "two guaranteed own-pack stickers in long RAGE exchanges, duplicate guard"
     )
     return True
