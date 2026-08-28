@@ -240,6 +240,14 @@ def prepare_application_runtime(application: Application) -> None:
         return
 
     _install_extra_proof_text_routing(bot_module)
-    application.add_handler(MessageHandler(filters.PHOTO, _evidence_photo_handler), group=-6)
+
+    # Bootstrap contract tests intentionally pass a sentinel object. Installing
+    # the text extractor above is still useful there; only a real PTB
+    # Application owns handlers.
+    add_handler = getattr(application, "add_handler", None)
+    if not callable(add_handler):
+        return
+
+    add_handler(MessageHandler(filters.PHOTO, _evidence_photo_handler), group=-6)
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning("Evidence grounding ready: proof screenshots => vision claim extraction + bounded web verification")
