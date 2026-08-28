@@ -57,7 +57,8 @@ def test_hot_neutral_statement_does_not_restore_normal_relationship_tone():
     )
     lowered = text.lower()
     assert "latch still active" in lowered
-    assert "normal relationship baseline" in lowered
+    assert "relationship baseline" in lowered
+    assert "не возвращается" in lowered
     assert "10 минут" in lowered
 
 
