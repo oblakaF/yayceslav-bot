@@ -37,6 +37,9 @@ _STOP = {
     "мой", "моя", "его", "она", "они", "уже", "ещё", "еще", "там", "тут", "вот", "для",
     "или", "если", "просто", "будешь", "давай", "нахуй", "блять", "блядь", "сука",
 }
+_STALE_META = (
+    "словарн", "детск", "цирк", "конструктив", "комплекс", "фантаз", "альфа",
+)
 
 
 @dataclass
@@ -55,6 +58,7 @@ class RoastPlan:
     callback: str
     avoid: tuple[str, ...]
     palette: tuple[str, ...]
+    evidence: tuple[str, ...] = ()
 
 
 _SESSIONS: dict[tuple[int, int], RoastSession] = {}
@@ -89,6 +93,16 @@ def _callback(messages: Iterable[str]) -> str:
     return ""
 
 
+def _evidence(messages: list[str]) -> tuple[str, ...]:
+    """Keep a tiny verbatim window so Gemini attacks observed wording, not biography."""
+    compact: list[str] = []
+    for message in messages[-4:]:
+        text = " ".join(str(message or "").split()).strip()
+        if text and text not in compact:
+            compact.append(text[:180])
+    return tuple(compact)
+
+
 def _repetition_score(messages: list[str]) -> int:
     counts: Counter[str] = Counter()
     for message in messages:
@@ -103,9 +117,6 @@ def _pick_angle(messages: list[str], used: deque[str]) -> tuple[str, str]:
 
     sniff_hits = len(_SNIFF_RE.findall(joined))
     if sniff_hits >= 3:
-        # A repeated concrete sexual/sniffing theme is more specific and useful
-        # than generic lexical repetition. Give it a deliberately dominant score;
-        # anti-repeat below can still rotate away from fixation on the next turn.
         candidates.append((30 + sniff_hits, "fixation", "оппонент снова и снова тащит одну и ту же тему"))
 
     repeat = _repetition_score(messages[-6:])
@@ -160,6 +171,7 @@ def observe_and_plan(chat_id: int, user_id: int, current_text: str) -> RoastPlan
         callback=callback,
         avoid=avoid,
         palette=tuple(roast_lexicon.PALETTES.get(angle, ()))[:5],
+        evidence=_evidence(messages),
     )
 
 
@@ -168,24 +180,36 @@ def prompt_for_plan(plan: RoastPlan) -> str:
     callback = plan.callback or "нет достаточно надёжного повторяющегося слова"
     avoid = ", ".join(plan.avoid) if plan.avoid else "нет"
     palette = "; ".join(plan.palette) if plan.palette else "свободная короткая метафора"
+    evidence = " | ".join(f"«{item}»" for item in plan.evidence) or "нет"
 
     return f"""
 
-ROAST ENGINE — ВНУТРЕННИЙ ПЛАН ТЕКУЩЕГО RAGE-ОТВЕТА:
+ROAST ENGINE V2 — ВНУТРЕННИЙ ПЛАН ТЕКУЩЕГО RAGE-ОТВЕТА:
 - Лучший угол сейчас: {plan.angle} — {label}.
 - Почему: {plan.weak_point}.
 - Callback из реально написанного оппонентом: {callback}.
+- Последние точные реплики оппонента: {evidence}.
 - Не повторяй недавние углы: {avoid}.
 - Палитра образов (НЕ список обязательных фраз): {palette}.
 
-Сначала мысленно найди точную самоподставу в текущей/недавних репликах, затем
-выдай только готовый панч. Не показывай этот план и не объясняй технику.
-Предпочитай наблюдение -> неожиданный образ -> короткая добивка.
-Мат допустим и естественен, но обычно 0–2 матерных элемента достаточно: мат
-усиливает шутку, а не заменяет её. Не сваливайся снова в «словарный запас»,
-«детский сад», «цирк», «конструктив», если именно это не является новой точной
-самоподставой. Не придумывай биографию, диагнозы, ориентацию, зависимости или
-реальные интимные предпочтения: шути только над тем, что человек сам написал.
+Сначала мысленно найди ОДНУ точную самоподставу в приведённых репликах. Затем
+собери панч: конкретное наблюдение -> неожиданный образ/сравнение -> короткая
+добивка. Выдай только готовый ответ, без разбора техники.
+
+КРИТЕРИЙ КАЧЕСТВА: ответ должен быть смешным даже без мата. Если убрать мат и
+останется только «ты тупой/у тебя мало слов/у тебя комплексы», придумай заново.
+Не используй дежурные мета-оскорбления про словарный запас, детский сад, цирк,
+конструктив, комплексы, фантазёра или альфа-самца, если это не буквальная новая
+самоподстава текущей реплики. Не пересказывай мораль и не объясняй оппоненту его
+психологию.
+
+Обычно 1–2 коротких предложения. Мат допустим и естественен, но обычно 0–2
+матерных элемента достаточно: он усиливает шутку, а не заменяет её. Можно
+вернуть точное слово/формулировку оппонента, особенно если он её повторяет.
+Не придумывай биографию, диагнозы, ориентацию, зависимости или реальные
+интимные предпочтения: шути только над наблюдаемым поведением и тем, что человек
+сам написал. Гиперболическая псевдонаучная метафора допустима только как явно
+комическая метафора поведения, а не как утверждение реального диагноза.
 """
 
 
