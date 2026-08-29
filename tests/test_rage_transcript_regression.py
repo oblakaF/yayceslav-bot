@@ -8,12 +8,13 @@ def setup_function():
 def test_sniff_loop_uses_observed_words_without_inventing_biography():
     roast_engine.observe_and_plan(100, 7, "Хуй будешь нюхать?")
     plan = roast_engine.observe_and_plan(100, 7, "По факту метнулся к хую и нюхаешь")
-    prompt = roast_engine.prompt_for_plan(plan)
+    prompt = roast_engine.prompt_for_plan(plan).lower()
 
     assert plan.angle == "fixation"
     assert any("нюх" in line.lower() or "хую" in line.lower() for line in plan.evidence)
-    assert "реальные интимные предпочтения" in prompt
-    assert "наблюдаемым поведением" in prompt
+    assert "не придумывай биографию" in prompt
+    assert "наблюдаем" in prompt
+    assert "что человек сам написал" in prompt or "сам написал" in prompt
 
 
 def test_bait_reveal_is_an_attack_angle_not_a_new_fact():
