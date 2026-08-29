@@ -28,6 +28,7 @@ import member_profile_runtime
 import episodic_memory_runtime
 import pairwise_relationship_runtime
 import member_memory_safety_patch  # noqa: F401
+import claim_memory_v3  # noqa: F401
 import dialogue_followup_mode_patch
 
 import monthly_social_runtime
@@ -56,6 +57,7 @@ import conflict_fsm_runtime
 import title_conflict_runtime
 import search_context_runtime
 import search_slang_runtime
+import lexical_search_v3
 import evidence_grounding_runtime
 import voice2_runtime
 import recent_video_note_runtime
@@ -76,6 +78,7 @@ RUNTIME_LOAD_ORDER = (
     "episodic_memory_runtime",
     "pairwise_relationship_runtime",
     "member_memory_safety_patch",
+    "claim_memory_v3",
     "dialogue_followup_mode_patch",
     "monthly_social_runtime",
     "unified_daily_title_runtime",
@@ -97,6 +100,7 @@ RUNTIME_LOAD_ORDER = (
     "title_conflict_runtime",
     "search_context_runtime",
     "search_slang_runtime",
+    "lexical_search_v3",
     "evidence_grounding_runtime",
     "voice2_runtime",
     "recent_video_note_runtime",
@@ -217,6 +221,8 @@ def prepare_application_runtime(application: Application) -> None:
         logging.warning("Search context runtime: bot module not ready")
     if not search_slang_runtime.install():
         logging.warning("Search slang runtime: bot module not ready")
+    if not lexical_search_v3.install():
+        logging.warning("Lexical search v3: bot module not ready")
     evidence_grounding_runtime.prepare_application_runtime(application)
 
     # Install v3 AFTER conflict, voice and search wrappers. Its current-turn
