@@ -7,22 +7,26 @@ def setup_function():
     roast_engine._SESSIONS.clear()
 
 
-def test_repeated_sniff_theme_prefers_fixation():
-    roast_engine.observe_and_plan(1, 2, "хуй будешь нюхать?")
-    roast_engine.observe_and_plan(1, 2, "ну че нюхал хуй?")
-    plan = roast_engine.observe_and_plan(1, 2, "нюхай хуй дальше")
-    assert plan.angle == "fixation"
-    assert plan.callback
+def test_repeated_sniff_theme_prefers_fixation_when_first_detected():
+    first = roast_engine.observe_and_plan(1, 2, "хуй будешь нюхать?")
+    second = roast_engine.observe_and_plan(1, 2, "ну че нюхал хуй?")
+
+    assert first.angle != "fixation"
+    assert second.angle == "fixation"
+    assert second.callback
 
 
-def test_angle_does_not_repeat_immediately():
+def test_fixation_rotates_away_on_immediate_followup():
     first = roast_engine.observe_and_plan(10, 20, "хуй будешь нюхать?")
     second = roast_engine.observe_and_plan(10, 20, "ну че нюхал хуй?")
     third = roast_engine.observe_and_plan(10, 20, "нюхай хуй дальше")
     fourth = roast_engine.observe_and_plan(10, 20, "опять нюхай хуй")
-    assert third.angle == "fixation"
-    assert fourth.angle != third.angle
-    assert first.angle != second.angle or second.angle != third.angle
+
+    assert second.angle == "fixation"
+    assert third.angle != second.angle
+    assert "fixation" in third.avoid
+    assert first.angle != second.angle
+    assert fourth.angle in roast_engine.roast_lexicon.ANGLE_LABELS
 
 
 def test_failed_bait_is_detected():
