@@ -66,6 +66,7 @@ import recent_video_note_runtime
 import sticker_tuning_runtime
 import fight_routing_v3
 import fight_routing_v3_patterns  # noqa: F401
+import roast_engine_runtime
 
 
 RUNTIME_LOAD_ORDER = (
@@ -110,6 +111,7 @@ RUNTIME_LOAD_ORDER = (
     "sticker_tuning_runtime",
     "fight_routing_v3",
     "fight_routing_v3_patterns",
+    "roast_engine_runtime",
 )
 
 
@@ -240,6 +242,12 @@ def prepare_application_runtime(application: Application) -> None:
     # has already extended the observed live-language regexes used below.
     fight_routing_v3.prepare_application_runtime(application)
 
+    # Roast planning is the final RAGE prompt layer. It does not own conflict
+    # state and makes no second model call; it only supplies a rotating attack
+    # angle/callback to the already selected RAGE request.
+    if not roast_engine_runtime.install():
+        logging.warning("Roast engine v1 runtime: bot module not ready")
+
     chat_digest_runtime.prepare_application_runtime(application)
     roast_target_runtime.prepare_application_runtime(application)
     natural_router_runtime.prepare_application_runtime(application)
@@ -258,8 +266,8 @@ def _install_preflight_hook() -> None:
         except Exception:
             logging.exception("Schema migration preflight failed; polling not started")
             raise
-        prepare_application_runtime(self)
         prepare_polling_runtime(kwargs)
+        prepare_application_runtime(self)
         return original_run_polling(self, *args, **kwargs)
 
     Application.run_polling = run_polling_with_schema_preflight
