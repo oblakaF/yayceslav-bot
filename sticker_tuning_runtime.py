@@ -60,6 +60,13 @@ def _apply_tuning() -> None:
                 float(chance) + PROBABILITY_BUMP,
             )
 
+    # Snapshot the intentionally tuned semantic layer before fight-v2 installs.
+    # Fight-v2 has its own guaranteed RAGE-sticker path; its legacy helper also
+    # tries to raise hostile semantic event chances to 10%, which would silently
+    # override the bounded +5pp contract above. Restore this snapshot afterwards
+    # instead of letting the two independent mechanisms fight over one variable.
+    tuned_event_chances = dict(sticker_engine.EVENT_CHANCE)
+
     sticker_interaction.QUESTION_STICKER_REPLY_CHANCE = QUESTION_CHANCE
     sticker_post_runtime.POST_TEXT_TAG_CHANCE = POST_TEXT_TAG_CHANCE
 
@@ -85,11 +92,16 @@ def _apply_tuning() -> None:
     import fight_mode_v2_tuning
     fight_mode_v2_tuning.install()
 
+    # Dedicated RAGE visuals remain active, while normal semantic probabilities
+    # stay exactly at the values produced by the bounded tuning pass above.
+    for event, chance in tuned_event_chances.items():
+        sticker_engine.EVENT_CHANCE[event] = float(chance)
+
     _APPLIED = True
     logging.warning(
-        "Sticker tuning ready: background<=8%%, question<=12%%, post-tag<=13%%, "
-        "aggressive-events<=6%% (+ fight-v2 RAGE override), cooldown=8m/chat "
-        "15m/user, max=3/hour; group sticker replies must target bot"
+        "Sticker tuning ready: background/events<=8%%, aggressive-events<=6%%, "
+        "question<=12%%, post-tag<=13%%, dedicated fight-v2 RAGE stickers, "
+        "cooldown=8m/chat 15m/user, max=3/hour; group sticker replies must target bot"
     )
 
 

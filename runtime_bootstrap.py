@@ -35,6 +35,9 @@ import unified_daily_title_runtime
 import relationship_experience_runtime
 import whoami_profile_v3_runtime
 import monthly_memory_scope_patch  # noqa: F401
+# Must load after monthly_memory_scope_patch: it wraps the final monthly
+# callback-term recorder so a whole sensitive bait message is skipped.
+import claim_memory_v3
 import whoami_profile_v4_runtime
 
 import daily_content_runtime
@@ -56,10 +59,14 @@ import conflict_fsm_runtime
 import title_conflict_runtime
 import search_context_runtime
 import search_slang_runtime
+import lexical_search_v3
 import evidence_grounding_runtime
 import voice2_runtime
 import recent_video_note_runtime
 import sticker_tuning_runtime
+import fight_routing_v3
+import fight_routing_v3_patterns  # noqa: F401
+import roast_engine_runtime
 
 
 RUNTIME_LOAD_ORDER = (
@@ -81,6 +88,7 @@ RUNTIME_LOAD_ORDER = (
     "relationship_experience_runtime",
     "whoami_profile_v3_runtime",
     "monthly_memory_scope_patch",
+    "claim_memory_v3",
     "whoami_profile_v4_runtime",
     "daily_content_runtime",
     "daily_content_source_patch",
@@ -96,10 +104,14 @@ RUNTIME_LOAD_ORDER = (
     "title_conflict_runtime",
     "search_context_runtime",
     "search_slang_runtime",
+    "lexical_search_v3",
     "evidence_grounding_runtime",
     "voice2_runtime",
     "recent_video_note_runtime",
     "sticker_tuning_runtime",
+    "fight_routing_v3",
+    "fight_routing_v3_patterns",
+    "roast_engine_runtime",
 )
 
 
@@ -168,6 +180,11 @@ def _prepare_sticker_menu_runtime(application: Application) -> None:
 def prepare_application_runtime(application: Application) -> None:
     """Prepare application-owned features from one explicit startup path."""
     _prepare_sticker_menu_runtime(application)
+
+    bot_module = _find_bot_module()
+    if bot_module is not None and not claim_memory_v3.install_short_term_guard(bot_module):
+        logging.warning("Claim memory v3 short-term guard: bot module not ready")
+
     unified_daily_title_runtime._prepare()
     monthly_social_runtime._prepare_application(application)
     relationship_experience_runtime._prepare_application(application)
@@ -215,7 +232,21 @@ def prepare_application_runtime(application: Application) -> None:
         logging.warning("Search context runtime: bot module not ready")
     if not search_slang_runtime.install():
         logging.warning("Search slang runtime: bot module not ready")
+    if not lexical_search_v3.install():
+        logging.warning("Lexical search v3: bot module not ready")
     evidence_grounding_runtime.prepare_application_runtime(application)
+
+    # Install v3 AFTER conflict, voice and search wrappers. Its current-turn
+    # extraction therefore becomes the outer routing guard while the existing
+    # FSM remains the single conflict-state owner. The imported patterns module
+    # has already extended the observed live-language regexes used below.
+    fight_routing_v3.prepare_application_runtime(application)
+
+    # Roast planning is the final RAGE prompt layer. It does not own conflict
+    # state and makes no second model call; it only supplies a rotating attack
+    # angle/callback to the already selected RAGE request.
+    if not roast_engine_runtime.install():
+        logging.warning("Roast engine v1 runtime: bot module not ready")
 
     chat_digest_runtime.prepare_application_runtime(application)
     roast_target_runtime.prepare_application_runtime(application)
@@ -235,8 +266,8 @@ def _install_preflight_hook() -> None:
         except Exception:
             logging.exception("Schema migration preflight failed; polling not started")
             raise
-        prepare_application_runtime(self)
         prepare_polling_runtime(kwargs)
+        prepare_application_runtime(self)
         return original_run_polling(self, *args, **kwargs)
 
     Application.run_polling = run_polling_with_schema_preflight
