@@ -60,6 +60,13 @@ def _apply_tuning() -> None:
                 float(chance) + PROBABILITY_BUMP,
             )
 
+    # Snapshot the intentionally tuned semantic layer before fight-v2 installs.
+    # Fight-v2 has its own guaranteed RAGE-sticker path; its legacy helper also
+    # tries to raise hostile semantic event chances to 10%, which would silently
+    # override the bounded +5pp contract above. Restore this snapshot afterwards
+    # instead of letting the two independent mechanisms fight over one variable.
+    tuned_event_chances = dict(sticker_engine.EVENT_CHANCE)
+
     sticker_interaction.QUESTION_STICKER_REPLY_CHANCE = QUESTION_CHANCE
     sticker_post_runtime.POST_TEXT_TAG_CHANCE = POST_TEXT_TAG_CHANCE
 
@@ -85,17 +92,10 @@ def _apply_tuning() -> None:
     import fight_mode_v2_tuning
     fight_mode_v2_tuning.install()
 
-    # Fight-v2 has its own guaranteed RAGE-sticker budget. Its legacy event bump
-    # therefore does not need to exceed the ordinary semantic-event ceilings.
-    # Preserve the stricter 6% cap for hard dismissals while keeping all other
-    # background events at or below 8%; guaranteed RAGE visuals are independent.
-    for event, chance in tuple(sticker_engine.EVENT_CHANCE.items()):
-        cap = (
-            AGGRESSIVE_EVENT_CAP
-            if event in {"hard_dismissal", "shut_up_escalated"}
-            else BACKGROUND_CAP
-        )
-        sticker_engine.EVENT_CHANCE[event] = min(cap, float(chance))
+    # Dedicated RAGE visuals remain active, while normal semantic probabilities
+    # stay exactly at the values produced by the bounded tuning pass above.
+    for event, chance in tuned_event_chances.items():
+        sticker_engine.EVENT_CHANCE[event] = float(chance)
 
     _APPLIED = True
     logging.warning(
