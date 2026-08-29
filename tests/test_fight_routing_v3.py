@@ -1,4 +1,5 @@
 import fight_routing_v3 as v3
+import fight_routing_v3_patterns  # noqa: F401  # extends observed live-language patterns
 
 
 def test_current_turn_ignores_old_serious_context():
