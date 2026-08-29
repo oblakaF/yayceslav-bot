@@ -34,6 +34,7 @@ from telegram.constants import ChatType
 from telegram.ext import Application, MessageHandler, filters
 
 import conflict_fsm_runtime
+import fight_patterns
 import hostile_streak_engine
 import primitive_compact_guard
 
@@ -61,20 +62,7 @@ _CURRENT_TURN_MARKERS = (
 )
 _SEARCH_RESULTS_MARKER = "Результаты поиска:"
 
-_EXTRA_FIGHT_RE = re.compile(
-    r"(?:"
-    r"\bты\s+(?:ну\s+и\s+)?(?:залупа|пиздабол|хуесос|у[её]бан|долбо[её]б|мудак|чмо|гумыза)\w*\b|"
-    r"\b(?:ху[йя])\s+(?:будешь\s+)?нюхать\b|"
-    r"\bнюхал\s+ху[йя]\b|"
-    r"\bметнул(?:ся|ась)\s+к\s+ху[йя]\b|"
-    r"\b(?:нюхай|нюхать)\s+ху[йя]\b|"
-    r"\bты\s+нарываешься\b|"
-    r"\bне\s+указывай\s+мне\s+что\s+делать\b.{0,80}\bместо\s+яйцеслава\b|"
-    r"\bпапа\s+в\s+прайме\b|"
-    r"\bотчество\s+нюх\b"
-    r")",
-    re.IGNORECASE | re.DOTALL,
-)
+_EXTRA_FIGHT_RE = fight_patterns.EXTRA_FIGHT_RE
 
 _RECONCILE_RE = re.compile(
     r"(?:"
@@ -87,15 +75,7 @@ _RECONCILE_RE = re.compile(
     re.IGNORECASE,
 )
 
-_BAIT_REVEAL_RE = re.compile(
-    r"(?:"
-    r"\b(?:байт|байтил|байтила|разв[её]л|развела|наебал|наебала|на[её]бка)\b|"
-    r"\b(?:шутил|шутила|пошутил|пошутила|прикалывался|прикалывалась)\b|"
-    r"\bфотк\w*\s+.{0,24}\b(?:недел|месяц|год)\w*\s+назад\b|"
-    r"\bна\s+самом\s+деле\b.{0,50}\b(?:жив|норм|не\s+умер|не\s+было)\b"
-    r")",
-    re.IGNORECASE | re.DOTALL,
-)
+_BAIT_REVEAL_RE = fight_patterns.BAIT_REVEAL_RE
 
 _SELF_QUOTE_CHALLENGE_RE = re.compile(
     r"(?:"
