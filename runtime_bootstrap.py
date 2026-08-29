@@ -65,6 +65,7 @@ import voice2_runtime
 import recent_video_note_runtime
 import sticker_tuning_runtime
 import fight_routing_v3
+import fight_routing_v3_patterns  # noqa: F401
 
 
 RUNTIME_LOAD_ORDER = (
@@ -108,6 +109,7 @@ RUNTIME_LOAD_ORDER = (
     "recent_video_note_runtime",
     "sticker_tuning_runtime",
     "fight_routing_v3",
+    "fight_routing_v3_patterns",
 )
 
 
@@ -234,7 +236,8 @@ def prepare_application_runtime(application: Application) -> None:
 
     # Install v3 AFTER conflict, voice and search wrappers. Its current-turn
     # extraction therefore becomes the outer routing guard while the existing
-    # FSM remains the single conflict-state owner.
+    # FSM remains the single conflict-state owner. The imported patterns module
+    # has already extended the observed live-language regexes used below.
     fight_routing_v3.prepare_application_runtime(application)
 
     chat_digest_runtime.prepare_application_runtime(application)
