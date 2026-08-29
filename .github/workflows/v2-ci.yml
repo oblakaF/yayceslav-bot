@@ -7,12 +7,14 @@ on:
       - feature/human-yayceslav-v2-audit-safe
       - feature/human-yayceslav-v2-audit-architecture
       - feature/yayceslav-new-sticker-semantics
+      - fight-routing-v3
   pull_request:
     branches:
       - feature/human-yayceslav
       - feature/human-yayceslav-v2
       - feature/human-yayceslav-v2-audit-safe
       - feature/human-yayceslav-v2-audit-architecture
+      - feature/rage-consistency-punches
 
 jobs:
   test:
@@ -42,15 +44,17 @@ jobs:
           daily_title_engine.py state_engine.py thinking_engine.py title_pools.py runtime_config.py schema_migrations.py
           chat_native_engine.py feedback_engine.py humanizer_engine.py adaptation_cache.py runtime_bootstrap.py
           hostile_streak_engine.py sticker_engine.py sticker_interaction.py sticker_runtime.py
-          sticker_post_runtime.py sticker_tuning_runtime.py primitive_compact_guard.py scoped_help_runtime.py command_menu.py
-          member_profile_runtime.py member_repository.py dialogue_guard_runtime.py accountability_runtime.py member_memory_safety_patch.py
-          dialogue_followup_mode_patch.py chat_member_updates_patch.py
+          sticker_post_runtime.py sticker_tuning_runtime.py fight_mode_v2_tuning.py fight_routing_v3.py
+          primitive_compact_guard.py scoped_help_runtime.py command_menu.py
+          member_profile_runtime.py member_repository.py dialogue_guard_runtime.py accountability_runtime.py
+          member_memory_safety_patch.py claim_memory_v3.py dialogue_followup_mode_patch.py chat_member_updates_patch.py
           unified_daily_title_runtime.py relationship_experience_runtime.py
           whoami_profile_v3_runtime.py whoami_profile_v4_runtime.py whoami_dynamic_verdict.py
           monthly_social_runtime.py monthly_report_timing_patch.py monthly_memory_scope_patch.py
           monthly_theme_quality_patch.py whoami_verdict_style_patch.py daily_content_runtime.py
           daily_content_source_patch.py praise_guard_runtime.py sticker_semantics_aug19.py
           rate_limit_tlen_runtime.py natural_router_runtime.py search_enrichment_runtime.py
-          chat_digest_runtime.py date_grounding_runtime.py search_context_runtime.py
+          chat_digest_runtime.py date_grounding_runtime.py search_context_runtime.py search_slang_runtime.py
+          lexical_search_v3.py evidence_grounding_runtime.py recent_video_note_runtime.py title_conflict_runtime.py
       - name: Test
         run: pytest -q
