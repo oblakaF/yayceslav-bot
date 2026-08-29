@@ -60,6 +60,7 @@ import evidence_grounding_runtime
 import voice2_runtime
 import recent_video_note_runtime
 import sticker_tuning_runtime
+import fight_routing_v3
 
 
 RUNTIME_LOAD_ORDER = (
@@ -100,6 +101,7 @@ RUNTIME_LOAD_ORDER = (
     "voice2_runtime",
     "recent_video_note_runtime",
     "sticker_tuning_runtime",
+    "fight_routing_v3",
 )
 
 
@@ -216,6 +218,11 @@ def prepare_application_runtime(application: Application) -> None:
     if not search_slang_runtime.install():
         logging.warning("Search slang runtime: bot module not ready")
     evidence_grounding_runtime.prepare_application_runtime(application)
+
+    # Install v3 AFTER conflict, voice and search wrappers. Its current-turn
+    # extraction therefore becomes the outer routing guard while the existing
+    # FSM remains the single conflict-state owner.
+    fight_routing_v3.prepare_application_runtime(application)
 
     chat_digest_runtime.prepare_application_runtime(application)
     roast_target_runtime.prepare_application_runtime(application)
