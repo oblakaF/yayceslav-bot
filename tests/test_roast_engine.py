@@ -47,3 +47,43 @@ def test_prompt_keeps_profanity_as_support_not_goal():
     assert "Мат допустим" in prompt
     assert "0–2" in prompt
     assert "Не придумывай биографию" in prompt
+
+
+def test_regression_repeated_sniff_fight_keeps_exact_recent_evidence():
+    roast_engine.observe_and_plan(100, 77, "Хуй будешь нюхать?")
+    plan = roast_engine.observe_and_plan(100, 77, "По факту метнулся к хую и нюхаешь")
+    prompt = roast_engine.prompt_for_plan(plan)
+
+    assert plan.angle == "fixation"
+    assert "Хуй будешь нюхать?" in plan.evidence
+    assert "метнулся к хую" in prompt
+    assert "конкретное наблюдение" in prompt
+
+
+def test_regression_bait_reveal_attacks_reveal_not_invented_biography():
+    plan = roast_engine.observe_and_plan(101, 88, "Ахах, да я тебя просто байтил")
+    prompt = roast_engine.prompt_for_plan(plan)
+
+    assert plan.angle == "failed_bait"
+    assert plan.evidence == ("Ахах, да я тебя просто байтил",)
+    assert "самоподстав" in prompt
+    assert "Не придумывай биографию" in prompt
+
+
+def test_quality_prompt_rejects_stale_generic_roast_shortcuts():
+    plan = roast_engine.observe_and_plan(102, 99, "Ну ты и залупа")
+    prompt = roast_engine.prompt_for_plan(plan).lower()
+
+    for stale in ("словарный запас", "детский сад", "цирк", "конструктив", "комплексы", "альфа-самца"):
+        assert stale in prompt
+    assert "придумай заново" in prompt
+    assert "1–2 коротких предложения" in prompt
+
+
+def test_evidence_window_is_bounded_to_four_unique_recent_lines():
+    for idx in range(7):
+        plan = roast_engine.observe_and_plan(103, 55, f"реплика номер {idx} про спор")
+
+    assert len(plan.evidence) == 4
+    assert plan.evidence[0].startswith("реплика номер 3")
+    assert plan.evidence[-1].startswith("реплика номер 6")
