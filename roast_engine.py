@@ -1,8 +1,8 @@
 """Context-aware RAGE roast planner.
 
-The engine does not make another model call.  It turns the recent fight text
+The engine does not make another model call. It turns the recent fight text
 already present in the prompt into a tiny plan: what weakness is visible, what
-angle to use next, and which stale angles to avoid.  The normal Gemini request
+angle to use next, and which stale angles to avoid. The normal Gemini request
 then writes the actual line in Yayceslav's voice.
 """
 
@@ -103,7 +103,10 @@ def _pick_angle(messages: list[str], used: deque[str]) -> tuple[str, str]:
 
     sniff_hits = len(_SNIFF_RE.findall(joined))
     if sniff_hits >= 3:
-        candidates.append((12 + sniff_hits, "fixation", "оппонент снова и снова тащит одну и ту же тему"))
+        # A repeated concrete sexual/sniffing theme is more specific and useful
+        # than generic lexical repetition. Give it a deliberately dominant score;
+        # anti-repeat below can still rotate away from fixation on the next turn.
+        candidates.append((30 + sniff_hits, "fixation", "оппонент снова и снова тащит одну и ту же тему"))
 
     repeat = _repetition_score(messages[-6:])
     if repeat >= 3:
