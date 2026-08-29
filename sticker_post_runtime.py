@@ -115,10 +115,20 @@ def choose_post_text_tag(source_user_text: str, answer_text: str) -> str | None:
 def _is_rage_exchange(chat_id: int, user_id: int, source_user_text: str) -> bool:
     if hostile_streak_engine.current(int(chat_id), int(user_id)) < hostile_streak_engine.HOSTILE_ESCALATION_FROM:
         return False
+
+    # Production conflict is owned by conflict_fsm_runtime.  The old
+    # rage_hotfix_runtime is rollback/history only and must not decide whether
+    # a current fight deserves a sticker.
     try:
-        import rage_hotfix_runtime
-        return rage_hotfix_runtime.is_extra_hostile(source_user_text) or rage_hotfix_runtime._is_hostile(
-            rage_hotfix_runtime._find_bot_module(), source_user_text
+        import conflict_fsm_runtime
+
+        bot_module = conflict_fsm_runtime._find_bot_module()
+        return bool(
+            conflict_fsm_runtime.is_extra_hostile(source_user_text)
+            or (
+                bot_module is not None
+                and conflict_fsm_runtime.is_direct_hostile(bot_module, source_user_text)
+            )
         )
     except Exception:
         return False
