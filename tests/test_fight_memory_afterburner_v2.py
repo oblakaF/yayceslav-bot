@@ -69,7 +69,15 @@ def test_no_grounded_memory_preserves_existing_afterburner():
 
 
 def test_memory_is_scoped_by_existing_afterburner_state():
-    first = v3.AfterburnerState(chat_id=-100, user_id=1, fight_texts=["первый первый"])
-    second = v3.AfterburnerState(chat_id=-100, user_id=2, fight_texts=["второй второй"])
+    first = v3.AfterburnerState(
+        chat_id=-100,
+        user_id=1,
+        fight_texts=["первый заход", "первый ответ"],
+    )
+    second = v3.AfterburnerState(
+        chat_id=-100,
+        user_id=2,
+        fight_texts=["второй заход", "второй ответ"],
+    )
     assert memory.callback_token(first.fight_texts).lower() == "первый"
     assert memory.callback_token(second.fight_texts).lower() == "второй"
