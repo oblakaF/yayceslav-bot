@@ -1,0 +1,57 @@
+name: Apply fight pattern cleanup
+
+on:
+  push:
+    branches:
+      - cleanup/fight-pattern-source-of-truth
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cleanup/fight-pattern-source-of-truth
+      - name: Replace monkey-patch with declarative pattern imports
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('fight_routing_v3.py')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('import conflict_fsm_runtime\nimport hostile_streak_engine', 'import conflict_fsm_runtime\nimport fight_patterns\nimport hostile_streak_engine', 1)
+          start = s.index('_EXTRA_FIGHT_RE = re.compile(')
+          end = s.index('\n\n_RECONCILE_RE =', start)
+          s = s[:start] + '_EXTRA_FIGHT_RE = fight_patterns.EXTRA_FIGHT_RE' + s[end:]
+          start = s.index('_BAIT_REVEAL_RE = re.compile(')
+          end = s.index('\n\n_SELF_QUOTE_CHALLENGE_RE =', start)
+          s = s[:start] + '_BAIT_REVEAL_RE = fight_patterns.BAIT_REVEAL_RE' + s[end:]
+          p.write_text(s, encoding='utf-8')
+
+          b = Path('runtime_bootstrap.py')
+          s = b.read_text(encoding='utf-8')
+          s = s.replace('import fight_routing_v3_patterns  # noqa: F401\n', '')
+          s = s.replace('    "fight_routing_v3_patterns",\n', '')
+          b.write_text(s, encoding='utf-8')
+
+          a = Path('ARCHITECTURE_OWNERSHIP.md')
+          s = a.read_text(encoding='utf-8')
+          s = s.replace('`fight_routing_v3_patterns.py`, `primitive_compact_guard.py`', '`fight_patterns.py`, `primitive_compact_guard.py`')
+          old = '''### Fight regex split\n\n`fight_routing_v3_patterns.py` mutates regex objects in `fight_routing_v3` at import time. This is intentional historical hotfix behavior but obscures the effective production pattern set. Future cleanup should move the complete pattern catalog to one declarative module and have both routing and tests import it without monkey-patching.\n'''
+          new = '''### Fight regex ownership\n\n`fight_patterns.py` is the declarative source of truth for Fight Routing v3 fight/bait patterns. It has no installation side effects and must not mutate routing modules at import time.\n'''
+          s = s.replace(old, new)
+          a.write_text(s, encoding='utf-8')
+          PY
+          rm fight_routing_v3_patterns.py
+          rm .github/workflows/apply-fight-pattern-cleanup.yml
+          python -m py_compile fight_patterns.py fight_routing_v3.py runtime_bootstrap.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Replace fight pattern monkey-patch with single source of truth"
+          git push origin HEAD:cleanup/fight-pattern-source-of-truth
