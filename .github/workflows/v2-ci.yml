@@ -15,6 +15,7 @@ on:
       - feature/human-yayceslav-v2-audit-safe
       - feature/human-yayceslav-v2-audit-architecture
       - feature/rage-consistency-punches
+      - fight-routing-v3
 
 jobs:
   test:
