@@ -16,7 +16,7 @@ It describes **production ownership**, not every historical file that remains in
 | Concern | Production owner | Supporting layers | Legacy / historical boundary |
 | --- | --- | --- | --- |
 | Conflict phase/state | `conflict_fsm_runtime.py` | `social_priority_runtime.py`, `title_conflict_runtime.py` | `conflict_rage_runtime.py`, `rage_hotfix_runtime.py` are rollback/history and must not be installed |
-| Fight turn routing | `fight_routing_v3.py` | `fight_routing_v3_patterns.py`, `primitive_compact_guard.py` | older fight/rage branch implementations are history once merged |
+| Fight turn routing | `fight_routing_v3.py` | `fight_patterns.py`, `primitive_compact_guard.py` | older fight/rage branch implementations are history once merged |
 | RAGE punch planning | `roast_engine.py` | `roast_engine_runtime.py`, `roast_lexicon.py` | do not add another RAGE state owner or second Gemini call |
 | Claim-sensitive memory | `claim_memory_v3.py` | monthly/short-term memory recorders | sensitive bait must remain a claim, not biography |
 | Voice/media response | `voice2_runtime.py` | `recent_video_note_runtime.py` | older voice behavior must not independently capture/replace the final Gemini stack |
@@ -37,9 +37,9 @@ The responsibilities are deliberately different:
 
 ## Known cleanup debt
 
-### Fight regex split
+### Fight regex ownership
 
-`fight_routing_v3_patterns.py` mutates regex objects in `fight_routing_v3` at import time. This is intentional historical hotfix behavior but obscures the effective production pattern set. Future cleanup should move the complete pattern catalog to one declarative module and have both routing and tests import it without monkey-patching.
+`fight_patterns.py` is the declarative source of truth for Fight Routing v3 fight/bait patterns. It has no installation side effects and must not mutate routing modules at import time.
 
 ### Historical conflict modules
 

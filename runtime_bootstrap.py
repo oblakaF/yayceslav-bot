@@ -65,7 +65,6 @@ import voice2_runtime
 import recent_video_note_runtime
 import sticker_tuning_runtime
 import fight_routing_v3
-import fight_routing_v3_patterns  # noqa: F401
 import roast_engine_runtime
 
 
@@ -110,7 +109,6 @@ RUNTIME_LOAD_ORDER = (
     "recent_video_note_runtime",
     "sticker_tuning_runtime",
     "fight_routing_v3",
-    "fight_routing_v3_patterns",
     "roast_engine_runtime",
 )
 
