@@ -28,7 +28,6 @@ import member_profile_runtime
 import episodic_memory_runtime
 import pairwise_relationship_runtime
 import member_memory_safety_patch  # noqa: F401
-import claim_memory_v3  # noqa: F401
 import dialogue_followup_mode_patch
 
 import monthly_social_runtime
@@ -36,6 +35,9 @@ import unified_daily_title_runtime
 import relationship_experience_runtime
 import whoami_profile_v3_runtime
 import monthly_memory_scope_patch  # noqa: F401
+# Must load after monthly_memory_scope_patch: it wraps the final monthly
+# callback-term recorder so a whole sensitive bait message is skipped.
+import claim_memory_v3
 import whoami_profile_v4_runtime
 
 import daily_content_runtime
@@ -78,13 +80,13 @@ RUNTIME_LOAD_ORDER = (
     "episodic_memory_runtime",
     "pairwise_relationship_runtime",
     "member_memory_safety_patch",
-    "claim_memory_v3",
     "dialogue_followup_mode_patch",
     "monthly_social_runtime",
     "unified_daily_title_runtime",
     "relationship_experience_runtime",
     "whoami_profile_v3_runtime",
     "monthly_memory_scope_patch",
+    "claim_memory_v3",
     "whoami_profile_v4_runtime",
     "daily_content_runtime",
     "daily_content_source_patch",
@@ -174,6 +176,11 @@ def _prepare_sticker_menu_runtime(application: Application) -> None:
 def prepare_application_runtime(application: Application) -> None:
     """Prepare application-owned features from one explicit startup path."""
     _prepare_sticker_menu_runtime(application)
+
+    bot_module = _find_bot_module()
+    if bot_module is not None and not claim_memory_v3.install_short_term_guard(bot_module):
+        logging.warning("Claim memory v3 short-term guard: bot module not ready")
+
     unified_daily_title_runtime._prepare()
     monthly_social_runtime._prepare_application(application)
     relationship_experience_runtime._prepare_application(application)
