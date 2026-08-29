@@ -85,11 +85,18 @@ def _apply_tuning() -> None:
     import fight_mode_v2_tuning
     fight_mode_v2_tuning.install()
 
+    # Fight-v2 has a dedicated guaranteed RAGE-sticker budget, so its legacy
+    # semantic-event bump does not need to push ordinary event probabilities
+    # beyond the shared 8% background ceiling.  Keep the event layer bounded;
+    # guaranteed fight visuals are handled separately by the RAGE hook.
+    for event, chance in tuple(sticker_engine.EVENT_CHANCE.items()):
+        sticker_engine.EVENT_CHANCE[event] = min(BACKGROUND_CAP, float(chance))
+
     _APPLIED = True
     logging.warning(
-        "Sticker tuning ready: background<=8%%, question<=12%%, post-tag<=13%%, "
-        "aggressive-events<=6%% (+ fight-v2 RAGE override), cooldown=8m/chat "
-        "15m/user, max=3/hour; group sticker replies must target bot"
+        "Sticker tuning ready: background/events<=8%%, question<=12%%, post-tag<=13%%, "
+        "dedicated fight-v2 RAGE stickers, cooldown=8m/chat 15m/user, max=3/hour; "
+        "group sticker replies must target bot"
     )
 
 
