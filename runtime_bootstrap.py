@@ -65,6 +65,7 @@ import voice2_runtime
 import recent_video_note_runtime
 import sticker_tuning_runtime
 import fight_routing_v3
+import fight_memory_afterburner_v2
 import roast_engine_runtime
 
 
@@ -109,6 +110,7 @@ RUNTIME_LOAD_ORDER = (
     "recent_video_note_runtime",
     "sticker_tuning_runtime",
     "fight_routing_v3",
+    "fight_memory_afterburner_v2",
     "roast_engine_runtime",
 )
 
@@ -236,9 +238,14 @@ def prepare_application_runtime(application: Application) -> None:
 
     # Install v3 AFTER conflict, voice and search wrappers. Its current-turn
     # extraction therefore becomes the outer routing guard while the existing
-    # FSM remains the single conflict-state owner. The imported patterns module
-    # has already extended the observed live-language regexes used below.
+    # FSM remains the single conflict-state owner.
     fight_routing_v3.prepare_application_runtime(application)
+
+    # Enrich the existing one-shot afterburner with bounded, target-authored
+    # fight memory. This owns no FSM/timer/model call and excludes sensitive
+    # claims wholesale through claim_memory_v3.
+    if not fight_memory_afterburner_v2.install():
+        logging.warning("Fight memory afterburner v2: install failed")
 
     # Roast planning is the final RAGE prompt layer. It does not own conflict
     # state and makes no second model call; it only supplies a rotating attack
