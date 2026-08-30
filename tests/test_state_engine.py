@@ -60,6 +60,26 @@ def test_dokop_can_mark_argumentative_for_following_turns():
     ) == "argumentative"
 
 
+def test_argumentative_state_does_not_leak_to_another_sender_in_same_chat():
+    token = state_engine.push_actor_scope(101)
+    try:
+        state_engine.resolve_state(77, conversation_mode="normal", now=1000.0)
+        state_engine.mark_argumentative(77, now=1001.0)
+        assert state_engine.resolve_state(
+            77, conversation_mode="normal", now=1002.0
+        ) == "argumentative"
+    finally:
+        state_engine.pop_actor_scope(token)
+
+    other = state_engine.push_actor_scope(202)
+    try:
+        assert state_engine.resolve_state(
+            77, conversation_mode="normal", now=1002.0
+        ) == "cold_start"
+    finally:
+        state_engine.pop_actor_scope(other)
+
+
 def test_annoyed_biases_length_shorter():
     weights = state_engine.length_weight_multipliers("annoyed")
     assert weights["short"] > 1.0
