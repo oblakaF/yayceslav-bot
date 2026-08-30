@@ -1,0 +1,84 @@
+YAYCESLAV SOURCE-AVAILABLE PROPRIETARY LICENSE v1.0
+
+Copyright (c) 2026 Vadim Krysko. All rights reserved.
+
+This repository and the original software, documentation, prompts, persona text,
+behavior specifications, and other expressive materials authored for the
+Yayceslav project (collectively, the "Software") are proprietary materials of
+Vadim Krysko, except for third-party materials that are separately identified or
+licensed.
+
+1. LIMITED PERMISSION
+
+The Software is made publicly visible for inspection, evaluation, research, and
+educational review. You may use ordinary GitHub functionality made available by
+GitHub under its Terms of Service, including viewing and, where GitHub permits,
+forking the repository.
+
+You may also make a local copy solely for personal, non-commercial inspection,
+testing, or evaluation, provided that you keep this license and all copyright
+notices intact.
+
+No other license or permission is granted, whether by implication, estoppel, or
+otherwise.
+
+2. RESTRICTIONS
+
+Unless you have prior written permission from Vadim Krysko, you may not:
+
+(a) publish, redistribute, or make substantial portions of the Software
+    available to third parties outside the limited permissions above;
+(b) create, publish, distribute, host, or operate a modified, derivative, or
+    substantially derived version of Yayceslav for third-party use;
+(c) use the Software or a substantial derivative of it for commercial purposes,
+    including paid services, hosted services, resale, licensing, or monetized
+    products;
+(d) sublicense, sell, rent, lease, or otherwise transfer rights in the Software;
+(e) remove or alter copyright, ownership, attribution, or license notices; or
+(f) use the names "Yayceslav" or "Яйцеслав", project branding, logos, or other
+    project identifiers in a way that suggests an official release,
+    affiliation, sponsorship, or endorsement by Vadim Krysko.
+
+3. NO OPEN-SOURCE LICENSE
+
+This is a source-available proprietary license. It is not an open-source license
+and does not grant the freedoms associated with licenses such as MIT, Apache-2.0,
+GPL, BSD, or similar licenses.
+
+4. THIRD-PARTY MATERIALS
+
+Third-party libraries, APIs, assets, and other materials remain subject to their
+respective licenses, terms, and rights. Nothing in this license expands or
+restricts rights granted directly by those third parties.
+
+5. GITHUB TERMS
+
+Nothing in this license is intended to restrict rights that GitHub itself must
+have, or rights that GitHub users receive directly from GitHub, solely to the
+extent required for GitHub to host and provide its platform functionality under
+GitHub's Terms of Service.
+
+6. NO TRADEMARK REGISTRATION CLAIM
+
+This license does not by itself claim that any project name or identifier is a
+registered trademark. Branding restrictions in this license concern permission
+to use the project's identity and do not substitute for trademark registration
+where registration is required or desired.
+
+7. TERMINATION
+
+Any permission granted by this license terminates automatically if you materially
+violate its terms. Upon termination, you must cease any use that depends on the
+permissions granted by this license, subject to rights you may independently have
+under applicable law or third-party terms.
+
+8. DISCLAIMER
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR
+A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. TO THE MAXIMUM EXTENT
+PERMITTED BY LAW, THE COPYRIGHT HOLDER SHALL NOT BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR ITS USE.
+
+For permissions beyond this license, contact the copyright holder through the
+GitHub account associated with the official Yayceslav repository.
