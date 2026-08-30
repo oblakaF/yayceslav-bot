@@ -20,6 +20,7 @@ from telegram.constants import ChatType
 import claim_memory_v3
 import conflict_fsm_runtime
 import fight_memory_afterburner_v2
+import fight_routing_v3
 import hostile_streak_engine
 
 
@@ -64,6 +65,18 @@ def _is_rage(chat_id: int, user_id: int) -> bool:
         return False
 
 
+def _is_serious(text: str) -> bool:
+    value = str(text or "")
+    if claim_memory_v3.is_sensitive_claim_text(value):
+        return True
+    module = _find_bot_module()
+    classifier = getattr(module, "is_serious_text", None) if module is not None else None
+    try:
+        return bool(classifier and classifier(value))
+    except Exception:
+        return False
+
+
 def _state(chat_id: int, user_id: int, now: float) -> PaceState:
     key = (int(chat_id), int(user_id))
     current = _STATES.get(key)
@@ -77,7 +90,7 @@ def _state(chat_id: int, user_id: int, now: float) -> PaceState:
 def _callback_from_live_fight(chat_id: int, user_id: int, source_text: str) -> str:
     texts: list[str] = []
     try:
-        after = __import__("fight_routing_v3")._AFTERBURNER_STATES.get((int(chat_id), int(user_id)))
+        after = fight_routing_v3._AFTERBURNER_STATES.get((int(chat_id), int(user_id)))
         if after is not None:
             texts.extend(list(getattr(after, "fight_texts", ()) or ()))
     except Exception:
@@ -105,7 +118,7 @@ def should_double_punch(chat_id: int, user_id: int, source_text: str, *, now: fl
     text = " ".join(str(source_text or "").split()).strip()
     if len(text) < DOUBLE_PUNCH_MIN_SOURCE_LEN:
         return False
-    if claim_memory_v3.is_sensitive_claim_text(text):
+    if _is_serious(text) or fight_routing_v3.is_reconciliation(text):
         return False
     if not _is_rage(chat_id, user_id):
         return False
@@ -161,6 +174,8 @@ def install() -> bool:
 
         force_voice, source_text = _extract_send_answer_call(args, kwargs)
         if force_voice or bool(getattr(context, "user_data", {}).get("voice_mode", False)):
+            return result
+        if _is_serious(str(text or "")):
             return result
         if not should_double_punch(chat.id, user.id, source_text):
             return result
