@@ -1,25 +1,12 @@
-name: V2 CI
+name: CI
 
 on:
   push:
     branches:
       - main
-      - feature/human-yayceslav-v2
-      - feature/human-yayceslav-v2-audit-safe
-      - feature/human-yayceslav-v2-audit-architecture
-      - feature/yayceslav-new-sticker-semantics
-      - feature/rage-consistency-punches
-      - fight-routing-v3
-      - roast-engine-v1
   pull_request:
     branches:
       - main
-      - feature/human-yayceslav
-      - feature/human-yayceslav-v2
-      - feature/human-yayceslav-v2-audit-safe
-      - feature/human-yayceslav-v2-audit-architecture
-      - feature/rage-consistency-punches
-      - fight-routing-v3
 
 jobs:
   test:

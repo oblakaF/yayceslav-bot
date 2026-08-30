@@ -37,7 +37,7 @@ def test_bootstrap_does_not_import_legacy_conflict_runtimes():
 
 
 def test_architecture_ownership_document_tracks_core_runtime():
-    doc = (ROOT / "ARCHITECTURE_OWNERSHIP.md").read_text(encoding="utf-8")
+    doc = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
 
     for module in (
         "conflict_fsm_runtime.py",
