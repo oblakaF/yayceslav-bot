@@ -121,3 +121,11 @@ python -m venv .venv
   (`register_group_engagement`) — Telegram отдаёt это только через отдельный
   `MessageReactionHandler`, который не подключён. Сейчас единственный сигнал
   вовлечённости — прямое обращение к боту после случайной реплики.
+
+## Copyright, ownership and license
+
+Yayceslav (Яйцеслав) is an original software project created and developed by **Vadim Krysko**.
+
+**Copyright © 2026 Vadim Krysko. All rights reserved.**
+
+This repository is public for source inspection, but it is **not released under an open-source license**. Use, redistribution, derivatives, hosting and commercial use are governed by the repository's proprietary [`LICENSE`](LICENSE). See also [`COPYRIGHT.md`](COPYRIGHT.md) for the ownership notice and [`TRADEMARKS.md`](TRADEMARKS.md) for project identity and branding terms.
