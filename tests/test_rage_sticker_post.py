@@ -1,3 +1,4 @@
+import fight_sticker_budget
 import hostile_streak_engine
 import sticker_engine
 import sticker_post_runtime
@@ -5,6 +6,7 @@ import sticker_post_runtime
 
 def setup_function():
     hostile_streak_engine.reset()
+    fight_sticker_budget.reset()
 
 
 def test_rage_sticker_requires_second_hostile_turn():
@@ -27,5 +29,12 @@ def test_all_rage_post_stickers_exist_in_official_pack():
         assert key in sticker_engine.STICKER_SEMANTICS
 
 
-def test_rage_sticker_probability_is_bounded():
-    assert 0 < sticker_post_runtime.RAGE_POST_TEXT_TAG_CHANCE <= 0.20
+def test_rage_sticker_probability_is_bounded_by_fight_budget():
+    first = fight_sticker_budget.chance(10, 20, 100.0)
+    fight_sticker_budget.record(10, 20, 100.0)
+    second = fight_sticker_budget.chance(10, 20, 200.0)
+    fight_sticker_budget.record(10, 20, 200.0)
+    exhausted = fight_sticker_budget.chance(10, 20, 300.0)
+
+    assert 0 < second < first <= 0.60
+    assert exhausted == 0.0
