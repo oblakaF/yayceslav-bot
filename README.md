@@ -1,12 +1,14 @@
 # Яйцеслав / Yayceslav
 
-[![V2 CI](https://github.com/oblakaF/yayceslav-bot/actions/workflows/v2-ci.yml/badge.svg?branch=main)](https://github.com/oblakaF/yayceslav-bot/actions/workflows/v2-ci.yml)
+[![CI](https://github.com/oblakaF/yayceslav-bot/actions/workflows/v2-ci.yml/badge.svg?branch=main)](https://github.com/oblakaF/yayceslav-bot/actions/workflows/v2-ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12%20%7C%203.13-3776AB)
 ![License](https://img.shields.io/badge/license-source--available%20proprietary-orange)
 
 **Context-aware Telegram AI groupmate with social memory, voice, web search, stickers and fight-aware conversation routing.**
 
 Яйцеслав — Telegram-бот, который задуман не как меню slash-команд, а как постоянный участник группового чата со своим характером, памятью о взаимодействиях и разным поведением в зависимости от ситуации.
+
+The current public revision uses **`gemini-3.6-flash`** as its primary Gemini model.
 
 > **Public source-available edition.** Production tokens, private user data, live databases, hosting credentials and unreleased private work are not published here.
 
