@@ -1,6 +1,15 @@
 import command_menu
+import conflict_fsm_runtime
 import fight_patterns
 import runtime_bootstrap
+
+
+def _production_extra_hostile(text: str) -> bool:
+    """Mirror the conflict-FSM + Fight Routing v3 detector union."""
+    return bool(
+        conflict_fsm_runtime.EXTRA_HOSTILE_RE.search(text)
+        or fight_patterns.EXTRA_FIGHT_RE.search(text)
+    )
 
 
 def test_recovered_direct_hostility_patterns_match_lost_cases():
@@ -27,7 +36,7 @@ def test_recovered_direct_hostility_patterns_match_lost_cases():
         "днище",
     )
     for text in hostile:
-        assert fight_patterns.EXTRA_FIGHT_RE.search(text), text
+        assert _production_extra_hostile(text), text
 
 
 def test_recovered_ambiguous_words_do_not_flag_ordinary_sentences():
@@ -40,7 +49,7 @@ def test_recovered_ambiguous_words_do_not_flag_ordinary_sentences():
         "козёл стоит у забора",
     )
     for text in ordinary:
-        assert not fight_patterns.EXTRA_FIGHT_RE.search(text), text
+        assert not _production_extra_hostile(text), text
 
 
 def test_social_debug_is_owner_only_menu_surface():
