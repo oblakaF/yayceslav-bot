@@ -108,7 +108,7 @@ def test_announced_exit_then_return_is_prioritized_as_self_own():
 
     assert plan.angle == "self_own"
     assert plan.focus_kind == "self_own"
-    assert "не отвечает" in plan.focus_evidence[0]
+    assert "не отвечаю" in plan.focus_evidence[0]
     assert "снова написал" in plan.focus_reason
 
 
