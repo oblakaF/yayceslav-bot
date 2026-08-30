@@ -43,6 +43,7 @@ def test_target_evidence_contains_only_bounded_observed_profile_fields():
 
 def test_grounding_rules_do_not_treat_bot_previous_claims_as_evidence():
     rules = social_grounding_runtime._FINAL_GROUNDING_RULES
-    assert "Предыдущие ответы самого Яйцеслава" in rules
-    assert "НЕ независимое доказательство" in rules
-    assert "не нападай первым" in rules
+    compact = " ".join(rules.split())
+    assert "Предыдущие ответы самого Яйцеслава" in compact
+    assert "НЕ независимое доказательство" in compact
+    assert "не нападай первым" in compact
