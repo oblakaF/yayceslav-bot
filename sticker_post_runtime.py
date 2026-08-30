@@ -98,6 +98,10 @@ async def maybe_send_post_text_tag(update, context, source_user_text: str, answe
     now = __import__("time").monotonic()
     rage_exchange = _is_rage_exchange(chat.id, user.id, source_user_text)
     if rage_exchange:
+        # Fight-specific cooldowns are intentionally looser than the normal
+        # background gate, but global quiet hours still apply.
+        if sticker_runtime._quiet_hours_msk():
+            return False
         if not fight_sticker_budget.allowed(chat.id, user.id, now):
             return False
         if random.random() >= fight_sticker_budget.chance(chat.id, user.id, now):
@@ -120,6 +124,11 @@ async def maybe_send_post_text_tag(update, context, source_user_text: str, answe
 
     if rage_exchange:
         fight_sticker_budget.record(chat.id, user.id, now)
+        # Also register the real send in the shared sticker ledger. The fight
+        # path may bypass ordinary cooldowns for its second visual beat, but
+        # normal background stickers and the afterburner should still know that
+        # stickers were just sent.
+        sticker_runtime._record_sticker_slot(chat.id, user.id, now)
     else:
         sticker_runtime._record_sticker_slot(chat.id, user.id, now)
     logging.info(

@@ -1,5 +1,3 @@
-import types
-
 import rage_pacing_runtime as pacing
 
 
@@ -17,6 +15,16 @@ def test_sensitive_topic_never_double_punches(monkeypatch):
     monkeypatch.setattr(pacing, "_is_rage", lambda *_: True)
     monkeypatch.setattr(pacing.hostile_streak_engine, "current", lambda *args, **kwargs: 99)
     assert not pacing.should_double_punch(-100, 7, "собака умерла вчера", now=100.0)
+
+
+def test_reconciliation_never_double_punches(monkeypatch):
+    monkeypatch.setattr(pacing, "_is_rage", lambda *_: True)
+    monkeypatch.setattr(pacing.hostile_streak_engine, "current", lambda *args, **kwargs: 99)
+    assert not pacing.should_double_punch(-100, 7, "сорян, давай без срача", now=100.0)
+
+
+def test_serious_classifier_is_shared_with_live_bot():
+    assert pacing._is_serious("у меня сильно болит плечо")
 
 
 def test_outside_rage_never_double_punches(monkeypatch):

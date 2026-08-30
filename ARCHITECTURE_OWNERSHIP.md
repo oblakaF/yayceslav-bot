@@ -16,25 +16,31 @@ It describes **production ownership**, not every historical file that remains in
 | Concern | Production owner | Supporting layers | Legacy / historical boundary |
 | --- | --- | --- | --- |
 | Conflict phase/state | `conflict_fsm_runtime.py` | `social_priority_runtime.py`, `title_conflict_runtime.py` | `conflict_rage_runtime.py`, `rage_hotfix_runtime.py` are rollback/history and must not be installed |
-| Fight turn routing | `fight_routing_v3.py` | `fight_patterns.py`, `primitive_compact_guard.py` | older fight/rage branch implementations are history once merged |
+| Fight turn routing | `fight_routing_v3.py` | `fight_patterns.py`, `primitive_compact_guard.py`, `fight_memory_afterburner_v2.py`, `rage_pacing_runtime.py` | older fight/rage branch implementations are history once merged |
 | RAGE punch planning | `roast_engine.py` | `roast_engine_runtime.py`, `roast_lexicon.py` | do not add another RAGE state owner or second Gemini call |
 | Claim-sensitive memory | `claim_memory_v3.py` | monthly/short-term memory recorders | sensitive bait must remain a claim, not biography |
 | Voice/media response | `voice2_runtime.py` | `recent_video_note_runtime.py` | older voice behavior must not independently capture/replace the final Gemini stack |
 | Search context | `search_enrichment_runtime.py` | `search_context_runtime.py`, `search_slang_runtime.py`, `lexical_search_v3.py`, `evidence_grounding_runtime.py` | new lexical/search hotfixes should extend this chain, not create a parallel search router |
-| Stickers | `sticker_runtime.py` / `sticker_engine.py` | `sticker_tuning_runtime.py`, `sticker_post_runtime.py`, `sticker_semantics_aug19.py` | sticker asset-preparation branches/tools are not production runtime owners |
+| Stickers | `sticker_runtime.py` / `sticker_engine.py` | `sticker_tuning_runtime.py`, `sticker_post_runtime.py`, `sticker_semantics_aug19.py`, `fight_sticker_budget.py` | sticker asset-preparation branches/tools are not production runtime owners |
 | Social baseline | `social_priority_runtime.py` | reputation/member/relationship runtimes, `owner_social_diagnostics_runtime.py` (read-only) | temporary conflict belongs to conflict FSM, not relationship state |
 | Application startup | `runtime_bootstrap.py` | explicit `prepare_application_runtime` calls | no feature should add a competing `Application.run_polling` owner |
 
 ## Conflict / fight request path
 
-`social relationship baseline -> conflict_fsm_runtime -> voice/search enrichment -> fight_routing_v3 -> roast_engine_runtime`
+`social relationship baseline -> conflict_fsm_runtime -> voice/search enrichment -> fight_routing_v3 -> fight_memory_afterburner_v2/rage_pacing_runtime -> roast_engine_runtime`
 
 The responsibilities are deliberately different:
 
 - `conflict_fsm_runtime`: decides and stores NORMAL/WARNING/RAGE.
 - `fight_routing_v3`: isolates the current turn, applies compact fight/conversation routing, and owns the one-shot post-fight afterburner.
 - `fight_patterns.py`: declarative direct-fight/bait language coverage consumed by Fight Routing v3. It owns no state. Old useful insult-language cases recovered from `fix/conflict-detection-lazy-gate` belong here rather than in a personality/humanizer monkey-patch.
+- `fight_memory_afterburner_v2.py`: enriches the existing v3 afterburner only with bounded target-authored callbacks. It owns no timer, FSM or model call and excludes sensitive claims wholesale.
+- `rage_pacing_runtime.py`: output pacing only. It may add at most one short delayed callback in a strong RAGE session, cancels that pending callback on reconciliation/serious turns, and makes no model request.
 - `roast_engine_runtime`: when the FSM is already in RAGE, supplies a rotating contextual attack angle to the existing Gemini request. It does not own conflict state and does not make a second model request.
+
+## Sticker pacing boundary
+
+`fight_sticker_budget.py` is a RAM-only anti-spam helper under the existing sticker subsystem. It does not send stickers and does not inspect conflict state. `sticker_post_runtime.py` decides when a RAGE sticker is appropriate, while `sticker_runtime.py` remains the delivery/catalog/shared-ledger owner. Fight-specific pacing may bypass ordinary background cooldowns for a second visual beat, but must still honor global quiet hours and record every real send in the shared sticker ledger.
 
 ## Social diagnostics
 
