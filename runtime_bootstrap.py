@@ -66,6 +66,7 @@ import recent_video_note_runtime
 import sticker_tuning_runtime
 import fight_routing_v3
 import fight_memory_afterburner_v2
+import rage_pacing_runtime
 import roast_engine_runtime
 
 
@@ -111,6 +112,7 @@ RUNTIME_LOAD_ORDER = (
     "sticker_tuning_runtime",
     "fight_routing_v3",
     "fight_memory_afterburner_v2",
+    "rage_pacing_runtime",
     "roast_engine_runtime",
 )
 
@@ -246,6 +248,12 @@ def prepare_application_runtime(application: Application) -> None:
     # claims wholesale through claim_memory_v3.
     if not fight_memory_afterburner_v2.install():
         logging.warning("Fight memory afterburner v2: install failed")
+
+    # Pacing wraps the existing answer sender and can add at most one short
+    # callback-based follow-up in a strong RAGE session. It owns no conflict
+    # state and performs no additional model request.
+    if not rage_pacing_runtime.install():
+        logging.warning("RAGE pacing runtime: install failed")
 
     # Roast planning is the final RAGE prompt layer. It does not own conflict
     # state and makes no second model call; it only supplies a rotating attack
