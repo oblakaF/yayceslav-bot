@@ -15,6 +15,7 @@ import member_repository
 
 
 _PREPARED = False
+RECENT_TITLE_COOLDOWN_DAYS = 14
 
 
 def _find_bot_module():
@@ -93,10 +94,6 @@ def _previous_winner_sync(bot_module, chat_id: int, current_date: str) -> int | 
         ).fetchone()
         if row:
             return int(row[0])
-
-        # Compatibility with the short-lived dual-title implementation:
-        # if yesterday only a silent assignment exists, still do not award
-        # that same person again today.
         try:
             row = connection.execute(
                 """
@@ -111,6 +108,21 @@ def _previous_winner_sync(bot_module, chat_id: int, current_date: str) -> int | 
     return int(row[0]) if row else None
 
 
+def _recent_titles_sync(bot_module, chat_id: int, current_date: str) -> tuple[str, ...]:
+    cutoff = (date_type.fromisoformat(current_date) - timedelta(days=RECENT_TITLE_COOLDOWN_DAYS)).isoformat()
+    with bot_module.get_db_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT title
+            FROM daily_title_assignments
+            WHERE chat_id = ? AND date >= ? AND date < ?
+            ORDER BY date DESC
+            """,
+            (int(chat_id), cutoff, str(current_date)),
+        ).fetchall()
+    return tuple(str(row[0]) for row in rows if row and row[0])
+
+
 def _candidate_rows_sync(bot_module, chat_id: int, current_date: str) -> list[dict[str, Any]]:
     return member_repository.daily_title_candidates(bot_module, chat_id, current_date)
 
@@ -120,29 +132,44 @@ def _pick_title_for(
     kind: str,
     *,
     reputation_score: int | None = None,
+    excluded_titles: tuple[str, ...] = (),
     rng=random,
 ) -> str:
     previous = candidate.get("previous_title")
+    excluded = {str(item) for item in excluded_titles if str(item).strip()}
+    if previous:
+        excluded.add(str(previous))
+
     if kind == "never_spoke":
-        pool = tuple(t for t in member_profile_runtime.SILENT_NEVER_TITLES if t != previous)
+        pool = tuple(
+            t for t in member_profile_runtime.SILENT_NEVER_TITLES
+            if t not in excluded
+        )
     elif kind == "silent_week":
-        pool = tuple(t for t in member_profile_runtime.SILENT_WEEK_TITLES if t != previous)
+        pool = tuple(
+            t for t in member_profile_runtime.SILENT_WEEK_TITLES
+            if t not in excluded
+        )
     else:
-        # Silence isn't bad behavior toward the bot, so only "active"
-        # members get their title tone tied to reputation.
         tier = (
             title_pools.tier_for_reputation(reputation_score)
             if reputation_score is not None
             else None
         )
-        return title_pools.pick_title(previous, tier=tier, rng=rng)
+        return title_pools.pick_title(
+            previous,
+            tier=tier,
+            excluded_titles=excluded,
+            rng=rng,
+        )
 
     if not pool:
-        pool = (
+        base_pool = (
             member_profile_runtime.SILENT_NEVER_TITLES
             if kind == "never_spoke"
             else member_profile_runtime.SILENT_WEEK_TITLES
         )
+        pool = tuple(t for t in base_pool if t != previous) or tuple(base_pool)
     return rng.choice(pool)
 
 
@@ -166,7 +193,6 @@ def _display_name_sync(bot_module, chat_id: int, user_id: int) -> str:
 def _reputation_score_sync(bot_module, chat_id: int, user_id: int) -> int | None:
     try:
         import reputation_runtime
-
         return int(reputation_runtime._state_sync(bot_module, chat_id, user_id)["score"])
     except Exception:
         return None
@@ -183,10 +209,7 @@ def _format_message(display_name: str, title: str, kind: str) -> str:
             f"Титул дня: {display_name} — «{title}». "
             "За последние 7 дней: 0 сообщений. Читает профессионально."
         )
-    return (
-        f"Титул дня: {display_name} — «{title}». "
-        "До завтра носить не снимая."
-    )
+    return f"Титул дня: {display_name} — «{title}». До завтра носить не снимая."
 
 
 async def run_unified_daily_titles(application: Application) -> None:
@@ -216,8 +239,6 @@ async def run_unified_daily_titles(application: Application) -> None:
             )
             chosen = choose_candidate(candidates, previous_user_id)
             if chosen is None:
-                # Strict rule: the same person never receives a title two days
-                # in a row. In a one-person chat that means no award today.
                 continue
 
             if not await member_profile_runtime._candidate_still_in_chat(
@@ -235,7 +256,15 @@ async def run_unified_daily_titles(application: Application) -> None:
             reputation_score = await asyncio.to_thread(
                 _reputation_score_sync, bot_module, chat_id, chosen["user_id"]
             )
-            title = _pick_title_for(chosen, kind, reputation_score=reputation_score)
+            recent_titles = await asyncio.to_thread(
+                _recent_titles_sync, bot_module, chat_id, current_date
+            )
+            title = _pick_title_for(
+                chosen,
+                kind,
+                reputation_score=reputation_score,
+                excluded_titles=recent_titles,
+            )
             created = await asyncio.to_thread(
                 bot_module.try_assign_daily_title_sync,
                 chat_id,
@@ -284,10 +313,10 @@ def _prepare() -> None:
         return
     _ensure_schema(bot_module)
     bot_module.run_due_daily_titles = run_unified_daily_titles
-    # Prevent member_profile_runtime from wrapping this with a second,
-    # independent silent-title award. There must be exactly ONE title/day.
     bot_module._yayceslav_silent_title_patch = True
     _PREPARED = True
     logging.warning(
-        "Unified daily titles ready: one random member/day, silent pool by 7d activity, no same winner two days in a row"
+        "Unified daily titles ready: one random member/day, no same winner two days in a row, "
+        "recent chat-wide titles excluded for %s days",
+        RECENT_TITLE_COOLDOWN_DAYS,
     )
