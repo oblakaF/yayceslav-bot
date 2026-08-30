@@ -87,6 +87,15 @@ def _state(chat_id: int, user_id: int, now: float) -> PaceState:
     return current
 
 
+def _cancel(chat_id: int, user_id: int, *, drop: bool = True) -> None:
+    key = (int(chat_id), int(user_id))
+    state = _STATES.get(key)
+    if state is not None and state.task is not None and not state.task.done():
+        state.task.cancel()
+    if drop:
+        _STATES.pop(key, None)
+
+
 def _callback_from_live_fight(chat_id: int, user_id: int, source_text: str) -> str:
     texts: list[str] = []
     try:
@@ -175,8 +184,18 @@ def install() -> bool:
         force_voice, source_text = _extract_send_answer_call(args, kwargs)
         if force_voice or bool(getattr(context, "user_data", {}).get("voice_mode", False)):
             return result
-        if _is_serious(str(text or "")):
+
+        # Stop conditions must also cancel an already armed follow-up from the
+        # immediately preceding hostile turn. Otherwise a reconciliation or a
+        # serious topic could be followed by a stale punch a second later.
+        if (
+            _is_serious(source_text)
+            or _is_serious(str(text or ""))
+            or fight_routing_v3.is_reconciliation(source_text)
+        ):
+            _cancel(chat.id, user.id)
             return result
+
         if not should_double_punch(chat.id, user.id, source_text):
             return result
         if random.random() >= DOUBLE_PUNCH_CHANCE:
