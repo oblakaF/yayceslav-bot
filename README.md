@@ -1,131 +1,137 @@
-# Яйцеслав
+# Яйцеслав / Yayceslav
 
-Telegram-бот с личностью самоуверенного, ироничного древнего руса. Отвечает через
-Gemini, помнит недавний контекст разговора, разбирает фото/PDF/DOCX/XLSX/CSV/TXT,
-умеет отвечать голосом, ищет в интернете и ведёт себя по-разному в личке и в группах.
+[![V2 CI](https://github.com/oblakaF/yayceslav-bot/actions/workflows/v2-ci.yml/badge.svg?branch=main)](https://github.com/oblakaF/yayceslav-bot/actions/workflows/v2-ci.yml)
+![Python](https://img.shields.io/badge/Python-3.12%20%7C%203.13-3776AB)
+![License](https://img.shields.io/badge/license-source--available%20proprietary-orange)
 
-## Архитектура
+**Context-aware Telegram AI groupmate with social memory, voice, web search, stickers and fight-aware conversation routing.**
 
-Проект разделён на модули по смыслу, а не по типу файла:
+Яйцеслав — Telegram-бот, который задуман не как меню slash-команд, а как постоянный участник группового чата со своим характером, памятью о взаимодействиях и разным поведением в зависимости от ситуации.
 
-| Модуль | Отвечает за |
-|---|---|
-| `bot.py` | точка входа, Telegram-хендлеры, SQLite, координация всех остальных модулей |
-| `personality.py` | определение режима разговора (`normal/greeting/challenge/hostile/serious`), сборка системной инструкции для Gemini, персональные настройки характера |
-| `vocabulary.py` | все словари: сленг, обращения, подколы, сравнения, награды недели, шаблоны игровых команд — без логики, только данные |
-| `intent.py` | локальная (без Gemini) классификация намерения сообщения и эмоционального тона |
-| `humor_engine.py` | решает, нужна ли шутка и какая, включая встречный стёб (`banter_hostile`) на прямую грубость в адрес бота; следит, чтобы фразы не повторялись |
-| `tests/` | pytest-тесты и `dialog_cases.json` — сценарии для регрессионной проверки поведения |
+> **Public source-available edition.** Production tokens, private user data, live databases, hosting credentials and unreleased private work are not published here.
 
-Данные о личности бота (словари, правила режимов) намеренно отделены от Telegram-специфичного
-кода в `bot.py`, чтобы дальнейшую работу над характером можно было вести, не трогая обработку
-сообщений, файлов и БД.
+## What makes Yayceslav different
 
-Модель Gemini — одна, `gemini-3.6-flash`, задаётся через `MODEL_NAME` в `bot.py`; для V2 используется `thinking_level="medium"`.
-Генерация изображений сознательно не реализована.
+Yayceslav combines ordinary assistant capabilities with a deliberately social conversation layer:
 
-## Переменные окружения
+- **group-aware conversation** — different behavior in private chats and groups;
+- **social memory** — bounded member context, reputation and relationship history;
+- **serious-topic priority** — sensitive situations suppress comedy and aggression;
+- **voice and media** — voice replies and context from supported media/document flows;
+- **web search** — bounded search enrichment when fresh information is needed;
+- **stickers** — semantic sticker behavior with anti-spam pacing;
+- **fight-aware routing** — temporary conflict state is separated from long-term relationships;
+- **grounded roast planning** — repetition, contradictions and visible self-owns can be preferred over generic insults;
+- **resource-conscious design** — SQLite, bounded RAM state and a single-process deployment rather than a fleet of background services.
 
-Обязательные (`.env` локально, переменные Railway в проде):
+The project intentionally treats **silence, restraint and context** as important behavior. A stronger persona should not make factual answers worse or turn serious conversations into jokes.
 
-- `TELEGRAM_BOT_TOKEN`
-- `GEMINI_API_KEY`
+## Architecture
 
-Опциональные:
-
-- `BOT_OWNER_ID` — Telegram user id владельца бота
-
-## SQLite и Railway Volume
-
-База лежит в `data/yayceslav_stats.db` локально или в `/app/data/yayceslav_stats.db`
-на Railway, если подключён Volume по этому пути (проверяется автоматически при старте).
-
-Каждое соединение открывается через `get_db_connection()`, которая включает
-`PRAGMA journal_mode=WAL` и `PRAGMA foreign_keys=ON`. Таймаут блокировки (аналог
-`PRAGMA busy_timeout`) обеспечивается параметром `timeout=30`, а context manager
-после commit/rollback теперь гарантированно закрывает SQLite-соединение.
-
-### Миграции
-
-Все изменения схемы идут через `initialize_stats_database()`, которая вызывается
-один раз при старте процесса:
-
-- новые таблицы создаются через `CREATE TABLE IF NOT EXISTS` — не трогает существующие;
-- новые колонки в уже существующих таблицах добавляются через `_ensure_column()`,
-  которая проверяет `PRAGMA table_info(...)` и делает `ALTER TABLE ... ADD COLUMN`
-  только если колонки ещё нет.
-
-Разрушительных миграций нет и не планируется: старые данные (статистика, настройки
-пользователей, история чатов) переживают обновление бота без вмешательства.
-
-**Как проверить миграцию на реальной базе перед деплоем:**
-
-1. Скачайте копию `yayceslav_stats.db` с Railway Volume (или используйте локальную).
-2. Сделайте резервную копию файла.
-3. Запустите бота с `STATS_DB_PATH`, указывающим на копию (или просто запустите
-   локально с этим файлом в `data/`).
-4. Проверьте, что старые команды (`/settings`, `/stats`, `/hard_status`) отвечают
-   прежними значениями, а не сбросившимися настройками по умолчанию.
-
-## Запуск тестов
-
-```bash
-python -m venv .venv
-.venv/Scripts/pip install -r requirements-dev.txt   # Windows
-# .venv/bin/pip install -r requirements-dev.txt      # Linux/macOS
-
-.venv/Scripts/python -m pytest tests/ -v
+```mermaid
+flowchart LR
+    T[Telegram] --> R[Routing + context]
+    R --> S[Social / memory]
+    R --> C[Conflict / serious state]
+    R --> W[Search / voice / media]
+    S --> G[Gemini]
+    C --> G
+    W --> G
+    G --> O[Output guards + pacing]
+    O --> T
+    DB[(SQLite)] <--> S
 ```
 
-Тесты используют временные SQLite-файлы (`tmp_path` + `monkeypatch.setattr(bot, "STATS_DB_PATH", ...)`)
-и не трогают продовую базу. Внешние сервисы (Gemini, DDGS, edge-tts) не вызываются —
-`ask_gemini` не мокается отдельно, но тесты не доходят до сетевого вызова
-(`build_full_system_instruction` тестируется отдельно от фактической отправки в Gemini).
+Stateful concerns have explicit owners; supporting runtimes enrich those owners instead of creating parallel state machines. See **[docs/architecture.md](docs/architecture.md)** for the current public architecture map.
 
-## Проверка на Railway после деплоя
+## Quick start
 
-1. Задеплойте ветку/PR как обычно (переменные окружения не менялись, кроме тех,
-   что уже были — `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, опционально `BOT_OWNER_ID`).
-2. Убедитесь, что Volume подключён по пути `/app/data` — иначе статистика не переживёт
-   рестарт контейнера.
-3. В логах при старте не должно быть ошибок миграции (`_ensure_column`/`CREATE TABLE`).
-4. Проверьте вручную в тестовой группе:
-   - `/settings` — настройки применяются и не сбрасываются после `/hard_status`;
-   - `/voice_on`, затем рестарт деплоя (или `railway restart`), затем сообщение боту —
-     голос должен остаться включённым (раньше это был баг: настройка терялась);
-   - `/hard_on`, `/hard_level chaos`, рестарт — уровень должен сохраниться;
-   - `/profile`, `/whoami`, `/nickname Тест` — профиль и обращение работают;
-   - `/week`, `/leaderboard`, `/awards` — не падают даже при малом количестве данных;
-   - обычное сообщение с прямым оскорблением бота ("ты мудак") — короткий встречный
-     подкол, не мораль и не обида;
-   - сообщение с "умер"/"болит"/похожими словами — бот сразу серьёзный, без шуток.
-5. **Полнота статистики зависит от Privacy Mode бота.** Если в BotFather у бота включён
-   Privacy Mode, бот видит только команды, прямые обращения и ответы на свои сообщения —
-   обычная переписка группы мимо него проходит невидимо, и `/week`/`/leaderboard`
-   будут неполными. Чтобы считать всю активность группы:
-   - `BotFather → /setprivacy → выбрать бота → Disable`;
-   - после смены Privacy Mode Telegram может потребовать заново добавить бота в группу
-     (или переназначить админом) — старое членство иногда не подхватывает новый режим
-     автоматически.
+### Requirements
 
-## Известные ограничения (не баги, а осознанные границы объёма этой итерации)
+- Python 3.12 or 3.13
+- Telegram bot token
+- Gemini API key
 
-- `chat_activity_daily` (недельная аналитика) наполняется из двух путей — обычные
-  текстовые сообщения в группе (`hard_mode_listener` и групповая ветка
-  `answer_text_message`). Фото/голосовые/документы считаются только когда их прислали
-  **с обращением к боту**; фоновые фото/голосовые без обращения пока не попадают
-  в `chat_activity_daily` (в `chat_member_profiles` то же самое ограничение).
-  Чтобы закрыть это полностью, нужны отдельные "тихие" обработчики по образцу
-  `hard_mode_listener`, но уже для `filters.PHOTO`/`filters.VOICE`/`filters.Document.ALL`.
-- Реакции других людей на сообщения бота не учитываются в engagement-логике
-  (`register_group_engagement`) — Telegram отдаёt это только через отдельный
-  `MessageReactionHandler`, который не подключён. Сейчас единственный сигнал
-  вовлечённости — прямое обращение к боту после случайной реплики.
+### Install
 
-## Copyright, ownership and license
+```bash
+git clone https://github.com/oblakaF/yayceslav-bot.git
+cd yayceslav-bot
 
-Yayceslav (Яйцеслав) is an original software project created and developed by **Vadim Krysko**.
+python -m venv .venv
+source .venv/bin/activate        # Linux/macOS
+# .venv\Scripts\activate       # Windows
 
-**Copyright © 2026 Vadim Krysko. All rights reserved.**
+python -m pip install -r requirements.txt
+```
 
-This repository is public for source inspection, but it is **not released under an open-source license**. Use, redistribution, derivatives, hosting and commercial use are governed by the repository's proprietary [`LICENSE`](LICENSE). See also [`COPYRIGHT.md`](COPYRIGHT.md) for the ownership notice and [`TRADEMARKS.md`](TRADEMARKS.md) for project identity and branding terms.
+Create a local `.env` file:
+
+```env
+TELEGRAM_BOT_TOKEN=your_token
+GEMINI_API_KEY=your_key
+BOT_OWNER_ID=optional_numeric_telegram_id
+```
+
+Then run:
+
+```bash
+python bot.py
+```
+
+Do not commit real tokens or production data.
+
+## Persistence
+
+Yayceslav uses SQLite for persistent state. Locally the database lives under `data/`; on a Railway-style deployment the app can use a persistent `/app/data` mount.
+
+Schema changes are applied through startup migration helpers designed to preserve existing data. Production databases are excluded from Git.
+
+## Tests
+
+```bash
+python -m pip install -r requirements-dev.txt
+pytest -q
+```
+
+GitHub Actions runs the full CI suite for pull requests to `main` and for pushes to `main` on Python **3.12** and **3.13**.
+
+## Telegram privacy
+
+Group context is limited by the updates Telegram actually sends to the bot. With Telegram Privacy Mode enabled, ordinary group messages may not be visible, which makes background statistics and social context incomplete.
+
+Operators are responsible for configuring Telegram permissions appropriately and for complying with applicable privacy/data-protection requirements.
+
+## Public repository vs. production
+
+This repository is a **curated public codebase**, not a promise that every production detail will always be published.
+
+The live bot may use:
+
+- private environment configuration;
+- a private SQLite database containing real social state;
+- private operational notes and diagnostics;
+- newer unreleased experiments or future private-version work.
+
+No real production token, private chat export or production database should ever be committed here.
+
+## Documentation
+
+- **[Architecture](docs/architecture.md)** — runtime ownership and design boundaries
+- **[Deployment](docs/deployment.md)** — local/hosting setup and persistence
+- **[Public roadmap](docs/roadmap.md)** — current public direction
+- **[Changelog](CHANGELOG.md)** — notable public changes
+- **[Security](SECURITY.md)** — vulnerability and secrets policy
+- **[Contributing](CONTRIBUTING.md)** — contribution policy
+- **[Copyright](COPYRIGHT.md)** — ownership notice
+- **[Branding](TRADEMARKS.md)** — project identity notice
+
+## Ownership and license
+
+**Yayceslav (Яйцеслав) is an original software project created and developed by Vadim Krysko.**
+
+Copyright © 2026 **Vadim Krysko**. All rights reserved.
+
+The repository is public for source inspection but is **not open source**. It is distributed under the **Yayceslav Source-Available Proprietary License v1.0**. Viewing and limited personal evaluation are permitted as described in [`LICENSE`](LICENSE); redistribution, public derivative hosting and commercial use require permission unless applicable law gives an independent right.
+
+See [`COPYRIGHT.md`](COPYRIGHT.md) and [`TRADEMARKS.md`](TRADEMARKS.md) for additional ownership and project-identity notices.
