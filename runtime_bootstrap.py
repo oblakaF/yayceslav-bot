@@ -55,6 +55,7 @@ import search_enrichment_runtime
 import chat_digest_runtime
 import date_grounding_runtime
 import social_priority_runtime
+import owner_social_diagnostics_runtime
 import conflict_fsm_runtime
 import title_conflict_runtime
 import search_context_runtime
@@ -101,6 +102,7 @@ RUNTIME_LOAD_ORDER = (
     "roast_target_runtime",
     "date_grounding_runtime",
     "social_priority_runtime",
+    "owner_social_diagnostics_runtime",
     "conflict_fsm_runtime",
     "title_conflict_runtime",
     "search_context_runtime",
@@ -213,10 +215,14 @@ def prepare_application_runtime(application: Application) -> None:
     if not date_grounding_runtime.install():
         logging.warning("Date grounding runtime: bot module not ready")
 
-    # Persistent relationship chooses NORMAL baseline. One explicit FSM owns the
-    # temporary conflict state after that; no second rage prompt/filter is stacked.
+    # Persistent relationship chooses NORMAL baseline. Owner diagnostics reads
+    # that exact state and is deliberately read-only.
     if not social_priority_runtime.install():
         logging.warning("Social priority runtime: bot module not ready")
+    owner_social_diagnostics_runtime.prepare_application_runtime(application)
+
+    # One explicit FSM owns the temporary conflict state after the social
+    # baseline; no second rage prompt/filter is stacked.
     if not conflict_fsm_runtime.install():
         logging.warning("Conflict FSM runtime: bot module not ready")
 

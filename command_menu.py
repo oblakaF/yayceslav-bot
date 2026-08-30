@@ -94,6 +94,7 @@ OWNER_COMMANDS: Final[tuple[tuple[str, str], ...]] = (
     ("hard_stats", "Статистика hard-mode"),
     ("people", "Известные участники"),
     ("set_archetype", "Задать архетип участнику"),
+    ("social_debug", "Диагностика отношений с участником"),
     ("week_auto_on", "Включить автоотчёт"),
     ("week_auto_off", "Выключить автоотчёт"),
     ("week_auto_status", "Статус автоотчёта"),
