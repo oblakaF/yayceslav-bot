@@ -32,11 +32,10 @@ import dialogue_followup_mode_patch
 
 import monthly_social_runtime
 import unified_daily_title_runtime
+import title_reroll_runtime
 import relationship_experience_runtime
 import whoami_profile_v3_runtime
 import monthly_memory_scope_patch  # noqa: F401
-# Must load after monthly_memory_scope_patch: it wraps the final monthly
-# callback-term recorder so a whole sensitive bait message is skipped.
 import claim_memory_v3
 import whoami_profile_v4_runtime
 
@@ -45,16 +44,13 @@ import daily_content_source_patch  # noqa: F401
 import initiative_runtime
 import birthday_runtime
 
-# Free-tier smart tools and production guards. Conflict is intentionally owned
-# by ONE state machine. The old conflict_rage_runtime/rage_hotfix_runtime files
-# remain in the repository for rollback/history but are no longer imported or
-# installed in production startup.
 import natural_router_runtime
 import roast_target_runtime
 import search_enrichment_runtime
 import chat_digest_runtime
 import date_grounding_runtime
 import social_priority_runtime
+import social_grounding_runtime
 import owner_social_diagnostics_runtime
 import conflict_fsm_runtime
 import title_conflict_runtime
@@ -87,6 +83,7 @@ RUNTIME_LOAD_ORDER = (
     "dialogue_followup_mode_patch",
     "monthly_social_runtime",
     "unified_daily_title_runtime",
+    "title_reroll_runtime",
     "relationship_experience_runtime",
     "whoami_profile_v3_runtime",
     "monthly_memory_scope_patch",
@@ -104,6 +101,7 @@ RUNTIME_LOAD_ORDER = (
     "social_priority_runtime",
     "owner_social_diagnostics_runtime",
     "conflict_fsm_runtime",
+    "social_grounding_runtime",
     "title_conflict_runtime",
     "search_context_runtime",
     "search_slang_runtime",
@@ -128,7 +126,6 @@ def _find_bot_module():
 
 
 def run_schema_preflight() -> tuple[int, ...]:
-    """Apply pending schema migrations immediately before polling starts."""
     bot_module = _find_bot_module()
     if bot_module is None:
         raise RuntimeError("Bot DB module is not ready for schema migration preflight")
@@ -139,7 +136,6 @@ def run_schema_preflight() -> tuple[int, ...]:
 
 
 def ensure_chat_member_updates(kwargs: dict) -> None:
-    """Preserve explicit allowed_updates while ensuring member events arrive."""
     allowed = kwargs.get("allowed_updates")
     if allowed is None:
         return
@@ -190,6 +186,7 @@ def prepare_application_runtime(application: Application) -> None:
         logging.warning("Claim memory v3 short-term guard: bot module not ready")
 
     unified_daily_title_runtime._prepare()
+    title_reroll_runtime.prepare_application_runtime(application)
     monthly_social_runtime._prepare_application(application)
     relationship_experience_runtime._prepare_application(application)
     member_profile_runtime._prepare_application(application)
@@ -215,26 +212,24 @@ def prepare_application_runtime(application: Application) -> None:
     if not date_grounding_runtime.install():
         logging.warning("Date grounding runtime: bot module not ready")
 
-    # Persistent relationship chooses NORMAL baseline. Owner diagnostics reads
-    # that exact state and is deliberately read-only.
     if not social_priority_runtime.install():
         logging.warning("Social priority runtime: bot module not ready")
     owner_social_diagnostics_runtime.prepare_application_runtime(application)
 
-    # One explicit FSM owns the temporary conflict state after the social
-    # baseline; no second rage prompt/filter is stacked.
     if not conflict_fsm_runtime.install():
         logging.warning("Conflict FSM runtime: bot module not ready")
 
+    # Final social grounding wraps the completed social + conflict prompt stack.
+    # This makes current-sender scoping and evidence rules authoritative without
+    # introducing another conflict state machine.
+    if not social_grounding_runtime.install():
+        logging.warning("Social grounding runtime: bot module not ready")
+
     title_conflict_runtime.prepare_application_runtime(application)
 
-    # Voice 2.0 captures the completed Gemini stack. conflict_fsm_runtime has
-    # already attached its request-local transcript post-hook.
     if not voice2_runtime.install():
         logging.warning("Voice 2.0 runtime: bot module not ready")
 
-    # Search remains bounded. Evidence grounding is prepared after context/slang
-    # wrappers so terse "пруфы покажи" can reuse their previous-topic recovery.
     search_enrichment_runtime.install()
     if not search_context_runtime.install():
         logging.warning("Search context runtime: bot module not ready")
@@ -244,32 +239,21 @@ def prepare_application_runtime(application: Application) -> None:
         logging.warning("Lexical search v3: bot module not ready")
     evidence_grounding_runtime.prepare_application_runtime(application)
 
-    # Install v3 AFTER conflict, voice and search wrappers. Its current-turn
-    # extraction therefore becomes the outer routing guard while the existing
-    # FSM remains the single conflict-state owner.
     fight_routing_v3.prepare_application_runtime(application)
 
-    # Enrich the existing one-shot afterburner with bounded, target-authored
-    # fight memory. This owns no FSM/timer/model call and excludes sensitive
-    # claims wholesale through claim_memory_v3.
     if not fight_memory_afterburner_v2.install():
         logging.warning("Fight memory afterburner v2: install failed")
 
-    # Pacing wraps the existing answer sender and can add at most one short
-    # callback-based follow-up in a strong RAGE session. It owns no conflict
-    # state and performs no additional model request.
     if not rage_pacing_runtime.install():
         logging.warning("RAGE pacing runtime: install failed")
 
-    # Roast planning is the final RAGE prompt layer. It does not own conflict
-    # state and makes no second model call; it only supplies a rotating attack
-    # angle/callback to the already selected RAGE request.
     if not roast_engine_runtime.install():
         logging.warning("Roast engine v1 runtime: bot module not ready")
 
     chat_digest_runtime.prepare_application_runtime(application)
     roast_target_runtime.prepare_application_runtime(application)
     natural_router_runtime.prepare_application_runtime(application)
+    social_grounding_runtime.prepare_application_runtime(application)
     recent_video_note_runtime.prepare_application_runtime(application)
 
 
