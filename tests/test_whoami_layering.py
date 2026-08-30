@@ -10,6 +10,7 @@ import episodic_memory_runtime as episodic_memory
 import initiative_runtime as initiative
 import member_profile_runtime as member_profile
 import natural_router_runtime as natural_router
+import owner_social_diagnostics_runtime as owner_social_diagnostics
 import pairwise_relationship_runtime as pairwise_relationship
 import monthly_social_runtime as monthly
 import positive_runtime as positive
@@ -135,6 +136,11 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         lambda: calls.append(("date_grounding", None)) or True,
     )
     monkeypatch.setattr(
+        owner_social_diagnostics,
+        "prepare_application_runtime",
+        lambda app: calls.append(("owner_social_diagnostics", app)),
+    )
+    monkeypatch.setattr(
         title_conflict,
         "prepare_application_runtime",
         lambda app: calls.append(("title_conflict", app)),
@@ -192,6 +198,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("daily_content", application),
         ("initiative", application),
         ("date_grounding", None),
+        ("owner_social_diagnostics", application),
         ("title_conflict", application),
         ("voice2", None),
         ("search_enrichment", None),
