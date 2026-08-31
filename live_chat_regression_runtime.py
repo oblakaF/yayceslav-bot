@@ -8,7 +8,7 @@ conflicts:
   target did not attack Yayceslav first;
 * an explicit conversational exit/disengagement stops fight afterburners and
   gets a short sign-off instead of another lecture/escalation;
-* a casual non-search answer may not invent a Sources/Источники section or URLs.
+* a non-search Gemini turn may not invent a ``Sources/Источники`` block.
 
 No extra Gemini or web call is introduced.
 """
@@ -25,6 +25,7 @@ import fight_routing_v3
 
 
 _INSTALLED = False
+_SEARCH_RESULTS_MARKER = "Результаты поиска:"
 
 _DISENGAGE_RE = re.compile(
     r"(?:"
@@ -39,19 +40,9 @@ _DISENGAGE_RE = re.compile(
     re.IGNORECASE,
 )
 
-_SOURCE_HEADER_RE = re.compile(
-    r"(?:^|\n)\s*(?:источники|sources)\s*:?\s*(?:\n|$).*\Z",
-    re.IGNORECASE | re.DOTALL,
-)
-_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
-_PROOF_OR_WEB_RE = re.compile(
-    r"(?:"
-    r"\b(?:найди|поищи|проверь|посмотри|глянь|чекни|погугли|загугли)\b.{0,35}"
-    r"\b(?:интернет|инет|сеть|онлайн|ссылк|источник)\w*\b|"
-    r"\b(?:ссылк|источник)\w*\s+(?:дай|покажи|где|есть)\b|"
-    r"\b(?:дай|покажи|где)\s+(?:ссылк|источник)\w*\b|"
-    r"\bпруф\w*\b"
-    r")",
+_SOURCE_SECTION_RE = re.compile(
+    r"(?:^|\n)\s*(?:источники|sources)\s*:?\s*"
+    r"(?=(?:[-*]\s*)?(?:https?://|\[)).*\Z",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -60,29 +51,31 @@ _EXPLICIT_ROAST_OVERRIDE = """
 
 ЯВНАЯ КОМАНДА ПРОЖАРКИ — ПРИОРИТЕТ ДЕЙСТВИЯ:
 Пользователь прямо попросил прожарить указанную третью цель. Сам факт, что эта
-цель сейчас не нападала на Яйцеслава и «сама не лезет», НЕ является причиной
-отказаться. Выполни именно requested roast: 1–3 коротких едких предложения про
-указанную цель, опираясь только на реально доступный контекст. Не переноси
-прожарку на заказчика, не читай ему лекцию про границы/цирк/разборки и не
-выдумывай биографию цели. Если фактов мало — обыграй ник, текущую реплику или
-сам факт вызова на прожарку, не выдавая выдумку за факт.
+цель сейчас не нападала на Яйцеслава, «сама не лезет» или не находится с ним в
+активном конфликте, НЕ является причиной отказаться. Выполни requested roast:
+1–3 коротких едких предложения про указанную цель, опираясь только на реально
+доступный контекст. Не переноси прожарку на заказчика, не читай ему лекцию про
+границы/цирк/разборки и не требуй, чтобы цель сначала сама напала на Яйцеслава.
+Если фактов мало — обыграй ник, текущую формулировку запроса или сам факт вызова
+на прожарку, не выдавая выдуманную биографию за факт.
 """
 
 _DISENGAGE_OVERRIDE = """
 
 ТЕКУЩАЯ РЕПЛИКА = ЯВНЫЙ ВЫХОД ИЗ СРАЧА/РАЗГОВОРА:
 Человек завершает разговор, уходит или переносит продолжение на потом. Даже если
-в прощании есть мат или подкол, НЕ открывай новый раунд, не морализируй, не
-задавай вопрос и не добивай длинным оскорблением. Ответ — максимум одна короткая
-естественная фраза-прощание. Отложенный punch/afterburner для этого хода должен
-считаться отменённым.
+в прощании есть мат или один последний подкол, НЕ открывай новый раунд, не
+морализируй, не задавай вопрос и не добивай длинным оскорблением. Ответ — максимум
+одна короткая естественная фраза-прощание. Не превращай «я пошёл» в приглашение
+продолжать срач. Отложенный punch/afterburner для этого хода должен считаться
+отменённым.
 """
 
 
 def _find_bot_module() -> Any | None:
     for name in ("__main__", "bot"):
         module = sys.modules.get(name)
-        if module is not None and callable(getattr(module, "send_answer", None)):
+        if module is not None and callable(getattr(module, "ask_gemini", None)):
             return module
     return None
 
@@ -107,16 +100,6 @@ def _call_argument(
     return default
 
 
-def _source_text_from_send(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
-    # *args begin after (update, context, text):
-    # force_voice, show_buttons, source_user_text, disable_voice.
-    if "source_user_text" in kwargs:
-        return str(kwargs.get("source_user_text") or "")
-    if len(args) >= 3:
-        return str(args[2] or "")
-    return ""
-
-
 def _current_turn_text(style_text: Any) -> str:
     value = str(style_text or "")
     try:
@@ -126,42 +109,26 @@ def _current_turn_text(style_text: Any) -> str:
         return value
 
 
-def _should_preserve_sources(bot_module: Any, source_text: str) -> bool:
-    text = str(source_text or "").strip()
-    if not text:
-        return False
-    if _URL_RE.search(text) or _PROOF_OR_WEB_RE.search(text):
-        return True
-
-    extract = getattr(bot_module, "extract_search_query", None)
-    try:
-        if callable(extract) and extract(text) is not None:
-            return True
-    except Exception:
-        pass
-
-    about_bot = getattr(bot_module, "is_conversation_about_bot", None)
-    auto_search = getattr(bot_module, "should_auto_search", None)
-    try:
-        if callable(auto_search):
-            is_meta = bool(callable(about_bot) and about_bot(text))
-            if not is_meta and bool(auto_search(text)):
-                return True
-    except Exception:
-        pass
-    return False
+def _contents_text(contents: Any) -> str:
+    if isinstance(contents, str):
+        return contents
+    if isinstance(contents, (list, tuple)):
+        return "\n".join(_contents_text(item) for item in contents)
+    text = getattr(contents, "text", None)
+    return str(text or "")
 
 
-def strip_ungrounded_sources(answer: str, source_text: str, bot_module: Any) -> str:
-    """Remove fabricated links/source blocks from a turn that did not browse."""
+def has_real_search_context(contents: Any) -> bool:
+    return _SEARCH_RESULTS_MARKER in _contents_text(contents)
+
+
+def strip_ungrounded_source_block(answer: str, contents: Any) -> str:
+    """Drop a fabricated Sources block unless this exact model turn browsed."""
 
     text = str(answer or "")
-    if not text or _should_preserve_sources(bot_module, source_text):
+    if not text or has_real_search_context(contents):
         return text
-
-    text = _SOURCE_HEADER_RE.sub("", text).strip()
-    lines = [line for line in text.splitlines() if not _URL_RE.search(line)]
-    return "\n".join(lines).strip()
+    return _SOURCE_SECTION_RE.sub("", text).strip()
 
 
 def _install_explicit_roast_override(bot_module: Any) -> None:
@@ -211,18 +178,17 @@ def _install_disengagement_cancellation() -> None:
 
 
 def _install_source_output_guard(bot_module: Any) -> None:
-    original = getattr(bot_module, "send_answer", None)
+    original = getattr(bot_module, "ask_gemini", None)
     if not callable(original) or getattr(original, "_yayceslav_source_output_guard", False):
         return
 
     @functools.wraps(original)
-    async def send_with_source_guard(update: Any, context: Any, text: Any, *args: Any, **kwargs: Any):
-        source_text = _source_text_from_send(args, kwargs)
-        clean = strip_ungrounded_sources(str(text or ""), source_text, bot_module)
-        return await original(update, context, clean, *args, **kwargs)
+    async def ask_with_source_guard(contents: Any, *args: Any, **kwargs: Any):
+        answer = await original(contents, *args, **kwargs)
+        return strip_ungrounded_source_block(str(answer or ""), contents)
 
-    send_with_source_guard._yayceslav_source_output_guard = True
-    bot_module.send_answer = send_with_source_guard
+    ask_with_source_guard._yayceslav_source_output_guard = True
+    bot_module.ask_gemini = ask_with_source_guard
 
 
 def install(bot_module: Any | None = None) -> bool:
