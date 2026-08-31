@@ -1,7 +1,7 @@
 """Final low-level guards for regressions observed in live Telegram chat.
 
 This module intentionally does not own social state, conflict state, search, or
-roast generation.  It is installed last and only resolves three narrow routing
+roast generation. It is installed last and only resolves three narrow routing
 conflicts:
 
 * an explicit ``прожарь @user`` action must not be refused merely because the
@@ -28,9 +28,9 @@ _INSTALLED = False
 
 _DISENGAGE_RE = re.compile(
     r"(?:"
-    r"\b(?:завтра|потом)\s+обкашля(?:ем|емcя)\b|"
-    r"\b(?:я\s+)?пош[её]л\s+я?\s*(?:спать|смотреть|работать|гулять|домой|отдыхать)?\b|"
-    r"\bя\s+пош[её]л\b|"
+    r"\b(?:завтра|потом)\s+обкашля(?:ем|емся)\b|"
+    r"\bя\s+пош[её]л(?:\s+(?:спать|смотреть|работать|гулять|домой|отдыхать))?\b|"
+    r"\bпош[её]л\s+я(?:\s+(?:спать|смотреть|работать|гулять|домой|отдыхать))?\b|"
     r"\bдо\s+завтра\b|"
     r"\bна\s+сегодня\s+хватит\b|"
     r"\bвс[её],?\s+(?:я\s+)?(?:пош[её]л|отваливаю|сваливаю)\b|"
@@ -107,24 +107,9 @@ def _call_argument(
     return default
 
 
-def _replace_first_argument(
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-    *,
-    name: str,
-    value: Any,
-) -> tuple[tuple[Any, ...], dict[str, Any]]:
-    new_args = list(args)
-    new_kwargs = dict(kwargs)
-    if new_args:
-        new_args[0] = value
-    else:
-        new_kwargs[name] = value
-    return tuple(new_args), new_kwargs
-
-
 def _source_text_from_send(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
-    # send_answer(update, context, text, force_voice=False, source_user_text="")
+    # *args begin after (update, context, text):
+    # force_voice, show_buttons, source_user_text, disable_voice.
     if "source_user_text" in kwargs:
         return str(kwargs.get("source_user_text") or "")
     if len(args) >= 3:
