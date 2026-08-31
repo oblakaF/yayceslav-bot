@@ -65,6 +65,7 @@ import fight_routing_v3
 import fight_memory_afterburner_v2
 import rage_pacing_runtime
 import roast_engine_runtime
+import live_chat_regression_runtime
 
 
 RUNTIME_LOAD_ORDER = (
@@ -114,6 +115,7 @@ RUNTIME_LOAD_ORDER = (
     "fight_memory_afterburner_v2",
     "rage_pacing_runtime",
     "roast_engine_runtime",
+    "live_chat_regression_runtime",
 )
 
 
@@ -255,6 +257,11 @@ def prepare_application_runtime(application: Application) -> None:
     natural_router_runtime.prepare_application_runtime(application)
     social_grounding_runtime.prepare_application_runtime(application)
     recent_video_note_runtime.prepare_application_runtime(application)
+
+    # Install last: this layer only arbitrates narrow cross-runtime regressions
+    # after all owners (search, fight, roast, social, delivery) are already set.
+    if not live_chat_regression_runtime.install():
+        logging.warning("Live-chat regression guard: bot module not ready")
 
 
 def _install_preflight_hook() -> None:
