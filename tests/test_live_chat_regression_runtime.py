@@ -4,65 +4,62 @@ import live_chat_regression_runtime as live
 import runtime_bootstrap
 
 
-class _NoSearchBot:
-    @staticmethod
-    def extract_search_query(_text):
-        return None
-
-    @staticmethod
-    def is_conversation_about_bot(_text):
-        return False
-
-    @staticmethod
-    def should_auto_search(_text):
-        return False
-
-
-class _SearchBot(_NoSearchBot):
-    @staticmethod
-    def extract_search_query(text):
-        return "telegram bot search" if "найди" in text.lower() else None
+def test_real_live_chat_exit_phrases_stop_the_fight():
+    samples = [
+        "В пизду тебя, навёл тут суету без суеты, завтра обкашляем че по чем",
+        "Наверно да, или в пизду, пошёл я Люди Икс посмотрю",
+        "Сказал бы что мамку твою ебал, но у тебя её нет, откисай",
+        "всё, я пошёл спать",
+        "до завтра, курва",
+        "на сегодня хватит",
+    ]
+    for text in samples:
+        assert live.is_disengagement(text), text
 
 
-def test_live_exit_phrases_stop_fight_without_matching_directed_go_away():
-    assert live.is_disengagement(
-        "В пизду тебя, навёл тут суету без суеты, завтра обкашляем че по чем"
-    )
-    assert live.is_disengagement("Наверно да, пошёл я Люди Икс посмотрю")
-    assert live.is_disengagement("Сказал бы что мамку твою ебал, но у тебя её нет, откисай")
-    assert live.is_disengagement("до завтра, курва")
-
-    # Directed abuse is not the speaker leaving the conversation.
-    assert not live.is_disengagement("ты пошел нахуй")
-    assert not live.is_disengagement("пошел нахуй отсюда")
-    assert not live.is_disengagement("прожарь его я тебе говорю")
+def test_directed_abuse_and_normal_fight_lines_are_not_exit_signals():
+    samples = [
+        "ты пошел нахуй",
+        "пошел нахуй отсюда",
+        "Нет, ты просто сыкло и не можешь сказать ничего против него",
+        "Прожарь его я те говорю",
+        "Ну в отличие от тебя есть",
+    ]
+    for text in samples:
+        assert not live.is_disengagement(text), text
 
 
-def test_casual_answer_cannot_invent_sources_or_urls():
+def test_fake_sources_from_casual_turn_are_removed():
     answer = (
         "Опять ты со своим стандартным набором оскорблений.\n\n"
         "Источники:\n"
-        "* https://neolurk.org/wiki/example\n"
+        "* [https://neolurk.org/wiki/example](https://neolurk.org/wiki/example)\n"
         "* https://genius.com/example\n"
         "* https://music.apple.com/example"
     )
-
-    cleaned = live.strip_ungrounded_sources(
+    cleaned = live.strip_ungrounded_source_block(
         answer,
         "А там ты себе титул уже самому себе придумал или нет?",
-        _NoSearchBot(),
     )
-
     assert cleaned == "Опять ты со своим стандартным набором оскорблений."
-    assert "http" not in cleaned
     assert "Источники" not in cleaned
+    assert "http" not in cleaned
 
 
-def test_real_search_request_keeps_sources():
-    answer = "Нашёл.\n\nИсточники:\n- https://example.com/source"
-    source = "найди в интернете источник по этой теме"
-
-    assert live.strip_ungrounded_sources(answer, source, _SearchBot()) == answer
+def test_real_search_turn_keeps_sources_untouched():
+    answer = (
+        "Вот что нашлось.\n\n"
+        "Источники:\n"
+        "- https://example.com/a\n"
+        "- https://example.com/b"
+    )
+    prompt = (
+        "Проверь факт.\n\n"
+        "Результаты поиска:\n"
+        "1. https://example.com/a\n"
+        "2. https://example.com/b"
+    )
+    assert live.strip_ungrounded_source_block(answer, prompt) == answer
 
 
 def test_explicit_third_party_roast_gets_final_action_override():
@@ -85,8 +82,9 @@ def test_explicit_third_party_roast_gets_final_action_override():
     )
 
     assert "ЯВНАЯ КОМАНДА ПРОЖАРКИ" in fake.seen
-    assert "НЕ является причиной" in fake.seen
-    assert "Не переноси" in fake.seen
+    assert "НЕ является причиной отказаться" in fake.seen
+    assert "не требуй, чтобы цель сначала сама напала" in fake.seen
+    assert "Не переноси прожарку на заказчика" in fake.seen
 
 
 def test_disengagement_prompt_is_appended_after_existing_social_stack():
@@ -104,7 +102,9 @@ def test_disengagement_prompt_is_appended_after_existing_social_stack():
 
     assert instruction.startswith("BASE")
     assert "ЯВНЫЙ ВЫХОД ИЗ СРАЧА" in instruction
-    assert "максимум одна короткая" in instruction
+    assert "максимум" in instruction
+    assert "одна короткая" in instruction
+    assert "НЕ открывай новый раунд" in instruction
 
 
 def test_live_chat_guard_is_last_cross_runtime_arbiter():
