@@ -1,6 +1,7 @@
 import asyncio
 
 import live_chat_regression_runtime as live
+import runtime_bootstrap
 
 
 class _NoSearchBot:
@@ -104,3 +105,7 @@ def test_disengagement_prompt_is_appended_after_existing_social_stack():
     assert instruction.startswith("BASE")
     assert "ЯВНЫЙ ВЫХОД ИЗ СРАЧА" in instruction
     assert "максимум одна короткая" in instruction
+
+
+def test_live_chat_guard_is_last_cross_runtime_arbiter():
+    assert runtime_bootstrap.RUNTIME_LOAD_ORDER[-1] == "live_chat_regression_runtime"
