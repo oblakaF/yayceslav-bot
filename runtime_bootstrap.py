@@ -123,6 +123,8 @@ RUNTIME_LOAD_ORDER = (
     "live_chat_regression_runtime",
 )
 
+_PRESTART_TASKS: dict[int, set[asyncio.Task]] = {}
+
 
 def _find_bot_module():
     for name in ("__main__", "bot"):
@@ -281,9 +283,9 @@ def _install_background_task_lifecycle_patch() -> None:
     from ``post_init``, which intentionally happens before ``Application.start``.
 
     For that narrow pre-start window, create normal asyncio tasks, retain strong
-    references on the Application instance, and cancel/await them explicitly
-    before PTB shutdown. Calls made after the application starts keep PTB's
-    original task ownership unchanged.
+    references in this module, and cancel/await them explicitly before PTB
+    shutdown. Calls made after the application starts keep PTB's original task
+    ownership unchanged.
     """
 
     if getattr(Application, "_yayceslav_prestart_task_patch_installed", False):
@@ -297,22 +299,28 @@ def _install_background_task_lifecycle_patch() -> None:
             return original_create_task(self, coroutine, update=update, name=name)
 
         task = asyncio.create_task(coroutine, name=name)
-        owned = getattr(self, "_yayceslav_prestart_tasks", None)
-        if owned is None:
-            owned = set()
-            setattr(self, "_yayceslav_prestart_tasks", owned)
+        app_key = id(self)
+        owned = _PRESTART_TASKS.setdefault(app_key, set())
         owned.add(task)
-        task.add_done_callback(owned.discard)
+
+        def forget(done_task):
+            tasks = _PRESTART_TASKS.get(app_key)
+            if tasks is None:
+                return
+            tasks.discard(done_task)
+            if not tasks:
+                _PRESTART_TASKS.pop(app_key, None)
+
+        task.add_done_callback(forget)
         return task
 
     async def shutdown_with_prestart_cleanup(self):
-        owned = tuple(getattr(self, "_yayceslav_prestart_tasks", ()))
+        owned = tuple(_PRESTART_TASKS.pop(id(self), ()))
         for task in owned:
             if not task.done():
                 task.cancel()
         if owned:
             await asyncio.gather(*owned, return_exceptions=True)
-            getattr(self, "_yayceslav_prestart_tasks", set()).clear()
         await original_shutdown(self)
 
     Application.create_task = create_task_with_prestart_ownership
