@@ -10,16 +10,16 @@ def setup_function():
 
 
 def test_rage_sticker_requires_second_hostile_turn():
-    hostile_streak_engine.observe(10, 20, hostile=True, now=1.0)
+    hostile_streak_engine.observe(10, 20, hostile=True)
     assert not sticker_post_runtime._is_rage_exchange(10, 20, "Пес ебливый")
 
-    hostile_streak_engine.observe(10, 20, hostile=True, now=2.0)
+    hostile_streak_engine.observe(10, 20, hostile=True)
     assert sticker_post_runtime._is_rage_exchange(10, 20, "Пес ебливый")
 
 
 def test_hot_state_does_not_make_neutral_message_an_aggressive_sticker_event():
-    hostile_streak_engine.observe(10, 20, hostile=True, now=1.0)
-    hostile_streak_engine.observe(10, 20, hostile=True, now=2.0)
+    hostile_streak_engine.observe(10, 20, hostile=True)
+    hostile_streak_engine.observe(10, 20, hostile=True)
     assert not sticker_post_runtime._is_rage_exchange(10, 20, "как погода сегодня?")
 
 
