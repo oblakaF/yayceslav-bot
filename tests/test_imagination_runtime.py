@@ -41,6 +41,8 @@ def test_direct_imagination_prompt_adds_live_choice_rules():
     assert "я программа" in instruction
     assert "сердцем — бургер" in instruction
     assert "НЕ является" in instruction
+    assert "я не электоральная единица" in instruction
+    assert "объект визуализирован" in instruction
 
 
 def test_followup_keeps_previous_imagination_canon_from_keyword_history():
@@ -93,12 +95,18 @@ def test_followup_detector_requires_both_continuation_and_imagination_history():
     assert imagination_runtime.looks_like_imagination_followup(
         "А какой у тебя был бы девиз?", history
     )
+    assert imagination_runtime.looks_like_imagination_followup(
+        "а из существующих видов на планете земля?", history
+    )
+    assert imagination_runtime.looks_like_imagination_followup(
+        "ты представил? ты в кейптауне и ты японец? как ты затеряешься?", history
+    )
     assert not imagination_runtime.looks_like_imagination_followup(
         "Сегодня дождь?", history
     )
 
 
-def test_strange_self_image_question_is_treated_as_imagination_not_reason_to_shame():
+def test_strange_self_image_question_keeps_playful_personal_associations():
     module = SimpleNamespace(
         build_full_system_instruction=lambda *args, **kwargs: "BASE"
     )
@@ -112,5 +120,40 @@ def test_strange_self_image_question_is_treated_as_imagination_not_reason_to_sha
     normalized = " ".join(instruction.split())
 
     assert "можно выбрать условный образ для самого Яйцеслава" in normalized
-    assert "Не посылай пользователя и не диагностируй его" in normalized
-    assert "без идей превосходства" in normalized
+    assert "субъективные, слегка абсурдные культурные/эстетические ассоциации" in normalized
+    assert "дисциплина, технологии и минимализм" in normalized
+    assert "Не превращай это в серьёзное заявление" in normalized
+    assert "не строй иерархий" in normalized
+
+
+def test_real_party_question_gets_real_choice_rule_not_invented_party_rule():
+    module = SimpleNamespace(
+        build_full_system_instruction=lambda *args, **kwargs: "BASE"
+    )
+    imagination_runtime._install_prompt_rule(module)
+
+    instruction = module.build_full_system_instruction(
+        "ну а конкретно гипотетически какую бы партию выбрал?",
+        chat_type="group",
+        recent_messages=[
+            "Ross: а на выборах в сентябре за кого бы ты гипотетически проголосовал?",
+            "Яйцеслав: выбрал бы того, кто меньше болтает и больше делает",
+        ],
+    )
+
+    assert "ГИПОТЕТИЧЕСКИЙ ВЫБОР НА РЕАЛЬНЫХ ВЫБОРАХ" in instruction
+    assert "не подменяй это выдуманной «Партией Технического Рационализма»" in instruction
+    assert "дай конкретную гипотетическую симпатию персонажа" in instruction
+
+
+def test_user_correction_about_fake_party_stays_in_same_scene():
+    history = [
+        "Ross: ну а конкретно гипотетически какую бы партию выбрал?",
+        "Яйцеслав: Партию Технического Рационализма",
+    ]
+    assert imagination_runtime.looks_like_imagination_followup(
+        "нет такой", history
+    )
+    assert imagination_runtime.is_real_political_choice_request(
+        "нет такой", history
+    )
