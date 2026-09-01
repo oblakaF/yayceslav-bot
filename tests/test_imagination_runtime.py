@@ -71,10 +71,11 @@ def test_plain_self_portrait_request_reads_existing_canon_without_imagination_mo
         chat_type="group",
         recent_messages=[],
     )
+    normalized = " ".join(instruction.split())
 
     assert "SELF-PORTRAIT MODE" in instruction
-    assert "используй ВСЕ уже сохранённые черты" in instruction
-    assert "ЧТЕНИЕ текущего self-canon" in instruction
+    assert "используй ВСЕ уже сохранённые черты" in normalized
+    assert "ЧТЕНИЕ текущего self-canon" in normalized
     assert "IMAGINATION MODE" not in instruction
 
 
