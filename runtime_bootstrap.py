@@ -65,6 +65,7 @@ import fight_routing_v3
 import fight_memory_afterburner_v2
 import rage_pacing_runtime
 import roast_engine_runtime
+import shared_banter_runtime
 import live_chat_regression_runtime
 
 
@@ -115,6 +116,7 @@ RUNTIME_LOAD_ORDER = (
     "fight_memory_afterburner_v2",
     "rage_pacing_runtime",
     "roast_engine_runtime",
+    "shared_banter_runtime",
     "live_chat_regression_runtime",
 )
 
@@ -221,9 +223,6 @@ def prepare_application_runtime(application: Application) -> None:
     if not conflict_fsm_runtime.install():
         logging.warning("Conflict FSM runtime: bot module not ready")
 
-    # Final social grounding wraps the completed social + conflict prompt stack.
-    # This makes current-sender scoping and evidence rules authoritative without
-    # introducing another conflict state machine.
     if not social_grounding_runtime.install():
         logging.warning("Social grounding runtime: bot module not ready")
 
@@ -257,6 +256,9 @@ def prepare_application_runtime(application: Application) -> None:
     natural_router_runtime.prepare_application_runtime(application)
     social_grounding_runtime.prepare_application_runtime(application)
     recent_video_note_runtime.prepare_application_runtime(application)
+
+    if not shared_banter_runtime.install():
+        logging.warning("Shared banter runtime: bot module not ready")
 
     # Install last: this layer only arbitrates narrow cross-runtime regressions
     # after all owners (search, fight, roast, social, delivery) are already set.
