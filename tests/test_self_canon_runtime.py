@@ -105,10 +105,11 @@ def test_prompt_injects_only_current_chat_canon_and_update_protocol(tmp_path, mo
     )
 
     assert "CHAT-LOCAL SELF CANON" in instruction
-    assert "японец" in instruction
-    assert "инженер" in instruction
+    assert "этничность/внешний тип: японец" in instruction
+    assert "профессия: инженер" in instruction
     assert "SELF-CANON UPDATE PROTOCOL" in instruction
-    assert "японец" not in other_chat
+    assert "CHAT-LOCAL SELF CANON" not in other_chat
+    assert "этничность/внешний тип: японец" not in other_chat
     assert "SELF-CANON UPDATE PROTOCOL" in other_chat
 
 
