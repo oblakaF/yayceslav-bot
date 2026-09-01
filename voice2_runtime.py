@@ -182,6 +182,22 @@ def _normalize_decision(
     )
 
 
+async def _member_profile_for_request(
+    bot_module,
+    *,
+    chat_id: Any,
+    user_id: Any,
+) -> Any:
+    member_profile = None
+    get_member_profile = getattr(bot_module, "get_member_profile", None)
+    if callable(get_member_profile) and chat_id is not None and user_id is not None:
+        try:
+            member_profile = await get_member_profile(chat_id, user_id)
+        except Exception as error:
+            logging.warning("Voice 2.0 member profile lookup failed: %s", error)
+    return member_profile
+
+
 async def _structured_voice_decision(bot_module, contents: Any, kwargs: dict[str, Any]) -> str:
     user_settings = kwargs.get("user_settings")
     chat_id = kwargs.get("chat_id")
@@ -196,13 +212,11 @@ async def _structured_voice_decision(bot_module, contents: Any, kwargs: dict[str
     # Never let a previous request's temporary summary leak into this task.
     _VIDEO_NOTE_MEMORY_SUMMARY.set("")
 
-    member_profile = None
-    get_member_profile = getattr(bot_module, "get_member_profile", None)
-    if callable(get_member_profile) and chat_id is not None and user_id is not None:
-        try:
-            member_profile = await get_member_profile(chat_id, user_id)
-        except Exception as error:
-            logging.warning("Voice 2.0 member profile lookup failed: %s", error)
+    member_profile = await _member_profile_for_request(
+        bot_module,
+        chat_id=chat_id,
+        user_id=user_id,
+    )
 
     style_text = _prompt_text(contents)
     current_instruction = bot_module.build_full_system_instruction(
@@ -306,6 +320,100 @@ async def _structured_voice_decision(bot_module, contents: Any, kwargs: dict[str
     if last_error:
         raise last_error
     raise RuntimeError("Voice 2.0 structured decision failed")
+
+
+async def _plain_voice_recovery(bot_module, contents: Any, kwargs: dict[str, Any]) -> str:
+    """Recover one user-facing media reply without returning to legacy JSON.
+
+    Structured output occasionally fails on heavier Telegram video circles. The
+    old fallback called the legacy JSON-control prompt again, which could itself
+    be truncated and trigger the visible "служебный ответ ... обрезался" guard.
+    Recovery reuses the same media bytes for one ordinary text generation instead.
+    It is the third and final model attempt, so worst-case call count is unchanged.
+    """
+
+    user_settings = kwargs.get("user_settings")
+    chat_id = kwargs.get("chat_id")
+    chat_type = kwargs.get("chat_type", "private")
+    user_name = kwargs.get("user_name", "")
+    recent_messages = kwargs.get("recent_messages")
+    bot_was_mentioned = kwargs.get("bot_was_mentioned", True)
+    user_id = kwargs.get("user_id")
+    max_output_tokens = int(kwargs.get("max_output_tokens", 320) or 320)
+    video_note = _is_video_note_request(contents)
+
+    member_profile = await _member_profile_for_request(
+        bot_module,
+        chat_id=chat_id,
+        user_id=user_id,
+    )
+    current_instruction = bot_module.build_full_system_instruction(
+        "[Восстановление ответа на Telegram video-note]" if video_note else "[Восстановление ответа на голосовое сообщение]",
+        user_settings,
+        voice_style=False,
+        chat_id=chat_id,
+        chat_type=chat_type,
+        user_name=user_name,
+        recent_messages=recent_messages,
+        bot_was_mentioned=bot_was_mentioned,
+        member_profile=member_profile,
+        user_id=user_id,
+    )
+    current_instruction += (
+        "\n\nVOICE 2.0 PLAIN RECOVERY: structured control output failed. "
+        "Return ONLY the direct user-facing answer in ordinary plain text. "
+        "Do not output JSON, field names, a transcript, control metadata or an "
+        "explanation of the failure. Listen to the attached media and answer the "
+        "user's actual spoken message naturally and briefly. If the spoken request "
+        "requires current web verification, do not invent current facts; say briefly "
+        "that web verification did not route and ask the user to retry that search."
+    )
+    if video_note:
+        current_instruction += (
+            " This is a Telegram video circle: WATCH the visible frames AND LISTEN "
+            "to the audio. Use both in the answer. If speech is absent, answer from "
+            "what is clearly visible. Do not claim the video is unavailable when "
+            "its frames are readable."
+        )
+
+    recovery_prompt = (
+        "Ответь непосредственно на сообщение пользователя из приложенного медиа. "
+        "Коротко, естественно, без JSON и без служебных пояснений."
+    )
+    recovery_contents = [
+        item for item in contents
+        if not isinstance(item, str)
+    ] + [recovery_prompt]
+
+    token_budget = max(256, min(640, max_output_tokens))
+    async with bot_module.GEMINI_SEMAPHORE:
+        response = await asyncio.wait_for(
+            bot_module.gemini_client.aio.models.generate_content(
+                model=bot_module.MODEL_NAME,
+                contents=recovery_contents,
+                config=bot_module.types.GenerateContentConfig(
+                    system_instruction=current_instruction,
+                    max_output_tokens=token_budget,
+                    thinking_config=bot_module.types.ThinkingConfig(
+                        thinking_level="low",
+                    ),
+                ),
+            ),
+            timeout=90,
+        )
+
+    answer = str(getattr(response, "text", "") or "").strip()
+    if not answer:
+        raise RuntimeError("Voice 2.0 plain recovery returned an empty answer")
+    if _looks_like_voice_control_output(answer):
+        raise RuntimeError("Voice 2.0 plain recovery unexpectedly returned control JSON")
+
+    logging.info(
+        "Voice 2.0 plain recovery succeeded: video_note=%s chars=%s",
+        video_note,
+        len(answer),
+    )
+    return answer
 
 
 def _install_voice_resolver_guard(bot_module) -> None:
@@ -421,13 +529,22 @@ def install() -> bool:
         try:
             return await _structured_voice_decision(bot_module, contents, kwargs)
         except Exception as error:
-            # Safe fallback keeps the old path available if the installed SDK or
-            # provider temporarily rejects schema output. Resolver containment
-            # below guarantees malformed legacy control JSON is not user-visible.
-            logging.warning("Voice 2.0 falling back to legacy JSON prompt: %s", error)
+            # Structured schema occasionally fails on heavier multimodal circles.
+            # Do not retry the fragile legacy JSON-control prompt: use the same
+            # third-call budget for one direct plain-text media answer instead.
+            logging.warning(
+                "Voice 2.0 structured path exhausted; trying plain recovery: %s",
+                error,
+            )
             _VOICE_REPLY_OVERRIDE.set(None)
             _VIDEO_NOTE_MEMORY_SUMMARY.set("")
-            return await original_ask(contents, *args, **kwargs)
+            try:
+                return await _plain_voice_recovery(bot_module, contents, kwargs)
+            except Exception as recovery_error:
+                logging.warning("Voice 2.0 plain recovery failed: %s", recovery_error)
+                if _is_video_note_request(contents):
+                    return "Кружок разобрал, но ответ сейчас не собрался. Скинь ещё раз или повтори вопрос."
+                return "Голосовуху разобрал, но ответ сейчас не собрался. Скинь ещё раз или повтори вопрос."
 
     def should_reply_as_voice_voice2(answer_length: int) -> bool:
         override = _VOICE_REPLY_OVERRIDE.get()
@@ -444,6 +561,6 @@ def install() -> bool:
     _install_video_note_memory_bridge(bot_module)
     _INSTALLED = True
     logging.warning(
-        "Voice 2.0 ready: structured schema, ephemeral transcript, video-note vision memory, member profile, explicit voice request, JSON containment"
+        "Voice 2.0 ready: structured schema, plain media recovery, ephemeral transcript, video-note vision memory, member profile, explicit voice request, JSON containment"
     )
     return True

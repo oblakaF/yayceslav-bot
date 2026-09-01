@@ -226,6 +226,99 @@ def test_structured_video_note_explicitly_watches_frames_and_captures_visual_mem
     assert instructions == ["Прослушай сообщение пользователя"]
 
 
+def test_plain_video_note_recovery_reuses_media_without_json_schema():
+    captured = {}
+
+    class FakeModels:
+        async def generate_content(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(text="Вижу пса и слышу вопрос. Да, история продолжается ахах.")
+
+    class FakeGenerateContentConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeThinkingConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    bot_module = SimpleNamespace(
+        build_full_system_instruction=lambda *args, **kwargs: "SYSTEM",
+        GEMINI_SEMAPHORE=asyncio.Semaphore(1),
+        gemini_client=SimpleNamespace(aio=SimpleNamespace(models=FakeModels())),
+        MODEL_NAME="test-model",
+        types=SimpleNamespace(
+            GenerateContentConfig=FakeGenerateContentConfig,
+            ThinkingConfig=FakeThinkingConfig,
+        ),
+    )
+    video_part = SimpleNamespace(inline_data=SimpleNamespace(mime_type="video/mp4"))
+
+    answer = asyncio.run(
+        voice2_runtime._plain_voice_recovery(
+            bot_module,
+            [
+                video_part,
+                'Прослушай сообщение пользователя и верни {"needs_search": false, "answer": ""}',
+            ],
+            {"chat_type": "group", "chat_id": -100, "user_id": 42},
+        )
+    )
+
+    assert answer.startswith("Вижу пса")
+    assert captured["contents"][0] is video_part
+    assert len(captured["contents"]) == 2
+    assert "без JSON" in captured["contents"][1]
+    config = captured["config"].kwargs
+    assert "response_schema" not in config
+    assert "response_mime_type" not in config
+    assert "VOICE 2.0 PLAIN RECOVERY" in config["system_instruction"]
+    assert "WATCH the visible frames AND LISTEN" in config["system_instruction"]
+
+
+def test_voice2_exhausted_structured_path_uses_plain_recovery_not_legacy(monkeypatch):
+    legacy_calls = []
+    recovery_calls = []
+
+    async def original_ask(contents, *args, **kwargs):
+        legacy_calls.append(contents)
+        return '{"needs_search": false, "answer": "legacy"}'
+
+    async def original_resolver(update, raw_answer, *, user_settings):
+        return raw_answer
+
+    async def broken_structured(bot_module, contents, kwargs):
+        raise RuntimeError("schema failed twice")
+
+    async def successful_recovery(bot_module, contents, kwargs):
+        recovery_calls.append(contents)
+        return "Нормально понял кружок и отвечаю без служебного JSON."
+
+    fake = SimpleNamespace(
+        ask_gemini=original_ask,
+        _should_reply_as_voice=lambda length: False,
+        _resolve_voice_search_answer=original_resolver,
+        remember_message=lambda *args, **kwargs: None,
+    )
+
+    monkeypatch.setattr(voice2_runtime, "_INSTALLED", False)
+    monkeypatch.setattr(voice2_runtime, "_find_bot_module", lambda: fake)
+    monkeypatch.setattr(voice2_runtime, "_structured_voice_decision", broken_structured)
+    monkeypatch.setattr(voice2_runtime, "_plain_voice_recovery", successful_recovery)
+
+    assert voice2_runtime.install() is True
+
+    control_contents = [
+        object(),
+        'Прослушай сообщение пользователя. {"needs_search": false, "search_query": "", "answer": ""}',
+    ]
+    answer = asyncio.run(fake.ask_gemini(control_contents, chat_id=-100, user_id=42))
+
+    assert answer.startswith("Нормально понял кружок")
+    assert recovery_calls == [control_contents]
+    assert legacy_calls == []
+
+
 def test_video_note_memory_bridge_replaces_only_generic_ram_marker_once():
     calls = []
 
