@@ -15,6 +15,20 @@ def test_imagination_trigger_phrases_cover_live_chat_cases():
         assert imagination_runtime.is_imagination_request(text), text
 
 
+def test_self_portrait_trigger_phrases_cover_natural_requests():
+    cases = (
+        "опиши себя полностью",
+        "расскажи мне о себе",
+        "каким ты себя видишь?",
+        "кто ты такой?",
+        "дай полный портрет самого себя",
+        "составь свой автопортрет",
+        "что ты за персонаж?",
+    )
+    for text in cases:
+        assert imagination_runtime.is_self_portrait_request(text), text
+
+
 def test_plain_factual_query_is_not_imagination():
     assert not imagination_runtime.is_imagination_request(
         "кто сейчас президент Франции?"
@@ -44,6 +58,40 @@ def test_direct_imagination_prompt_adds_live_choice_rules():
     assert "НЕ является" in normalized
     assert "я не электоральная единица" in normalized
     assert "объект визуализирован" in normalized
+
+
+def test_plain_self_portrait_request_reads_existing_canon_without_imagination_mode():
+    module = SimpleNamespace(
+        build_full_system_instruction=lambda *args, **kwargs: "BASE"
+    )
+    imagination_runtime._install_prompt_rule(module)
+
+    instruction = module.build_full_system_instruction(
+        "Опиши себя полностью",
+        chat_type="group",
+        recent_messages=[],
+    )
+
+    assert "SELF-PORTRAIT MODE" in instruction
+    assert "используй ВСЕ уже сохранённые черты" in instruction
+    assert "ЧТЕНИЕ текущего self-canon" in instruction
+    assert "IMAGINATION MODE" not in instruction
+
+
+def test_hypothetical_self_portrait_can_both_recall_and_extend_persona():
+    module = SimpleNamespace(
+        build_full_system_instruction=lambda *args, **kwargs: "BASE"
+    )
+    imagination_runtime._install_prompt_rule(module)
+
+    instruction = module.build_full_system_instruction(
+        "Гипотетически опиши себя полностью и дорисуй, чего не хватает",
+        chat_type="group",
+        recent_messages=[],
+    )
+
+    assert "SELF-PORTRAIT MODE" in instruction
+    assert "IMAGINATION MODE" in instruction
 
 
 def test_followup_keeps_previous_imagination_canon_from_keyword_history():
