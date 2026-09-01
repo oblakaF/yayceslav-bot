@@ -68,6 +68,7 @@ import rage_pacing_runtime
 import roast_engine_runtime
 import shared_banter_runtime
 import imagination_runtime
+import self_canon_runtime
 import live_chat_regression_runtime
 
 
@@ -120,6 +121,7 @@ RUNTIME_LOAD_ORDER = (
     "roast_engine_runtime",
     "shared_banter_runtime",
     "imagination_runtime",
+    "self_canon_runtime",
     "live_chat_regression_runtime",
 )
 
@@ -267,6 +269,9 @@ def prepare_application_runtime(application: Application) -> None:
 
     if not imagination_runtime.install():
         logging.warning("Imagination runtime: bot module not ready")
+
+    if not self_canon_runtime.install():
+        logging.warning("Self-canon memory runtime: bot module not ready")
 
     # Install last: this layer only arbitrates narrow cross-runtime regressions
     # after all owners (search, fight, roast, social, delivery) are already set.
