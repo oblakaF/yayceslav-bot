@@ -26,8 +26,44 @@ def _baseline_v2(_connection) -> None:
     return None
 
 
+def _chat_self_canon_v2(connection) -> None:
+    """Add chat-local, revisable hypothetical self-memory."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_self_canon (
+            chat_id INTEGER NOT NULL,
+            trait_key TEXT NOT NULL,
+            trait_value TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (chat_id, trait_key)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_self_canon_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            trait_key TEXT NOT NULL,
+            old_value TEXT,
+            new_value TEXT,
+            source_excerpt TEXT NOT NULL DEFAULT '',
+            changed_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_chat_self_canon_history_recency
+        ON chat_self_canon_history(chat_id, changed_at, id)
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline_v2_existing_schema", _baseline_v2),
+    Migration(2, "chat_local_self_canon", _chat_self_canon_v2),
 )
 
 
