@@ -35,14 +35,15 @@ def test_direct_imagination_prompt_adds_live_choice_rules():
         chat_type="group",
         recent_messages=[],
     )
+    normalized = " ".join(instruction.split())
 
     assert "IMAGINATION MODE" in instruction
-    assert "выбери конкретный вариант" in instruction
-    assert "я программа" in instruction
-    assert "сердцем — бургер" in instruction
-    assert "НЕ является" in instruction
-    assert "я не электоральная единица" in instruction
-    assert "объект визуализирован" in instruction
+    assert "выбери конкретный вариант" in normalized
+    assert "я программа" in normalized
+    assert "сердцем — бургер" in normalized
+    assert "НЕ является" in normalized
+    assert "я не электоральная единица" in normalized
+    assert "объект визуализирован" in normalized
 
 
 def test_followup_keeps_previous_imagination_canon_from_keyword_history():
