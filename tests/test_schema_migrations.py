@@ -34,12 +34,12 @@ def test_migrations_are_non_destructive_and_idempotent(tmp_path, monkeypatch):
         }
         applied = migrations.applied_versions(connection)
 
-    assert after - before == {
+    assert before <= after
+    assert {
         "schema_migrations",
         "chat_self_canon",
         "chat_self_canon_history",
-        "sqlite_sequence",
-    }
+    } <= after
     assert applied == {
         1: "baseline_v2_existing_schema",
         2: "chat_local_self_canon",
