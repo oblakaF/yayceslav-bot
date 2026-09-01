@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import hostile_streak_engine
+import personality
 import shared_banter_runtime
 
 
@@ -118,6 +119,42 @@ def test_narrated_banter_clears_false_heat_before_inner_conflict_router():
     assert instruction.startswith("MODE=normal")
     assert "ТЕКУЩАЯ РЕПЛИКА — ПЕРЕСКАЗ/ПРОДОЛЖЕНИЕ СЦЕНЫ" in instruction
     assert hostile_streak_engine.current(chat_id, user_id) == 0
+
+
+def test_real_base_personality_prompt_is_normal_inside_narrated_banter():
+    original_detector = personality.detect_conversation_mode
+    try:
+        shared_banter_runtime._install_personality_mode_override()
+
+        def base_builder(style_text, *args, **kwargs):
+            return personality.build_v2_base_instruction(style_text)
+
+        module = SimpleNamespace(build_full_system_instruction=base_builder)
+        shared_banter_runtime._install_prompt_rule(module)
+
+        narrated = module.build_full_system_instruction(
+            "Братан он прям уже навис над тобой и продолжает бормотать что ты будешь нюхать хуй в бусике тцк пока едешь в Африку",
+            chat_type="group",
+            recent_messages=[
+                "Ross: автобусик у серверной",
+                "Кирилл: держись друг",
+            ],
+        )
+
+        assert "Текущий режим общения: normal" in narrated
+        assert "Текущий режим общения: hostile" not in narrated
+        assert "Пользователь прямо наезжает на тебя" not in narrated
+        assert "ТЕКУЩАЯ РЕПЛИКА — ПЕРЕСКАЗ/ПРОДОЛЖЕНИЕ СЦЕНЫ" in narrated
+
+        direct = module.build_full_system_instruction(
+            "ты долбоеб, пошёл нахуй",
+            chat_type="group",
+            recent_messages=[],
+        )
+        assert "Текущий режим общения: hostile" in direct
+        assert "Пользователь прямо наезжает на тебя" in direct
+    finally:
+        personality.detect_conversation_mode = original_detector
 
 
 def test_direct_insult_keeps_conflict_mode_and_heat():
