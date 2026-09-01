@@ -109,7 +109,8 @@ def test_strange_self_image_question_is_treated_as_imagination_not_reason_to_sha
         chat_type="group",
         recent_messages=[],
     )
+    normalized = " ".join(instruction.split())
 
-    assert "можно выбрать условный образ для самого Яйцеслава" in instruction
-    assert "Не посылай пользователя и не диагностируй его" in instruction
-    assert "без идей превосходства" in instruction
+    assert "можно выбрать условный образ для самого Яйцеслава" in normalized
+    assert "Не посылай пользователя и не диагностируй его" in normalized
+    assert "без идей превосходства" in normalized
