@@ -8,6 +8,7 @@ Keep additions deliberate and covered by bootstrap behavior tests.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 
@@ -271,6 +272,54 @@ def prepare_application_runtime(application: Application) -> None:
         logging.warning("Live-chat regression guard: bot module not ready")
 
 
+def _install_background_task_lifecycle_patch() -> None:
+    """Own tasks created by PTB post_init before Application.start().
+
+    PTB 22.8 warns when ``Application.create_task`` is called while the
+    application is not running because those tasks are not guaranteed to be
+    awaited automatically. Yayceslav starts four long-lived scheduler loops
+    from ``post_init``, which intentionally happens before ``Application.start``.
+
+    For that narrow pre-start window, create normal asyncio tasks, retain strong
+    references on the Application instance, and cancel/await them explicitly
+    before PTB shutdown. Calls made after the application starts keep PTB's
+    original task ownership unchanged.
+    """
+
+    if getattr(Application, "_yayceslav_prestart_task_patch_installed", False):
+        return
+
+    original_create_task = Application.create_task
+    original_shutdown = Application.shutdown
+
+    def create_task_with_prestart_ownership(self, coroutine, update=None, *, name=None):
+        if self.running:
+            return original_create_task(self, coroutine, update=update, name=name)
+
+        task = asyncio.create_task(coroutine, name=name)
+        owned = getattr(self, "_yayceslav_prestart_tasks", None)
+        if owned is None:
+            owned = set()
+            setattr(self, "_yayceslav_prestart_tasks", owned)
+        owned.add(task)
+        task.add_done_callback(owned.discard)
+        return task
+
+    async def shutdown_with_prestart_cleanup(self):
+        owned = tuple(getattr(self, "_yayceslav_prestart_tasks", ()))
+        for task in owned:
+            if not task.done():
+                task.cancel()
+        if owned:
+            await asyncio.gather(*owned, return_exceptions=True)
+            getattr(self, "_yayceslav_prestart_tasks", set()).clear()
+        await original_shutdown(self)
+
+    Application.create_task = create_task_with_prestart_ownership
+    Application.shutdown = shutdown_with_prestart_cleanup
+    Application._yayceslav_prestart_task_patch_installed = True
+
+
 def _install_preflight_hook() -> None:
     if getattr(Application, "_yayceslav_schema_preflight_installed", False):
         return
@@ -291,4 +340,5 @@ def _install_preflight_hook() -> None:
     Application._yayceslav_schema_preflight_installed = True
 
 
+_install_background_task_lifecycle_patch()
 _install_preflight_hook()
