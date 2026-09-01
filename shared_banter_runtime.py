@@ -12,7 +12,9 @@ word cannot by itself turn playful narration into a web search.
 One important routing exception lives here too: reported/narrated hostility from
 a third party ("он шепчет, что ты будешь ...") is not a direct attack by the
 sender. During that one build call we suppress conflict escalation and clear
-false heat for the sender before the conflict FSM chooses its persona.
+false heat for the sender before the conflict FSM chooses its persona. The same
+context-local override is also applied inside personality.build_v2_base_instruction
+so the base prompt cannot still label the exact same turn as HOSTILE.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ import logging
 import re
 import sys
 from typing import Any
+
+import personality
 
 
 _INSTALLED = False
@@ -101,8 +105,9 @@ _CURRENT_NARRATED_BANTER_RULE = """
 ТЕКУЩАЯ РЕПЛИКА — ПЕРЕСКАЗ/ПРОДОЛЖЕНИЕ СЦЕНЫ, А НЕ НАЕЗД АВТОРА:
 Автор описывает, что делает/говорит третий персонаж в общем bit. Грубые слова
 внутри этого пересказа НЕ принадлежат автору как прямое оскорбление Яйцеслава.
-Не отвечай автору «отъебись», не называй его интернет-бойцом/фантазёром и не
-защищайся. Прими сцену и добавь следующий короткий комедийный ход изнутри неё.
+Не отвечай автору «отъебись»/«пошёл нахуй», не называй его
+интернет-бойцом/фантазёром и не защищайся. Прими сцену и добавь следующий
+короткий комедийный ход изнутри неё.
 """
 
 
@@ -143,7 +148,13 @@ def is_reported_banter_hostility(text: str) -> bool:
     )
 
 
-def _call_argument(args: tuple[Any, ...], kwargs: dict[str, Any], name: str, position: int, default: Any = None) -> Any:
+def _call_argument(
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    name: str,
+    position: int,
+    default: Any = None,
+) -> Any:
     if name in kwargs:
         return kwargs[name]
     if len(args) > position:
@@ -151,25 +162,10 @@ def _call_argument(args: tuple[Any, ...], kwargs: dict[str, Any], name: str, pos
     return default
 
 
-def _install_search_narrowing(module: Any) -> None:
-    original = getattr(module, "should_auto_search", None)
-    if not callable(original) or getattr(original, "_yayceslav_banter_search_guard", False):
-        return
+def _wrap_mode_detector(owner: Any) -> None:
+    """Apply the same context-local mode override to one detector owner."""
 
-    @functools.wraps(original)
-    def should_auto_search_banter_safe(text: str) -> bool:
-        decision = bool(original(text))
-        if decision and temporal_marker_alone_is_not_search(text):
-            logging.info("Auto-search suppressed: loose temporal marker inside conversational turn: %r", str(text)[:180])
-            return False
-        return decision
-
-    should_auto_search_banter_safe._yayceslav_banter_search_guard = True
-    module.should_auto_search = should_auto_search_banter_safe
-
-
-def _install_mode_override(module: Any) -> None:
-    original = getattr(module, "detect_conversation_mode", None)
+    original = getattr(owner, "detect_conversation_mode", None)
     if not callable(original) or getattr(original, "_yayceslav_banter_mode_guard", False):
         return
 
@@ -181,7 +177,39 @@ def _install_mode_override(module: Any) -> None:
         return mode
 
     detect_banter_safe._yayceslav_banter_mode_guard = True
-    module.detect_conversation_mode = detect_banter_safe
+    owner.detect_conversation_mode = detect_banter_safe
+
+
+def _install_search_narrowing(module: Any) -> None:
+    original = getattr(module, "should_auto_search", None)
+    if not callable(original) or getattr(original, "_yayceslav_banter_search_guard", False):
+        return
+
+    @functools.wraps(original)
+    def should_auto_search_banter_safe(text: str) -> bool:
+        decision = bool(original(text))
+        if decision and temporal_marker_alone_is_not_search(text):
+            logging.info(
+                "Auto-search suppressed: loose temporal marker inside conversational turn: %r",
+                str(text)[:180],
+            )
+            return False
+        return decision
+
+    should_auto_search_banter_safe._yayceslav_banter_search_guard = True
+    module.should_auto_search = should_auto_search_banter_safe
+
+
+def _install_mode_override(module: Any) -> None:
+    # bot.py owns the runtime detector used by state/humor/fight layers.
+    _wrap_mode_detector(module)
+
+
+def _install_personality_mode_override() -> None:
+    # personality.build_v2_base_instruction resolves this global detector at
+    # call time. Without this patch the base prompt could still say HOSTILE
+    # while every later runtime layer correctly says shared banter.
+    _wrap_mode_detector(personality)
 
 
 def _install_prompt_rule(module: Any) -> None:
@@ -204,6 +232,7 @@ def _install_prompt_rule(module: Any) -> None:
                 # keep the conflict FSM in WARNING/RAGE for the next line.
                 try:
                     import hostile_streak_engine
+
                     hostile_streak_engine.reset(int(chat_id), int(user_id))
                 except Exception:
                     logging.exception("Shared banter: failed to clear false conflict heat")
@@ -230,10 +259,11 @@ def install(bot_module: Any | None = None) -> bool:
         return True
     _install_search_narrowing(module)
     _install_mode_override(module)
+    _install_personality_mode_override()
     _install_prompt_rule(module)
     module._yayceslav_shared_banter_installed = True
     _INSTALLED = True
     logging.warning(
-        "Shared banter runtime ready: play-along priority + narrated-hostility conflict guard + loose-time auto-search guard"
+        "Shared banter runtime ready: play-along priority + narrated-hostility conflict/base-mode guard + loose-time auto-search guard"
     )
     return True
