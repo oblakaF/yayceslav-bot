@@ -50,6 +50,6 @@ jobs:
           rate_limit_tlen_runtime.py natural_router_runtime.py search_enrichment_runtime.py
           chat_digest_runtime.py date_grounding_runtime.py search_context_runtime.py search_slang_runtime.py
           lexical_search_v3.py evidence_grounding_runtime.py recent_video_note_runtime.py title_conflict_runtime.py
-          imagination_runtime.py
+          imagination_runtime.py self_canon_runtime.py
       - name: Test
         run: pytest -q
