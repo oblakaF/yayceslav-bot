@@ -69,6 +69,19 @@ _REAL_POLITICAL_CHOICE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_SELF_PORTRAIT_RE = re.compile(
+    r"(?:"
+    r"\bопиши(?:-ка)?\s+(?:мне\s+)?себя\b|"
+    r"\bрасскажи\s+(?:мне\s+)?о\s+себе\b|"
+    r"\bкаким\s+ты\s+себя\s+(?:видишь|представляешь|ощущаешь)\b|"
+    r"\bкто\s+ты(?:\s+такой|\s+вообще)?\b|"
+    r"\bдай\s+(?:мне\s+)?(?:полный\s+)?портрет\s+(?:самого\s+)?себя\b|"
+    r"\bсоставь\s+(?:свой\s+)?(?:полный\s+)?автопортрет\b|"
+    r"\bчто\s+ты\s+за\s+(?:человек|тип|персонаж)\b"
+    r")",
+    re.IGNORECASE,
+)
+
 _IMAGINATION_RULE = """
 
 IMAGINATION MODE — ПОЛЬЗОВАТЕЛЬ ЯВНО ПРОСИТ ПОФАНТАЗИРОВАТЬ:
@@ -141,6 +154,34 @@ _REAL_POLITICAL_CHOICE_RULE = """
   партия «в мечтах всё равно существует», если вопрос был про настоящую.
 """
 
+_SELF_PORTRAIT_RULE = """
+
+SELF-PORTRAIT MODE — ПОЛЬЗОВАТЕЛЬ ПРОСИТ ЯЙЦЕСЛАВА ОПИСАТЬ САМОГО СЕБЯ:
+Если в системном контексте есть блок CHAT-LOCAL SELF CANON, собери из него
+цельный автопортрет от первого лица.
+
+Правила:
+- используй ВСЕ уже сохранённые черты этого чата, а не случайные 2–3. Если черт
+  много, естественно сгруппируй их в связный рассказ, но не противоречь и не
+  теряй установленные детали;
+- не перечисляй внутренние названия полей (`ethnicity`, `profession` и т.п.) и
+  не говори «в моей памяти/базе записано». Это просто твоя текущая версия себя;
+- отличай установленный канон от пробелов. Если какой-то аспект ещё не выбран,
+  не выдавай новую деталь за давно решённую. При необходимости можно сказать,
+  что этот кусок образа пока не определён;
+- простой запрос «опиши себя / кто ты / каким ты себя видишь» — это ЧТЕНИЕ
+  текущего self-canon, а не автоматический повод переписывать его;
+- если тот же запрос явно содержит «гипотетически / пофантазируй / помечтай» и
+  просит дополнить ещё не определённые детали, можешь выбрать их. Тогда обычный
+  SELF-CANON UPDATE PROTOCOL сохранит только действительно новые решения;
+- отвечай живо и как один персонаж: внешность, происхождение, образ жизни, вкусы,
+  привычки, ценности и прочие сохранённые детали должны ощущаться одной личностью,
+  а не выгрузкой строк из таблицы;
+- если CHAT-LOCAL SELF CANON пока пуст, не притворяйся, что у тебя уже сложился
+  подробный образ. Можно кратко описать базовый характер и предложить постепенно
+  дорисовать себя в гипотетическом разговоре.
+"""
+
 _IMAGINATION_FOLLOWUP_RULE = """
 
 ПРОДОЛЖЕНИЕ УЖЕ НАЧАТОЙ ФАНТАЗИИ:
@@ -164,6 +205,11 @@ def _find_bot_module() -> Any | None:
 def is_imagination_request(text: str) -> bool:
     value = " ".join(str(text or "").split()).strip()
     return bool(value and _IMAGINATION_RE.search(value))
+
+
+def is_self_portrait_request(text: str) -> bool:
+    value = " ".join(str(text or "").split()).strip()
+    return bool(value and _SELF_PORTRAIT_RE.search(value))
 
 
 def _history_text(recent_messages: Any = None) -> str:
@@ -248,12 +294,15 @@ def _install_prompt_rule(bot_module: Any) -> None:
 
         direct = is_imagination_request(style_text)
         followup = looks_like_imagination_followup(style_text, recent_messages)
+        portrait = is_self_portrait_request(style_text)
         if direct or followup:
             instruction += _IMAGINATION_RULE
             if is_real_political_choice_request(style_text, recent_messages):
                 instruction += _REAL_POLITICAL_CHOICE_RULE
             if followup:
                 instruction += _IMAGINATION_FOLLOWUP_RULE
+        if portrait:
+            instruction += _SELF_PORTRAIT_RULE
         return instruction
 
     build_with_imagination._yayceslav_imagination_mode = True
