@@ -66,6 +66,7 @@ import fight_memory_afterburner_v2
 import rage_pacing_runtime
 import roast_engine_runtime
 import shared_banter_runtime
+import imagination_runtime
 import live_chat_regression_runtime
 
 
@@ -117,6 +118,7 @@ RUNTIME_LOAD_ORDER = (
     "rage_pacing_runtime",
     "roast_engine_runtime",
     "shared_banter_runtime",
+    "imagination_runtime",
     "live_chat_regression_runtime",
 )
 
@@ -259,6 +261,9 @@ def prepare_application_runtime(application: Application) -> None:
 
     if not shared_banter_runtime.install():
         logging.warning("Shared banter runtime: bot module not ready")
+
+    if not imagination_runtime.install():
+        logging.warning("Imagination runtime: bot module not ready")
 
     # Install last: this layer only arbitrates narrow cross-runtime regressions
     # after all owners (search, fight, roast, social, delivery) are already set.
