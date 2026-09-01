@@ -165,7 +165,7 @@ def _install_prompt_rule(bot_module: Any) -> None:
             args,
             kwargs,
             name="recent_messages",
-            position=8,
+            position=6,
             default=None,
         )
 
