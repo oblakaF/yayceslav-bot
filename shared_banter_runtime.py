@@ -25,17 +25,19 @@ _GENERIC_TEMPORAL_RE = re.compile(
     r"\b(?:сейчас|сегодня|на\s+данный\s+момент|прямо\s+сейчас)\b",
     re.IGNORECASE,
 )
+_EXPLICIT_WEB_RE = re.compile(
+    r"\b(?:проверь|найди|поищи|глянь|посмотри|чекни|погугли|загугли)\b",
+    re.IGNORECASE,
+)
 _STRONG_FRESHNESS_RE = re.compile(
     r"(?:"
+    r"^\s*(?:кто|что|где|когда|сколько|какой|какая|какие|правда\s+ли)\b.{0,60}\b(?:сейчас|сегодня)\b|"
+    r"^\s*(?:сейчас|сегодня)\b.{0,45}\b(?:кто|что|где|когда|сколько|какой|какая|какие)\b|"
     r"\b(?:последн\w*|свеж\w*|актуальн\w*)\s+(?:новост\w*|событ\w*|данн\w*|информац\w*)\b|"
-    r"\b(?:курс|цена|котировк|погод|расписан|статус\s+рейса|закон|правил\w*\s+въезда)\b|"
-    r"\b(?:кто|что|где|когда|сколько|какой|какая|какие)\b.{0,30}\b(?:сейчас|сегодня)\b|"
-    r"\b(?:сейчас|сегодня)\b.{0,30}\b(?:кто|что|где|когда|сколько|какой|какая|какие)\b|"
-    r"\b(?:проверь|найди|поищи|глянь|посмотри|чекни|погугли|загугли)\b"
+    r"\b(?:курс|цена|котировк|погод|расписан|статус\s+рейса|действующ\w*\s+закон|правил\w*\s+въезда)\b"
     r")",
     re.IGNORECASE | re.DOTALL,
 )
-_QUESTION_RE = re.compile(r"[?？]|\b(?:кто|что|где|когда|почему|зачем|сколько|какой|какая|какие|правда\s+ли)\b", re.IGNORECASE)
 
 _SHARED_BANTER_RULE = """
 
@@ -77,19 +79,10 @@ def _find_bot_module() -> Any | None:
 
 def temporal_marker_alone_is_not_search(text: str) -> bool:
     """True when legacy auto-search fired only because of a loose time word."""
-
     value = " ".join(str(text or "").split()).strip()
     if not value or not _GENERIC_TEMPORAL_RE.search(value):
         return False
-    if _STRONG_FRESHNESS_RE.search(value):
-        return False
-    # A question mark by itself is not enough: "он сейчас дверь ломает, да?" is
-    # still ordinary conversational narration. Require a factual interrogative.
-    if _QUESTION_RE.search(value) and re.search(
-        r"\b(?:кто|что|где|когда|почему|сколько|какой|какая|какие|правда\s+ли)\b",
-        value,
-        re.IGNORECASE,
-    ):
+    if _EXPLICIT_WEB_RE.search(value) or _STRONG_FRESHNESS_RE.search(value):
         return False
     return True
 
@@ -137,7 +130,6 @@ def install(bot_module: Any | None = None) -> bool:
         return False
     if _INSTALLED:
         return True
-
     _install_search_narrowing(module)
     _install_prompt_rule(module)
     module._yayceslav_shared_banter_installed = True
