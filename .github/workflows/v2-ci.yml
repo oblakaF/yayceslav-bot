@@ -51,6 +51,6 @@ jobs:
           identity_recommendation_runtime.py book_recommendation_runtime.py movie_recommendation_runtime.py movie_seed_resolution_v2.py game_recommendation_runtime.py identity_recommendation_bootstrap_patch.py search_enrichment_runtime.py
           chat_digest_runtime.py date_grounding_runtime.py search_context_runtime.py entity_continuity_runtime.py search_slang_runtime.py
           lexical_search_v3.py evidence_grounding_runtime.py recent_video_note_runtime.py title_conflict_runtime.py
-          imagination_runtime.py self_canon_runtime.py self_canon_v2_runtime.py
+          imagination_runtime.py self_canon_runtime.py self_canon_v2_runtime.py self_development_runtime.py
       - name: Test
         run: pytest -q
