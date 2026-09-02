@@ -27,6 +27,7 @@ import sticker_post_runtime
 import sticker_runtime
 import title_conflict_runtime as title_conflict
 import unified_daily_title_runtime as unified_titles
+import unified_multimodal_context_runtime as unified_multimodal
 import voice2_runtime as voice2
 import whoami_profile_v3_runtime as v3
 import whoami_profile_v4_runtime as v4
@@ -175,6 +176,11 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         "prepare_application_runtime",
         lambda app: calls.append(("recent_video_note", app)),
     )
+    monkeypatch.setattr(
+        unified_multimodal,
+        "prepare_application_runtime",
+        lambda app: calls.append(("unified_multimodal", app)),
+    )
 
     runtime_bootstrap.prepare_application_runtime(application)
 
@@ -206,6 +212,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("chat_digest", application),
         ("natural_router", application),
         ("recent_video_note", application),
+        ("unified_multimodal", application),
     ]
     assert not hasattr(unified_titles, "install_runtime_hook")
     assert not hasattr(monthly, "install_runtime_hook")

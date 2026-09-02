@@ -61,6 +61,7 @@ import lexical_search_v3
 import evidence_grounding_runtime
 import voice2_runtime
 import recent_video_note_runtime
+import unified_multimodal_context_runtime
 import sticker_tuning_runtime
 import fight_routing_v3
 import fight_memory_afterburner_v2
@@ -114,6 +115,7 @@ RUNTIME_LOAD_ORDER = (
     "evidence_grounding_runtime",
     "voice2_runtime",
     "recent_video_note_runtime",
+    "unified_multimodal_context_runtime",
     "sticker_tuning_runtime",
     "fight_routing_v3",
     "fight_memory_afterburner_v2",
@@ -263,6 +265,7 @@ def prepare_application_runtime(application: Application) -> None:
     natural_router_runtime.prepare_application_runtime(application)
     social_grounding_runtime.prepare_application_runtime(application)
     recent_video_note_runtime.prepare_application_runtime(application)
+    unified_multimodal_context_runtime.prepare_application_runtime(application)
 
     if not shared_banter_runtime.install():
         logging.warning("Shared banter runtime: bot module not ready")
