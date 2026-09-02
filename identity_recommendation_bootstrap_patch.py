@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 
 import book_recommendation_runtime
+import movie_recommendation_runtime
 import natural_router_runtime
 
 
@@ -25,6 +26,7 @@ def install() -> bool:
     def prepare_then_identity_recommendations(application):
         original(application)
         book_recommendation_runtime.prepare_application_runtime(application)
+        movie_recommendation_runtime.prepare_application_runtime(application)
 
     prepare_then_identity_recommendations._yayceslav_identity_recommendation_hook = True
     natural_router_runtime.prepare_application_runtime = prepare_then_identity_recommendations
