@@ -1,4 +1,4 @@
-"""Late startup hook for self-canon v2, memory, and the live voice bridge.
+"""Late startup hook for self-canon v2, memory, voice, and music bridges.
 
 Imported by the small rate-limit runtime during application preparation. It
 wraps self_canon_runtime.install so the personality-inertia layer is installed
@@ -8,6 +8,10 @@ layer are added above chat-local canon, the obsolete character selector is
 neutralized, the live voice bridge is installed, persistent tiered memory wraps
 the common stores, and finally the text/voice/video-note bridge sits outermost so
 semantic media text is what gets persisted.
+
+The same late hook installs the lyrics bridge before ``music_runtime`` registers
+its application handler. This keeps the stable MusicBrainz handler as the single
+music route while adding LRCLIB/Musixmatch analysis as an optional wrapper.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from typing import Any
 import canon_decision_runtime
 import gemini_stability_runtime
 import legacy_character_retirement_runtime
+import music_lyrics_bridge_runtime
 import mythic_rus_core_runtime
 import persistent_tiered_memory_runtime
 import personality_architecture_v2_runtime
@@ -100,6 +105,10 @@ def install_hook() -> bool:
     global _HOOKED
     if _HOOKED:
         return True
+
+    # Install provider-neutral lyrics routing before music_runtime registers its
+    # application handler later in runtime_bootstrap.prepare_application_runtime.
+    music_lyrics_bridge_runtime.install()
 
     # Install model-capacity routing and daily-content JSON recovery early in
     # application preparation. Voice schema recovery is refreshed again after
