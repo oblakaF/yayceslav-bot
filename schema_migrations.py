@@ -61,9 +61,34 @@ def _chat_self_canon_v2(connection) -> None:
     )
 
 
+def _chat_self_canon_v3_inertia(connection) -> None:
+    """Add reasons and personality inertia metadata without rewriting canon rows."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_self_canon_meta (
+            chat_id INTEGER NOT NULL,
+            trait_key TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            inertia TEXT NOT NULL DEFAULT 'medium',
+            commitment INTEGER NOT NULL DEFAULT 1,
+            revised_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (chat_id, trait_key)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_chat_self_canon_meta_chat
+        ON chat_self_canon_meta(chat_id, trait_key)
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline_v2_existing_schema", _baseline_v2),
     Migration(2, "chat_local_self_canon", _chat_self_canon_v2),
+    Migration(3, "chat_self_canon_inertia", _chat_self_canon_v3_inertia),
 )
 
 
