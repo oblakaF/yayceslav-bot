@@ -53,47 +53,126 @@ def test_movie_summary_normalizes_catalog_fields():
     assert item["source_url"].endswith("/movie/1")
 
 
-def test_recommend_from_movie_merges_recommendations_and_similar(monkeypatch):
+def test_keyword_helpers_support_movie_and_alternate_shapes():
+    assert rec._keyword_ids({"keywords": [{"id": 10, "name": "space"}]}) == [10]
+    assert rec._keyword_ids({"results": [{"id": 11, "name": "future"}]}) == [11]
+    assert rec._keyword_names({"keywords": [{"id": 10, "name": " space travel "}]}) == ["space travel"]
+
+
+def test_relation_merge_preserves_both_provider_signals():
+    rows = rec._merge_relation_candidates(
+        1,
+        {"results": [{"id": 2, "title": "Arrival", "genre_ids": [878]}]},
+        {"results": [{"id": 2, "title": "Arrival", "genre_ids": [878]}]},
+    )
+    assert len(rows) == 1
+    assert set(rows[0]["tmdb_relations"]) == {"recommendations", "similar"}
+    assert rows[0]["source_count"] == 2
+
+
+def test_similarity_score_beats_raw_popularity():
+    seed_genres = [878, 12]
+    seed_keywords = [101, 102]
+    relevant = rec._apply_similarity_features(
+        {
+            "id": 2,
+            "title": "Relevant",
+            "genre_ids": [878, 12],
+            "keyword_ids": [101, 102],
+            "keyword_names": ["space opera", "desert planet"],
+            "tmdb_relations": ["similar", "recommendations"],
+            "relation_ranks": {"similar": 4, "recommendations": 8},
+            "vote_count": 900,
+            "vote_average": 7.1,
+            "popularity": 8.0,
+        },
+        seed_genres=seed_genres,
+        seed_keywords=seed_keywords,
+    )
+    popular_but_weak = rec._apply_similarity_features(
+        {
+            "id": 3,
+            "title": "Popular but weak",
+            "genre_ids": [18],
+            "keyword_ids": [],
+            "keyword_names": [],
+            "tmdb_relations": ["recommendations"],
+            "relation_ranks": {"recommendations": 2},
+            "vote_count": 30000,
+            "vote_average": 8.7,
+            "popularity": 100.0,
+        },
+        seed_genres=seed_genres,
+        seed_keywords=seed_keywords,
+    )
+    assert relevant["relevance_score"] > popular_but_weak["relevance_score"]
+    assert relevant["genre_overlap_ids"] == [878, 12]
+    assert relevant["keyword_overlap_ids"] == [101, 102]
+
+
+def test_recommend_from_movie_enriches_and_ranks_by_relevance(monkeypatch):
     async def fake_seed(query):
-        assert query == "Интерстеллар"
-        return {"id": 10, "title": "Интерстеллар", "year": 2014}
+        assert query == "Дюна"
+        return {"id": 10, "title": "Дюна", "year": 2021, "genre_ids": [878, 12]}
 
     async def fake_tmdb(path, params=None):
-        if path.endswith("/recommendations"):
+        if path == "movie/10":
             return {
-                "results": [
-                    {"id": 11, "title": "Arrival", "release_date": "2016-01-01", "vote_average": 8, "vote_count": 9000, "popularity": 10},
-                    {"id": 12, "title": "Moon", "release_date": "2009-01-01", "vote_average": 7.6, "vote_count": 4000, "popularity": 8},
-                ]
+                "genres": [{"id": 878, "name": "Science Fiction"}, {"id": 12, "name": "Adventure"}],
+                "keywords": {"keywords": [{"id": 101, "name": "desert planet"}, {"id": 102, "name": "space opera"}]},
+                "recommendations": {
+                    "results": [
+                        {"id": 11, "title": "Very Popular Drama", "genre_ids": [18], "vote_count": 30000, "vote_average": 8.8, "popularity": 100},
+                        {"id": 12, "title": "Good Sci-Fi", "genre_ids": [878, 12], "vote_count": 1500, "vote_average": 7.4, "popularity": 8},
+                    ]
+                },
+                "similar": {
+                    "results": [
+                        {"id": 12, "title": "Good Sci-Fi", "genre_ids": [878, 12], "vote_count": 1500, "vote_average": 7.4, "popularity": 8},
+                        {"id": 13, "title": "Other Sci-Fi", "genre_ids": [878], "vote_count": 800, "vote_average": 7.0, "popularity": 5},
+                    ]
+                },
             }
-        return {
-            "results": [
-                {"id": 11, "title": "Arrival", "release_date": "2016-01-01", "vote_average": 8, "vote_count": 9000, "popularity": 10},
-                {"id": 13, "title": "Contact", "release_date": "1997-01-01", "vote_average": 7.4, "vote_count": 7000, "popularity": 6},
-            ]
-        }
+        if path == "movie/12/keywords":
+            return {"keywords": [{"id": 101, "name": "desert planet"}, {"id": 102, "name": "space opera"}]}
+        if path == "movie/13/keywords":
+            return {"keywords": [{"id": 102, "name": "space opera"}]}
+        if path == "movie/11/keywords":
+            return {"keywords": []}
+        raise AssertionError(path)
 
     monkeypatch.setattr(rec, "resolve_seed_movie", fake_seed)
     monkeypatch.setattr(rec, "_tmdb_get", fake_tmdb)
-    result = asyncio.run(rec.recommend_from_movie("Интерстеллар"))
+    result = asyncio.run(rec.recommend_from_movie("Дюна"))
     ids = [item["id"] for item in result["candidates"]]
-    assert ids == [11, 13, 12]
-    assert result["candidates"][0]["tmdb_relation"] == "recommendations"
+    assert ids[0] == 12
+    assert ids.index(11) > ids.index(13)
+    assert result["candidates"][0]["keyword_overlap_names"] == ["desert planet", "space opera"]
+    assert "recommendations" in result["candidates"][0]["tmdb_relations"]
+    assert "similar" in result["candidates"][0]["tmdb_relations"]
 
 
 def test_context_keeps_provider_facts_separate_from_identity():
     prompt = rec.build_movie_recommendation_context(
         {
-            "seed": {"title": "Интерстеллар", "year": 2014},
+            "seed": {
+                "title": "Интерстеллар",
+                "year": 2014,
+                "genre_ids": [878, 12],
+                "keyword_names": ["space travel", "wormhole"],
+            },
             "candidates": [
                 {
                     "id": 11,
                     "title": "Arrival",
                     "year": 2016,
-                    "tmdb_relation": "recommendations",
+                    "tmdb_relation": "recommendations+similar",
                     "vote_average": 8.0,
                     "vote_count": 9000,
                     "popularity": 10.0,
+                    "genre_overlap_ids": [878],
+                    "keyword_overlap_names": ["space travel"],
+                    "relevance_score": 120.5,
                     "overview": "First contact drama",
                     "source_url": "https://www.themoviedb.org/movie/11",
                 }
@@ -104,4 +183,7 @@ def test_context_keeps_provider_facts_separate_from_identity():
     )
     assert "мрачный техно-минимализм" in prompt
     assert "в self-canon автоматически" in prompt
+    assert "shared_genres=Science Fiction" in prompt
+    assert "shared_keywords=space travel" in prompt
+    assert "лучше назвать меньше" in prompt
     assert "Arrival" in prompt
