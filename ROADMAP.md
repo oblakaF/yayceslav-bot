@@ -58,7 +58,7 @@ Implemented bounded social markers, safe callback-topic reuse, `(chat_id, user_i
 
 ---
 
-# ACTIVE — P2 IDENTITY-DERIVED RECOMMENDATIONS
+# P2 IDENTITY-DERIVED RECOMMENDATIONS — DONE
 
 ## PR G — Provider-neutral identity lens + books — DONE
 
@@ -97,43 +97,33 @@ Implemented:
 - optional `TMDB_API_TOKEN` with clean fallback;
 - provider facts remain separate from self-canon.
 
-## PR I — Games — ACTIVE
+## PR I — Games — DONE
+
+Merged as PR #83, with colloquial-routing and relevance/latency fixes in PRs #84–#85.
 
 ### Provider: RAWG
 
-Flow:
-
-`explicit game recommendation intent -> RAWG seed game -> RAWG genre/tag candidate pools -> local similarity ranking -> provider-neutral identity lens -> Gemini/Yayceslav`
-
-Target capabilities:
-- “во что поиграть, если нравится Cyberpunk 2077?”;
-- “посоветуй 5 игр в духе Disco Elysium”;
-- `games like Elden Ring`;
-- real RAWG seed resolution and catalog candidates;
-- relevance primarily from shared genres/tags/platforms;
+Implemented:
+- explicit Russian/English game recommendation intents, including colloquial `по типу / вроде / наподобие`;
+- robust Cyberpunk 2077 seed normalization for common short Russian forms;
+- real RAWG seed resolution and genre/tag candidate pools;
+- distinctive-tag weighting so setting/mechanics-defining tags outweigh generic catalog tags;
 - rating/Metacritic only as weak catalog signals;
 - game-local `а ещё?` continuity;
-- `RAWG_API_KEY` optional with clean fallback;
+- optional `RAWG_API_KEY` with clean fallback;
 - explicit RAWG attribution/link on specialist answers;
 - no silent self-canon mutation.
 
-### Remaining vertical
-
-- places/travel.
-
 Clothing/style recommendations were removed from the roadmap by product decision.
+Travel/places recommendations were removed from the roadmap by product decision.
 
 ---
 
-# NEXT — P2
-
-## Places / travel vertical
-
-Current/local facts must come from current place/travel sources; `aesthetic`, `lifestyle`, `values` and hobbies may influence Yayceslav's personal pick only.
+# NEXT — P3 CHARACTER DEVELOPMENT
 
 ## Rare self-development events
 
-Optional later feature:
+Optional next feature:
 - rare explicit reflection grounded in actual canon/history;
 - “раньше думал X, теперь Y, потому что Z”;
 - consolidate additive tastes without random personality churn;
@@ -159,5 +149,6 @@ The architecture is successful when these conversations work naturally:
 12. “Во что поиграть, если нравится Cyberpunk 2077?” uses real RAWG candidates when configured.
 13. Category-local “а ещё?” does not cross-contaminate music/books/films/games.
 14. A recommendation can influence the current answer without silently becoming a new self-canon trait.
+15. Rare self-development can refine low-/medium-inertia traits only when grounded in durable history and explained explicitly.
 
 The target is not simply more memory. The target is a character whose past choices constrain future choices while external factual knowledge remains verifiable and replaceable.
