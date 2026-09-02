@@ -4,7 +4,8 @@ Imported by the small rate-limit runtime during application preparation. It
 wraps self_canon_runtime.install so the personality-inertia layer is installed
 immediately after V1 self-canon, then Personality Architecture v2 establishes
 layer ownership, the immutable mythic-Rus core is added above chat-local canon,
-and finally the live voice bridge is installed on top.
+the obsolete character selector is neutralized, and finally the live voice
+bridge is installed on top.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import functools
 from typing import Any
 
 import gemini_stability_runtime
+import legacy_character_retirement_runtime
 import mythic_rus_core_runtime
 import personality_architecture_v2_runtime
 import self_canon_runtime
@@ -67,6 +69,8 @@ def _install_personality_layers_after_self_canon(bot_module: Any | None = None) 
     if not personality_architecture_v2_runtime.install(bot_module):
         return
     if not mythic_rus_core_runtime.install(bot_module):
+        return
+    if not legacy_character_retirement_runtime.install(bot_module):
         return
     if not voice_live_bridge_runtime.install(bot_module):
         return
