@@ -49,58 +49,77 @@ The field count is sufficient. Future work should improve knowledge and behavior
 
 # ACTIVE — P1/P2 MUSIC EXPERT LAYER
 
-## PR D — Music catalog foundation
-
-### Goal
-Create a dedicated `music_runtime.py` so ordinary artist/track/album questions use real music metadata before generic web search.
+## PR D — Music catalog foundation — DONE
 
 ### Provider: MusicBrainz
 
-Initial scope:
+Implemented:
 - artist identity and canonical MBID;
 - recordings/tracks;
 - releases/release groups/albums;
-- dates;
-- artist credits and relationships where available;
-- disambiguation between same/similar names.
+- dates and artist credits where available;
+- local deterministic music intent detection with no classifier model call;
+- polite provider spacing and bounded RAM cache;
+- chat-local entity continuity for short music follow-ups;
+- specialist facts kept separate from `self_canon.music`.
 
-### Router
-
-`user -> music intent -> music entity resolver -> MusicBrainz -> normalized music context -> Gemini/Yayceslav`
-
-Constraints:
-- no extra Gemini call just to classify music intent;
-- bounded provider requests;
-- polite MusicBrainz user-agent;
-- short TTL in-memory cache initially;
-- fall back safely when provider is unavailable;
-- music facts never overwrite `self_canon.music`.
-
-### Acceptance examples
-
-- “кто поёт Enjoy the Silence?”
-- “из какого она альбома?”
-- “какого года?”
-- “что ещё есть у Depeche Mode?”
-- ambiguous artist names resolve conservatively instead of confident fabrication.
+Merged as PR #74.
 
 ---
 
-## PR E — Lyrics + analysis
+## PR E — Lyrics + analysis — ACTIVE
 
-### Provider: LRCLIB
+### Provider chain
 
-Capabilities:
-- identify lyrics only after track/artist resolution;
-- retrieve plain/synchronized lyrics when available;
-- answer “о чём песня?” and “что означает эта строка?” from retrieved text;
-- avoid permanent full-lyrics SQLite storage;
-- keep output copyright-safe: analysis/summary over full reproduction.
+`LRCLIB -> optional Musixmatch -> existing real web-search fallback`
 
-Safeguards:
-- track/artist matching before accepting lyrics;
-- do not merge lyrics from a same-title different song;
-- brief cache only if needed.
+LRCLIB is the primary provider and must work even when MusicBrainz does not resolve the track. MusicBrainz metadata is optional enrichment, not a prerequisite for lyrics lookup.
+
+Musixmatch is a secondary provider when `MUSIXMATCH_API_KEY` is configured. The bot must remain fully operational without that key.
+
+### Capabilities
+
+- identify lyrics from `track + artist` when catalog metadata is available;
+- free-text lyrics search from a raw user query when MusicBrainz is missing a fresh/local release;
+- retrieve plain/synchronized lyrics from LRCLIB when available;
+- use Musixmatch only after LRCLIB misses;
+- answer “о чём песня?”, “про что трек?”, “что означает эта строка?” from retrieved lyrics;
+- use the existing real-search path only after specialist providers fail;
+- never ask Gemini to invent lyrics from model memory.
+
+### Russian-language acceptance set
+
+The regression set must include Cyrillic and modern Russian-language music, including representative query shapes such as:
+- `MACAN Заново`;
+- `Три дня дождя Отпускай`;
+- artist + track written entirely in Cyrillic;
+- mixed Latin/Cyrillic artist names;
+- `feat.` / collaborations;
+- same-title songs where artist identity is required;
+- a fresh Russian release absent from MusicBrainz but present in a lyrics provider.
+
+### Matching safeguards
+
+- exact `track + artist` match wins when available;
+- album/duration are additional evidence, not mandatory for raw fallback search;
+- reject a weak one-word same-title match without an independently resolved artist;
+- do not merge lyrics from another artist’s song with the same title;
+- provider failures/rate limits must degrade to the next provider, not break the music handler.
+
+### Copyright / storage
+
+- never persist full lyrics to SQLite;
+- short bounded RAM cache only;
+- full retrieved lyrics are internal analysis context, not normal output;
+- prefer summary/analysis over reproduction;
+- if a quote is genuinely needed for explanation, keep it to one short line/phrase;
+- a request for the full lyrics should not dump the copyrighted text.
+
+### Self-canon separation
+
+- lyrics providers answer what the song says;
+- `self_canon.music` answers whether Yayceslav personally likes it and why;
+- retrieving/analyzing a song never silently adds it to his personal taste.
 
 ---
 
@@ -178,9 +197,10 @@ The architecture is successful when these conversations work naturally:
 6. “А джаз?” can expand taste rather than randomly flip it.
 7. “Что за песня Enjoy the Silence?” is grounded in specialist metadata.
 8. “Из какого она альбома?” keeps the resolved track/entity.
-9. “О чём она?” is grounded in retrieved lyrics rather than model memory.
-10. “Тебе самому нравится?” is grounded in self-canon rather than specialist metadata.
-11. Text, voice, video-note and explicit search follow-ups maintain the same recent entity/topic when appropriate.
-12. Different chats do not leak self-canon, entity state or relationship state into each other.
+9. “О чём MACAN Заново?” may resolve lyrics even if MusicBrainz has no useful match.
+10. “О чём она?” stays on the same resolved track and uses retrieved lyrics rather than model memory.
+11. “Тебе самому нравится?” is grounded in self-canon rather than specialist metadata.
+12. Text, voice, video-note and explicit search follow-ups maintain the same recent entity/topic when appropriate.
+13. Different chats do not leak self-canon, entity state or relationship state into each other.
 
 The target is not simply more memory. The target is a character whose past choices constrain future choices while external factual knowledge remains verifiable and replaceable.
