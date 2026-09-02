@@ -57,6 +57,7 @@ import owner_social_diagnostics_runtime
 import conflict_fsm_runtime
 import title_conflict_runtime
 import search_context_runtime
+import entity_continuity_runtime
 import search_slang_runtime
 import lexical_search_v3
 import evidence_grounding_runtime
@@ -112,6 +113,7 @@ RUNTIME_LOAD_ORDER = (
     "social_grounding_runtime",
     "title_conflict_runtime",
     "search_context_runtime",
+    "entity_continuity_runtime",
     "search_slang_runtime",
     "lexical_search_v3",
     "evidence_grounding_runtime",
@@ -198,10 +200,6 @@ def prepare_application_runtime(application: Application) -> None:
 
     bot_module = _find_bot_module()
     if bot_module is not None:
-        # Configure effective memory limits before episodic/digest runtimes log
-        # or bind their runtime behavior. The actual persistence/retrieval wrappers
-        # are still installed later by voice_live_bootstrap_hook in the established
-        # safe order around multimodal semantic conversion.
         persistent_tiered_memory_runtime._patch_ram_limits(bot_module)
         persistent_tiered_memory_runtime._patch_existing_long_memory_limits()
         if not claim_memory_v3.install_short_term_guard(bot_module):
@@ -252,6 +250,8 @@ def prepare_application_runtime(application: Application) -> None:
     search_enrichment_runtime.install()
     if not search_context_runtime.install():
         logging.warning("Search context runtime: bot module not ready")
+    if not entity_continuity_runtime.install():
+        logging.warning("Entity continuity runtime: bot module not ready")
     if not search_slang_runtime.install():
         logging.warning("Search slang runtime: bot module not ready")
     if not lexical_search_v3.install():
@@ -285,26 +285,11 @@ def prepare_application_runtime(application: Application) -> None:
     if not self_canon_runtime.install():
         logging.warning("Self-canon memory runtime: bot module not ready")
 
-    # Install last: this layer only arbitrates narrow cross-runtime regressions
-    # after all owners (search, fight, roast, social, delivery) are already set.
     if not live_chat_regression_runtime.install():
         logging.warning("Live-chat regression guard: bot module not ready")
 
 
 def _install_background_task_lifecycle_patch() -> None:
-    """Own tasks created by PTB post_init before Application.start().
-
-    PTB 22.8 warns when ``Application.create_task`` is called while the
-    application is not running because those tasks are not guaranteed to be
-    awaited automatically. Yayceslav starts four long-lived scheduler loops
-    from ``post_init``, which intentionally happens before ``Application.start``.
-
-    For that narrow pre-start window, create normal asyncio tasks, retain strong
-    references in this module, and cancel/await them explicitly before PTB
-    shutdown. Calls made after the application starts keep PTB's original task
-    ownership unchanged.
-    """
-
     if getattr(Application, "_yayceslav_prestart_task_patch_installed", False):
         return
 
