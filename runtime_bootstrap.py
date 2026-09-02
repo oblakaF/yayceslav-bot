@@ -46,6 +46,7 @@ import initiative_runtime
 import birthday_runtime
 
 import natural_router_runtime
+import music_runtime
 import roast_target_runtime
 import search_enrichment_runtime
 import chat_digest_runtime
@@ -105,6 +106,7 @@ RUNTIME_LOAD_ORDER = (
     "chat_digest_runtime",
     "persistent_tiered_memory_runtime",
     "natural_router_runtime",
+    "music_runtime",
     "roast_target_runtime",
     "date_grounding_runtime",
     "social_priority_runtime",
@@ -272,6 +274,7 @@ def prepare_application_runtime(application: Application) -> None:
     chat_digest_runtime.prepare_application_runtime(application)
     roast_target_runtime.prepare_application_runtime(application)
     natural_router_runtime.prepare_application_runtime(application)
+    music_runtime.prepare_application_runtime(application)
     social_grounding_runtime.prepare_application_runtime(application)
     recent_video_note_runtime.prepare_application_runtime(application)
     unified_multimodal_context_runtime.prepare_application_runtime(application)
