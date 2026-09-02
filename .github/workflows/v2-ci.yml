@@ -29,7 +29,7 @@ jobs:
       - name: Compile
         run: >-
           python -m py_compile
-          bot.py personality.py personality_architecture_v2_runtime.py mythic_rus_core_runtime.py legacy_character_retirement_runtime.py persistent_tiered_memory_runtime.py unified_multimodal_context_runtime.py intent.py humor_engine.py vocabulary.py
+          bot.py personality.py personality_architecture_v2_runtime.py mythic_rus_core_runtime.py canon_decision_runtime.py legacy_character_retirement_runtime.py persistent_tiered_memory_runtime.py unified_multimodal_context_runtime.py intent.py humor_engine.py vocabulary.py
           style_engine.py voice_packs.py voice_runtime.py voice2_runtime.py voice_live_bridge_runtime.py voice_live_bootstrap_hook.py verdict_engine.py historical_packs.py
           social_engine.py social_priority_runtime.py owner_social_diagnostics_runtime.py aggression_engine.py reaction_engine.py passive_engine.py
           positive_engine.py positive_runtime.py reputation_engine.py reputation_runtime.py reputation_daily_runtime.py
