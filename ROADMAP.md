@@ -16,6 +16,7 @@ This roadmap tracks the next architecture phase after the September 2026 persona
 10. Raw media and large copyrighted payloads are not durable memory.
 11. Relationship memory stores bounded social interaction evidence, not inferred sensitive traits or raw chat archives.
 12. Recommendations have two layers: provider evidence and Yayceslav's personal identity lens. One recommendation never silently rewrites canon.
+13. Autonomous self-development is rare, evidence-grounded and restricted to low-/selected medium-inertia traits.
 
 ---
 
@@ -119,15 +120,24 @@ Travel/places recommendations were removed from the roadmap by product decision.
 
 ---
 
-# NEXT — P3 CHARACTER DEVELOPMENT
+# P3 CHARACTER DEVELOPMENT — DONE
 
-## Rare self-development events
+## PR J — Rare self-development events — DONE
 
-Optional next feature:
-- rare explicit reflection grounded in actual canon/history;
-- “раньше думал X, теперь Y, потому что Z”;
-- consolidate additive tastes without random personality churn;
-- never rewrite high-inertia traits invisibly.
+Implemented in PR #87.
+
+Behavior:
+- no extra Gemini call;
+- only self-reflective turns can open a development window;
+- requires at least six distinct prior self-statements, spread across at least three dates and at least seven days of history;
+- uses Yayceslav's own durable group-chat semantic history as evidence;
+- a successful event starts a 21-day per-chat cooldown;
+- explicit imagination/temporary-role conversations are excluded;
+- high-inertia traits cannot be changed through this mechanism at parser level;
+- only one low-/selected medium-inertia trait can change per event;
+- visible answer must explain the reconsideration and reason before persistence;
+- self-canon v2 inertia guard remains authoritative;
+- low-inertia development prefers additive taste expansion over arbitrary replacement.
 
 ---
 
@@ -150,5 +160,6 @@ The architecture is successful when these conversations work naturally:
 13. Category-local “а ещё?” does not cross-contaminate music/books/films/games.
 14. A recommendation can influence the current answer without silently becoming a new self-canon trait.
 15. Rare self-development can refine low-/medium-inertia traits only when grounded in durable history and explained explicitly.
+16. High-inertia identity cannot be autonomously rewritten by the self-development mechanism.
 
 The target is not simply more memory. The target is a character whose past choices constrain future choices while external factual knowledge remains verifiable and replaceable.
