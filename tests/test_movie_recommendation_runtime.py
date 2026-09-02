@@ -70,6 +70,26 @@ def test_relation_merge_preserves_both_provider_signals():
     assert rows[0]["source_count"] == 2
 
 
+def test_discover_merge_adds_third_candidate_pool():
+    rows = rec._merge_relation_candidates(
+        1,
+        {"results": []},
+        {"results": []},
+        discover_genres_payload={"results": [{"id": 2, "title": "Genre Match", "genre_ids": [878, 12]}]},
+        discover_keywords_payload={"results": [{"id": 3, "title": "Keyword Match", "genre_ids": [878, 12]}]},
+    )
+    by_id = {item["id"]: item for item in rows}
+    assert "discover_genres" in by_id[2]["tmdb_relations"]
+    assert "discover_keywords" in by_id[3]["tmdb_relations"]
+
+
+def test_discover_params_require_seed_genres_and_or_keywords():
+    params = rec._discover_params([878, 12], [101, 102], keyword_mode=True)
+    assert params["with_genres"] == "878,12"
+    assert params["with_keywords"] == "101|102"
+    assert params["vote_count.gte"] == 50
+
+
 def test_similarity_score_beats_raw_popularity():
     seed_genres = [878, 12]
     seed_keywords = [101, 102]
@@ -108,6 +128,30 @@ def test_similarity_score_beats_raw_popularity():
     assert relevant["relevance_score"] > popular_but_weak["relevance_score"]
     assert relevant["genre_overlap_ids"] == [878, 12]
     assert relevant["keyword_overlap_ids"] == [101, 102]
+    assert relevant["passes_genre_gate"] is True
+    assert popular_but_weak["passes_genre_gate"] is False
+
+
+def test_generic_keyword_cannot_bypass_genre_gate():
+    candidate = rec._apply_similarity_features(
+        {
+            "id": 99,
+            "title": "Memento-like",
+            "genre_ids": [53, 18],
+            "keyword_ids": [777],
+            "keyword_names": ["memory"],
+            "tmdb_relations": ["recommendations"],
+            "relation_ranks": {"recommendations": 1},
+            "vote_count": 25000,
+            "vote_average": 8.4,
+            "popularity": 80,
+        },
+        seed_genres=[878, 12],
+        seed_keywords=[777],
+    )
+    assert candidate["keyword_overlap_ids"] == [777]
+    assert candidate["genre_overlap_ids"] == []
+    assert candidate["passes_genre_gate"] is False
 
 
 def test_recommend_from_movie_enriches_and_ranks_by_relevance(monkeypatch):
@@ -119,10 +163,10 @@ def test_recommend_from_movie_enriches_and_ranks_by_relevance(monkeypatch):
         if path == "movie/10":
             return {
                 "genres": [{"id": 878, "name": "Science Fiction"}, {"id": 12, "name": "Adventure"}],
-                "keywords": {"keywords": [{"id": 101, "name": "desert planet"}, {"id": 102, "name": "space opera"}]},
+                "keywords": {"keywords": [{"id": 101, "name": "desert planet"}, {"id": 102, "name": "space opera"}, {"id": 777, "name": "memory"}]},
                 "recommendations": {
                     "results": [
-                        {"id": 11, "title": "Very Popular Drama", "genre_ids": [18], "vote_count": 30000, "vote_average": 8.8, "popularity": 100},
+                        {"id": 11, "title": "Very Popular Thriller", "genre_ids": [53, 18], "vote_count": 30000, "vote_average": 8.8, "popularity": 100},
                         {"id": 12, "title": "Good Sci-Fi", "genre_ids": [878, 12], "vote_count": 1500, "vote_average": 7.4, "popularity": 8},
                     ]
                 },
@@ -133,12 +177,20 @@ def test_recommend_from_movie_enriches_and_ranks_by_relevance(monkeypatch):
                     ]
                 },
             }
+        if path == "discover/movie":
+            if params and params.get("with_keywords"):
+                return {"results": [{"id": 14, "title": "Discover Keyword Sci-Fi", "genre_ids": [878, 12], "vote_count": 600, "vote_average": 7.2, "popularity": 4}]}
+            return {"results": [{"id": 15, "title": "Discover Genre Sci-Fi", "genre_ids": [878, 12], "vote_count": 700, "vote_average": 7.0, "popularity": 4}]}
         if path == "movie/12/keywords":
             return {"keywords": [{"id": 101, "name": "desert planet"}, {"id": 102, "name": "space opera"}]}
         if path == "movie/13/keywords":
             return {"keywords": [{"id": 102, "name": "space opera"}]}
-        if path == "movie/11/keywords":
+        if path == "movie/14/keywords":
+            return {"keywords": [{"id": 101, "name": "desert planet"}]}
+        if path == "movie/15/keywords":
             return {"keywords": []}
+        if path == "movie/11/keywords":
+            return {"keywords": [{"id": 777, "name": "memory"}]}
         raise AssertionError(path)
 
     monkeypatch.setattr(rec, "resolve_seed_movie", fake_seed)
@@ -146,7 +198,9 @@ def test_recommend_from_movie_enriches_and_ranks_by_relevance(monkeypatch):
     result = asyncio.run(rec.recommend_from_movie("Дюна"))
     ids = [item["id"] for item in result["candidates"]]
     assert ids[0] == 12
-    assert ids.index(11) > ids.index(13)
+    assert 11 not in ids
+    assert 14 in ids
+    assert 15 in ids
     assert result["candidates"][0]["keyword_overlap_names"] == ["desert planet", "space opera"]
     assert "recommendations" in result["candidates"][0]["tmdb_relations"]
     assert "similar" in result["candidates"][0]["tmdb_relations"]
@@ -186,4 +240,5 @@ def test_context_keeps_provider_facts_separate_from_identity():
     assert "shared_genres=Science Fiction" in prompt
     assert "shared_keywords=space travel" in prompt
     assert "лучше назвать меньше" in prompt
+    assert "один общий plot-keyword не считается достаточным" in prompt
     assert "Arrival" in prompt
