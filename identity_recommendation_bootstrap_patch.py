@@ -6,6 +6,7 @@ import functools
 
 import book_recommendation_runtime
 import movie_recommendation_runtime
+import movie_seed_resolution_v2  # noqa: F401 - patches movie seed resolution
 import natural_router_runtime
 
 
