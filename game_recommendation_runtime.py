@@ -55,11 +55,18 @@ _LAST_REQUEST_AT = 0.0
 
 _GAME_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:во\s+что\s+поиграть|что\s+поиграть)\s*,?\s*(?:если\s+)?(?:мне\s+)?(?:нравится|нравятся|люблю|заш[её]л|зашли)\s+(?P<query>.+)$", re.I),
-    re.compile(r"\b(?:посоветуй|подбери|дай)\s+(?:мне\s+)?(?:3|5|пять|несколько)?\s*(?:игр|игры)\s+(?:как|похожих\s+на|в\s+духе)\s+(?P<query>.+)$", re.I),
-    re.compile(r"\b(?:игры|игра)\s+похож(?:ие|ая)\s+на\s+(?P<query>.+)$", re.I),
+    re.compile(r"\b(?:посоветуй|подбери|дай)\s+(?:мне\s+)?(?:3|5|пять|несколько)?\s*(?:игр|игры)\s+(?:как|похожих\s+на|в\s+духе|по\s+типу|типа|вроде|наподобие)\s+(?P<query>.+)$", re.I),
+    re.compile(r"\b(?:игры|игра)\s+(?:похож(?:ие|ая)\s+на|по\s+типу|типа|вроде|наподобие)\s+(?P<query>.+)$", re.I),
     re.compile(r"\b(?:games?\s+like|recommend\s+games?\s+like)\s+(?P<query>.+)$", re.I),
 )
 _FOLLOWUP_RE = re.compile(r"^\s*(?:а\s+)?(?:ещ[её]|что\s+ещ[её]|дай\s+ещ[её]|ещ[её]\s+игры|а\s+похожее)\s*[?!.]*\s*$", re.I)
+
+_GAME_QUERY_ALIASES: dict[str, str] = {
+    "киберпанк": "Cyberpunk 2077",
+    "cyberpunk": "Cyberpunk 2077",
+    "киберпанк 2077": "Cyberpunk 2077",
+    "cyberpunk2077": "Cyberpunk 2077",
+}
 
 
 def _find_bot_module() -> Any | None:
@@ -77,6 +84,12 @@ def rawg_api_key() -> str:
 def _clean_query(value: Any) -> str:
     text = " ".join(str(value or "").split()).strip(" \t\r\n,.:;!?—-\"'«»")
     return re.sub(r"^(?:игра|game)\s+", "", text, flags=re.I)[:200]
+
+
+def _normalize_game_query(value: Any) -> str:
+    clean = _clean_query(value)
+    folded = re.sub(r"\s+", " ", clean.casefold()).strip()
+    return _GAME_QUERY_ALIASES.get(folded, clean)
 
 
 def _prune_topics(now: float) -> None:
@@ -109,7 +122,7 @@ def classify_game_recommendation_intent(text: str, *, chat_id: int | None = None
     for pattern in _GAME_PATTERNS:
         match = pattern.search(value)
         if match:
-            return _clean_query(match.group("query"))
+            return _normalize_game_query(match.group("query"))
     if chat_id is not None and _FOLLOWUP_RE.search(value):
         topic = current_game_topic(int(chat_id))
         return topic.name if topic else ""
@@ -230,8 +243,9 @@ def _game_summary(item: dict[str, Any]) -> dict[str, Any] | None:
 
 
 async def resolve_seed_game(query: str) -> dict[str, Any] | None:
-    payload = await _rawg_get("games", {"search": query, "search_precise": "true", "page_size": 10})
-    normalized = _clean_query(query).casefold()
+    normalized_query = _normalize_game_query(query)
+    payload = await _rawg_get("games", {"search": normalized_query, "search_precise": "true", "page_size": 10})
+    normalized = normalized_query.casefold()
     ranked: list[tuple[float, dict[str, Any]]] = []
     for index, row in enumerate(_results(payload)[:10]):
         game = _game_summary(row)
@@ -404,4 +418,4 @@ def prepare_application_runtime(application: Application) -> None:
         return
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _route_game_recommendations), group=-7)
     _PREPARED_APPLICATION_IDS.add(app_id)
-    logging.warning("Game recommendations ready: RAWG genre/tag/platform ranking + category-local continuity + identity lens")
+    logging.warning("Game recommendations ready: RAWG genre/tag/platform ranking + colloquial RU routing + category-local continuity + identity lens")
