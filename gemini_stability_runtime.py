@@ -125,7 +125,7 @@ def is_capacity_error(error: BaseException) -> bool:
 def extract_json_object(text: Any) -> dict[str, Any] | None:
     """Return the first complete JSON object, respecting quoted braces.
 
-    Unlike a greedy ``\{.*\}`` regex, this scanner does not merge two objects and
+    Unlike a greedy ``{.*}`` regex, this scanner does not merge two objects and
     does not treat braces inside a JSON string as structure.  Truncated objects
     deliberately return ``None``; guessing missing model output is unsafe.
     """
@@ -239,9 +239,6 @@ async def route_capacity_failure(
         now = time.time()
         already_blocked = now < float(thinking_engine._primary_blocked_until_epoch or 0.0)
 
-        # A capacity error escaping while the primary is already blocked means
-        # the inner 429-router had already selected 3.1 and that fallback also
-        # failed. Do not issue a duplicate fallback request.
         if already_blocked:
             return _capacity_response(kwargs, primary_error)
 
@@ -374,8 +371,6 @@ def install() -> bool:
     if _INSTALLED:
         return True
 
-    # The existing 429 router resolves this function dynamically, so replacing
-    # it here upgrades 429 cooldowns without rewriting that stable router.
     thinking_engine._start_primary_cooldown = _adaptive_start_primary_cooldown
     _install_capacity_router()
     _install_daily_news_json_recovery()
