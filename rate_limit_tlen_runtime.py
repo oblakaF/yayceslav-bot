@@ -7,6 +7,8 @@ import logging
 import sys
 import time
 
+import voice_live_bootstrap_hook  # noqa: F401
+
 
 _INSTALLED = False
 
