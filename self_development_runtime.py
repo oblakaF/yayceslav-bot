@@ -17,6 +17,7 @@ import re
 import sys
 from typing import Any
 
+import imagination_runtime
 import self_canon_runtime
 import self_canon_v2_runtime
 
@@ -169,7 +170,12 @@ def _eligible_traits(bot_module: Any, chat_id: int) -> dict[str, str]:
 
 def development_context(bot_module: Any, chat_id: int, style_text: Any) -> str:
     """Return a bounded optional prompt block, or empty string when not eligible."""
-    if not _reflective_turn(style_text):
+    text = _clean(style_text, 1000)
+    if not _reflective_turn(text):
+        return ""
+    # Explicit imagination/temporary-role conversations own their own canon
+    # protocol and must never overlap with autonomous development.
+    if imagination_runtime.is_imagination_request(text):
         return ""
     try:
         if not _cooldown_ready(bot_module, int(chat_id)):
