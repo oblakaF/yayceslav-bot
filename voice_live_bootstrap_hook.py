@@ -1,11 +1,13 @@
-"""Late startup hook for self-canon v2 and the live voice bridge.
+"""Late startup hook for self-canon v2, memory, and the live voice bridge.
 
 Imported by the small rate-limit runtime during application preparation. It
 wraps self_canon_runtime.install so the personality-inertia layer is installed
 immediately after V1 self-canon, then Personality Architecture v2 establishes
 layer ownership, the immutable mythic-Rus core is added above chat-local canon,
 the obsolete character selector is neutralized, the live voice bridge is
-installed, and finally text/voice/video-note short context is unified.
+installed, persistent tiered memory wraps the common stores, and finally the
+text/voice/video-note bridge sits outermost so semantic media text is what gets
+persisted.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from typing import Any
 import gemini_stability_runtime
 import legacy_character_retirement_runtime
 import mythic_rus_core_runtime
+import persistent_tiered_memory_runtime
 import personality_architecture_v2_runtime
 import self_canon_runtime
 import self_canon_v2_runtime
@@ -74,6 +77,11 @@ def _install_personality_layers_after_self_canon(bot_module: Any | None = None) 
     if not legacy_character_retirement_runtime.install(bot_module):
         return
     if not voice_live_bridge_runtime.install(bot_module):
+        return
+    # Persistent memory must wrap remember_message BEFORE the multimodal bridge.
+    # The multimodal wrapper then becomes outermost and converts generic voice /
+    # video-note placeholders into semantic text before persistence sees them.
+    if not persistent_tiered_memory_runtime.install(bot_module):
         return
     if not unified_multimodal_context_runtime.install(bot_module):
         return
