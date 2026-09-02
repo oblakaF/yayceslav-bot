@@ -1,11 +1,8 @@
 """Tracks reply-chain interaction between two ordinary (non-bot) members.
 
-MVP is deliberately inert: it only accumulates data via a message
-observer. Nothing reads member_pair_interactions into a live prompt yet
-(see pairwise_relationship_engine.pair_label) — that's a follow-up
-decision once there's real data to look at, kept separate so this
-increment carries zero visible behavior change and zero risk to the
-existing personality/whoami surface.
+The pairwise table remains a bounded data source. Relationship Memory v2 is
+prepared from this same application-owned relationship stage so social-history
+behavior has one startup owner instead of adding another polling/bootstrap hook.
 """
 
 from __future__ import annotations
@@ -18,6 +15,7 @@ from telegram.constants import ChatType
 from telegram.ext import Application, MessageHandler, filters
 
 import reputation_engine
+import relationship_memory_v2_runtime
 
 MAX_PAIR_ROWS_PER_CHAT = 300
 PAIR_INTERACTION_TTL_DAYS = 180
@@ -199,9 +197,10 @@ def _prepare_application(application: Application) -> None:
         MessageHandler(filters.TEXT & ~filters.COMMAND, _observe_pairwise),
         group=13,
     )
+    relationship_memory_v2_runtime.prepare_application_runtime(application)
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning(
-        "Pairwise relationship runtime ready: data-only, max %s pairs/chat, %s-day TTL",
+        "Pairwise relationship runtime ready: bounded pair data + relationship memory v2, max %s pairs/chat, %s-day TTL",
         MAX_PAIR_ROWS_PER_CHAT,
         PAIR_INTERACTION_TTL_DAYS,
     )
