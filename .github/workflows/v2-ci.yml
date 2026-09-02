@@ -33,7 +33,7 @@ jobs:
           style_engine.py voice_packs.py voice_runtime.py voice2_runtime.py voice_live_bridge_runtime.py voice_live_bootstrap_hook.py verdict_engine.py historical_packs.py
           social_engine.py social_priority_runtime.py owner_social_diagnostics_runtime.py aggression_engine.py reaction_engine.py passive_engine.py
           positive_engine.py positive_runtime.py reputation_engine.py reputation_runtime.py reputation_daily_runtime.py
-          daily_title_engine.py state_engine.py thinking_engine.py title_pools.py runtime_config.py schema_migrations.py
+          daily_title_engine.py state_engine.py thinking_engine.py gemini_stability_runtime.py title_pools.py runtime_config.py schema_migrations.py
           chat_native_engine.py feedback_engine.py humanizer_engine.py adaptation_cache.py runtime_bootstrap.py
           hostile_streak_engine.py sticker_engine.py sticker_interaction.py sticker_runtime.py
           sticker_post_runtime.py sticker_tuning_runtime.py fight_mode_v2_tuning.py fight_patterns.py fight_routing_v3.py
