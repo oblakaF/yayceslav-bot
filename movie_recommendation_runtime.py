@@ -5,8 +5,9 @@ Without a token it falls through to Yayceslav's ordinary answer/search path.
 Movie follow-ups use category-local state so generic ``а ещё?`` cannot leak a
 book/music seed into this vertical. Provider data never rewrites self-canon.
 
-Candidate ranking is relevance-first: TMDB relation evidence, shared genres and
-plot-keyword overlap dominate. Vote/popularity fields are only weak tie-breakers.
+Candidate ranking is relevance-first: genre compatibility is a hard gate when
+seed genres are known, while TMDB relation evidence and plot-keyword overlap
+rank candidates inside that gate. Vote/popularity fields are weak tie-breakers.
 """
 
 from __future__ import annotations
@@ -37,8 +38,9 @@ MIN_REQUEST_INTERVAL_SECONDS = 0.25
 MOVIE_TOPIC_TTL_SECONDS = 2 * 60 * 60
 MOVIE_TOPIC_MAX_CHATS = 256
 MAX_CANDIDATES = 10
-KEYWORD_ENRICH_MAX_CANDIDATES = 12
+KEYWORD_ENRICH_MAX_CANDIDATES = 14
 MIN_RELEVANT_CANDIDATES = 5
+DISCOVER_KEYWORD_LIMIT = 6
 _PREPARED_APPLICATION_IDS: set[int] = set()
 
 TMDB_GENRE_NAMES: dict[int, str] = {
@@ -248,9 +250,12 @@ def _keyword_ids(payload: Any) -> list[int]:
 
 def _keyword_names(payload: Any) -> list[str]:
     result: list[str] = []
+    seen: set[str] = set()
     for item in _keyword_rows(payload):
         value = " ".join(str(item.get("name") or "").split()).strip()
-        if value and value.casefold() not in {name.casefold() for name in result}:
+        folded = value.casefold()
+        if value and folded not in seen:
+            seen.add(folded)
             result.append(value)
     return result[:20]
 
@@ -333,6 +338,10 @@ def _relation_bonus(item: dict[str, Any]) -> float:
         bonus += 24.0
     if "recommendations" in sources:
         bonus += 15.0
+    if "discover_keywords" in sources:
+        bonus += 32.0
+    if "discover_genres" in sources:
+        bonus += 18.0
     if len(sources) >= 2:
         bonus += 22.0
     ranks = item.get("relation_ranks") or {}
@@ -371,16 +380,17 @@ def _apply_similarity_features(
     provider_score = _relation_bonus(candidate)
     relevance_score = (
         provider_score
-        + len(genre_overlap) * 34.0
-        + genre_ratio * 30.0
-        + len(keyword_overlap) * 48.0
-        + keyword_ratio * 42.0
+        + len(genre_overlap) * 42.0
+        + genre_ratio * 42.0
+        + len(keyword_overlap) * 26.0
+        + keyword_ratio * 20.0
     )
     # Catalog popularity/ratings are deliberately weak tie-breakers only.
     relevance_score += min(math.log10(max(1, int(candidate.get("vote_count") or 0)) + 1), 5.0) * 1.6
     relevance_score += min(max(float(candidate.get("vote_average") or 0.0), 0.0), 10.0) * 0.45
     relevance_score += min(max(float(candidate.get("popularity") or 0.0), 0.0), 100.0) * 0.025
     candidate["relevance_score"] = round(relevance_score, 3)
+    candidate["passes_genre_gate"] = (not seed_genres) or bool(genre_overlap)
     return candidate
 
 
@@ -388,9 +398,18 @@ def _merge_relation_candidates(
     seed_id: int,
     recommendation_payload: Any,
     similar_payload: Any,
+    *,
+    discover_genres_payload: Any = None,
+    discover_keywords_payload: Any = None,
 ) -> list[dict[str, Any]]:
     by_id: dict[int, dict[str, Any]] = {}
-    for source_name, payload in (("recommendations", recommendation_payload), ("similar", similar_payload)):
+    sources = (
+        ("recommendations", recommendation_payload),
+        ("similar", similar_payload),
+        ("discover_genres", discover_genres_payload),
+        ("discover_keywords", discover_keywords_payload),
+    )
+    for source_name, payload in sources:
         for rank, row in enumerate(_results(payload), start=1):
             item = _movie_summary(row)
             if not item or item["id"] == seed_id:
@@ -409,6 +428,8 @@ def _merge_relation_candidates(
             )
             if not existing.get("overview") and item.get("overview"):
                 existing["overview"] = item["overview"]
+            if len(item.get("genre_ids") or []) > len(existing.get("genre_ids") or []):
+                existing["genre_ids"] = item["genre_ids"]
     for item in by_id.values():
         item["tmdb_relation"] = "+".join(item.get("tmdb_relations") or [])
         item["source_count"] = len(item.get("tmdb_relations") or [])
@@ -435,6 +456,24 @@ async def _enrich_shortlist_keywords(candidates: list[dict[str, Any]]) -> list[d
             current["keyword_names"] = _keyword_names(payload)
         enriched.append(current)
     return enriched
+
+
+def _discover_params(seed_genres: list[int], seed_keywords: list[int], *, keyword_mode: bool) -> dict[str, Any]:
+    params: dict[str, Any] = {
+        "language": "ru-RU",
+        "include_adult": "false",
+        "include_video": "false",
+        "page": 1,
+        "sort_by": "vote_count.desc",
+        "vote_count.gte": 50,
+    }
+    if seed_genres:
+        # TMDB comma syntax is AND: require the seed's known genres together.
+        params["with_genres"] = ",".join(str(value) for value in seed_genres[:3])
+    if keyword_mode and seed_keywords:
+        # Keywords are OR'ed, but still constrained by the genre gate above.
+        params["with_keywords"] = "|".join(str(value) for value in seed_keywords[:DISCOVER_KEYWORD_LIMIT])
+    return params
 
 
 async def recommend_from_movie(query: str) -> dict[str, Any] | None:
@@ -473,41 +512,63 @@ async def recommend_from_movie(query: str) -> dict[str, Any] | None:
     seed["keyword_ids"] = seed_keywords
     seed["keyword_names"] = seed_keyword_names
 
-    candidates = _merge_relation_candidates(movie_id, recommendation_payload, similar_payload)
+    discover_genres_payload = None
+    discover_keywords_payload = None
+    if seed_genres:
+        discover_calls = [
+            _tmdb_get("discover/movie", _discover_params(seed_genres, seed_keywords, keyword_mode=False))
+        ]
+        if seed_keywords:
+            discover_calls.append(
+                _tmdb_get("discover/movie", _discover_params(seed_genres, seed_keywords, keyword_mode=True))
+            )
+        discover_results = await asyncio.gather(*discover_calls)
+        discover_genres_payload = discover_results[0]
+        if len(discover_results) > 1:
+            discover_keywords_payload = discover_results[1]
+
+    candidates = _merge_relation_candidates(
+        movie_id,
+        recommendation_payload,
+        similar_payload,
+        discover_genres_payload=discover_genres_payload,
+        discover_keywords_payload=discover_keywords_payload,
+    )
     if not candidates:
         return None
 
-    # First pass is already relevance-first, so expensive keyword enrichment is
-    # bounded to the strongest provider/genre shortlist instead of every result.
     preliminary = [
         _apply_similarity_features(item, seed_genres=seed_genres, seed_keywords=[])
         for item in candidates
     ]
+    # Hard genre gate: a generic keyword such as "memory" cannot pull a thriller
+    # into a sci-fi/adventure seed if the candidate shares no seed genre at all.
+    if seed_genres:
+        preliminary = [item for item in preliminary if item.get("passes_genre_gate")]
+    if not preliminary:
+        return None
     preliminary.sort(key=lambda item: float(item.get("relevance_score") or 0.0), reverse=True)
+
     enriched = await _enrich_shortlist_keywords(preliminary)
     final_candidates = [
         _apply_similarity_features(item, seed_genres=seed_genres, seed_keywords=seed_keywords)
         for item in enriched
     ]
+    if seed_genres:
+        final_candidates = [item for item in final_candidates if item.get("passes_genre_gate")]
     final_candidates.sort(key=lambda item: float(item.get("relevance_score") or 0.0), reverse=True)
 
     strong = [
         item
         for item in final_candidates
-        if item.get("genre_overlap_ids") or item.get("keyword_overlap_ids")
+        if item.get("genre_overlap_ids") and (
+            item.get("keyword_overlap_ids")
+            or int(item.get("source_count") or 0) >= 2
+            or "discover_keywords" in set(item.get("tmdb_relations") or [])
+        )
     ]
     if len(strong) >= MIN_RELEVANT_CANDIDATES:
         final_candidates = strong
-    else:
-        supported = [
-            item
-            for item in final_candidates
-            if item.get("genre_overlap_ids")
-            or item.get("keyword_overlap_ids")
-            or int(item.get("source_count") or 0) >= 2
-        ]
-        if len(supported) >= MIN_RELEVANT_CANDIDATES:
-            final_candidates = supported
 
     return {
         "seed": seed,
@@ -539,12 +600,13 @@ def build_movie_recommendation_context(
     seed_genres = ", ".join(_genre_labels(seed.get("genre_ids") or [])) or "нет"
     seed_keywords = ", ".join(seed.get("keyword_names") or []) or "нет"
     return (
-        "Пользователь просит рекомендации фильмов. Ниже реальные кандидаты TMDB, связанные с реально разрешённым "
-        "seed-фильмом. Ранжирование уже учитывает TMDB recommendations/similar, совпадение жанров и plot-keywords; "
-        "rating/popularity используются только как слабые tie-breakers. Выбирай 3–5 только из списка и прежде всего "
-        "объясняй реальное тематическое сходство через shared_genres/shared_keywords и overview. Не натягивай слабое "
-        "сходство ради заполнения пятёрки: если сильных вариантов меньше, лучше назвать меньше. Не придумывай другие "
-        "фильмы и не додумывай сюжет при пустом/кратком overview. Внутренний relevance — эвристика отбора, а не "
+        "Пользователь просит рекомендации фильмов. Ниже реальные кандидаты TMDB. При известных жанрах seed-фильма "
+        "кандидаты без пересечения жанров уже отфильтрованы: один общий plot-keyword не считается достаточным сходством. "
+        "Пул объединяет TMDB recommendations/similar и Discover по жанрам, а Discover по keywords всегда остаётся "
+        "ограниченным жанрами seed. Ранжирование учитывает shared_genres/shared_keywords и согласие нескольких TMDB "
+        "источников; rating/popularity используются только как слабые tie-breakers. Выбирай 3–5 только из списка и "
+        "объясняй фактическое сходство. Не натягивай слабое сходство ради заполнения пятёрки: если сильных вариантов "
+        "меньше, лучше назвать меньше. Не придумывай фильмы или сюжет. Внутренний relevance — эвристика отбора, а не "
         "объективная оценка качества фильма.\n"
         + identity_recommendation_runtime.identity_separation_rules("фильмы")
         + "\n\n"
@@ -644,5 +706,5 @@ def prepare_application_runtime(application: Application) -> None:
     )
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning(
-        "Movie recommendations ready: TMDB relevance-first genres/keywords + category-local continuity + identity lens"
+        "Movie recommendations ready: TMDB genre-gated recommendations/similar + Discover + identity lens"
     )
