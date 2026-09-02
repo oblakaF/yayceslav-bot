@@ -4,12 +4,16 @@ The specialist route is enabled only when ``TMDB_API_TOKEN`` is configured.
 Without a token it falls through to Yayceslav's ordinary answer/search path.
 Movie follow-ups use category-local state so generic ``а ещё?`` cannot leak a
 book/music seed into this vertical. Provider data never rewrites self-canon.
+
+Candidate ranking is relevance-first: TMDB relation evidence, shared genres and
+plot-keyword overlap dominate. Vote/popularity fields are only weak tie-breakers.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import re
 import sys
@@ -33,7 +37,31 @@ MIN_REQUEST_INTERVAL_SECONDS = 0.25
 MOVIE_TOPIC_TTL_SECONDS = 2 * 60 * 60
 MOVIE_TOPIC_MAX_CHATS = 256
 MAX_CANDIDATES = 10
+KEYWORD_ENRICH_MAX_CANDIDATES = 12
+MIN_RELEVANT_CANDIDATES = 5
 _PREPARED_APPLICATION_IDS: set[int] = set()
+
+TMDB_GENRE_NAMES: dict[int, str] = {
+    28: "Action",
+    12: "Adventure",
+    16: "Animation",
+    35: "Comedy",
+    80: "Crime",
+    99: "Documentary",
+    18: "Drama",
+    10751: "Family",
+    14: "Fantasy",
+    36: "History",
+    27: "Horror",
+    10402: "Music",
+    9648: "Mystery",
+    10749: "Romance",
+    878: "Science Fiction",
+    10770: "TV Movie",
+    53: "Thriller",
+    10752: "War",
+    37: "Western",
+}
 
 
 @dataclass(frozen=True)
@@ -196,6 +224,53 @@ def _results(payload: Any) -> list[dict[str, Any]]:
     return [item for item in payload.get("results") or [] if isinstance(item, dict)]
 
 
+def _keyword_rows(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    values = payload.get("keywords")
+    if values is None:
+        values = payload.get("results")
+    return [item for item in values or [] if isinstance(item, dict)]
+
+
+def _keyword_ids(payload: Any) -> list[int]:
+    result: list[int] = []
+    for item in _keyword_rows(payload):
+        value = item.get("id")
+        try:
+            keyword_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if keyword_id > 0 and keyword_id not in result:
+            result.append(keyword_id)
+    return result
+
+
+def _keyword_names(payload: Any) -> list[str]:
+    result: list[str] = []
+    for item in _keyword_rows(payload):
+        value = " ".join(str(item.get("name") or "").split()).strip()
+        if value and value.casefold() not in {name.casefold() for name in result}:
+            result.append(value)
+    return result[:20]
+
+
+def _detail_genre_ids(payload: Any) -> list[int]:
+    if not isinstance(payload, dict):
+        return []
+    result: list[int] = []
+    for item in payload.get("genres") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            genre_id = int(item.get("id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if genre_id > 0 and genre_id not in result:
+            result.append(genre_id)
+    return result
+
+
 def _year(value: Any) -> int:
     text = str(value or "")
     return int(text[:4]) if len(text) >= 4 and text[:4].isdigit() else 0
@@ -246,13 +321,120 @@ async def resolve_seed_movie(query: str) -> dict[str, Any] | None:
     return ranked[0][1]
 
 
-def _candidate_score(item: dict[str, Any]) -> tuple[float, int, float]:
-    # Rating is weak when vote_count is tiny; use count first, then rating and popularity.
-    return (
-        min(int(item.get("vote_count") or 0), 20000),
-        float(item.get("vote_average") or 0.0),
-        float(item.get("popularity") or 0.0),
+def _overlap_values(left: list[int], right: list[int]) -> list[int]:
+    right_set = set(right)
+    return [value for value in left if value in right_set]
+
+
+def _relation_bonus(item: dict[str, Any]) -> float:
+    sources = set(item.get("tmdb_relations") or [])
+    bonus = 0.0
+    if "similar" in sources:
+        bonus += 24.0
+    if "recommendations" in sources:
+        bonus += 15.0
+    if len(sources) >= 2:
+        bonus += 22.0
+    ranks = item.get("relation_ranks") or {}
+    for source in sources:
+        rank = int(ranks.get(source) or 99)
+        bonus += max(0.0, 13.0 - min(rank, 13)) * 1.2
+    return bonus
+
+
+def _apply_similarity_features(
+    item: dict[str, Any],
+    *,
+    seed_genres: list[int],
+    seed_keywords: list[int],
+) -> dict[str, Any]:
+    candidate = dict(item)
+    genre_overlap = _overlap_values(candidate.get("genre_ids") or [], seed_genres)
+    keyword_overlap = _overlap_values(candidate.get("keyword_ids") or [], seed_keywords)
+    candidate["genre_overlap_ids"] = genre_overlap
+    candidate["keyword_overlap_ids"] = keyword_overlap
+    candidate_keyword_names = {
+        keyword_id: name
+        for keyword_id, name in zip(candidate.get("keyword_ids") or [], candidate.get("keyword_names") or [])
+    }
+    candidate["keyword_overlap_names"] = [
+        candidate_keyword_names[keyword_id]
+        for keyword_id in keyword_overlap
+        if keyword_id in candidate_keyword_names
+    ][:6]
+
+    genre_denominator = max(1, min(len(set(seed_genres)), len(set(candidate.get("genre_ids") or []))))
+    keyword_denominator = max(1, min(len(set(seed_keywords)), len(set(candidate.get("keyword_ids") or []))))
+    genre_ratio = len(genre_overlap) / genre_denominator if seed_genres else 0.0
+    keyword_ratio = len(keyword_overlap) / keyword_denominator if seed_keywords else 0.0
+
+    provider_score = _relation_bonus(candidate)
+    relevance_score = (
+        provider_score
+        + len(genre_overlap) * 34.0
+        + genre_ratio * 30.0
+        + len(keyword_overlap) * 48.0
+        + keyword_ratio * 42.0
     )
+    # Catalog popularity/ratings are deliberately weak tie-breakers only.
+    relevance_score += min(math.log10(max(1, int(candidate.get("vote_count") or 0)) + 1), 5.0) * 1.6
+    relevance_score += min(max(float(candidate.get("vote_average") or 0.0), 0.0), 10.0) * 0.45
+    relevance_score += min(max(float(candidate.get("popularity") or 0.0), 0.0), 100.0) * 0.025
+    candidate["relevance_score"] = round(relevance_score, 3)
+    return candidate
+
+
+def _merge_relation_candidates(
+    seed_id: int,
+    recommendation_payload: Any,
+    similar_payload: Any,
+) -> list[dict[str, Any]]:
+    by_id: dict[int, dict[str, Any]] = {}
+    for source_name, payload in (("recommendations", recommendation_payload), ("similar", similar_payload)):
+        for rank, row in enumerate(_results(payload), start=1):
+            item = _movie_summary(row)
+            if not item or item["id"] == seed_id:
+                continue
+            existing = by_id.get(item["id"])
+            if existing is None:
+                item["tmdb_relations"] = [source_name]
+                item["relation_ranks"] = {source_name: rank}
+                by_id[item["id"]] = item
+                continue
+            if source_name not in existing["tmdb_relations"]:
+                existing["tmdb_relations"].append(source_name)
+            existing["relation_ranks"][source_name] = min(
+                int(existing["relation_ranks"].get(source_name) or rank),
+                rank,
+            )
+            if not existing.get("overview") and item.get("overview"):
+                existing["overview"] = item["overview"]
+    for item in by_id.values():
+        item["tmdb_relation"] = "+".join(item.get("tmdb_relations") or [])
+        item["source_count"] = len(item.get("tmdb_relations") or [])
+    return list(by_id.values())
+
+
+async def _enrich_shortlist_keywords(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    shortlist = candidates[:KEYWORD_ENRICH_MAX_CANDIDATES]
+    if not shortlist:
+        return []
+    payloads = await asyncio.gather(
+        *[_tmdb_get(f"movie/{int(item['id'])}/keywords") for item in shortlist],
+        return_exceptions=True,
+    )
+    enriched: list[dict[str, Any]] = []
+    for item, payload in zip(shortlist, payloads):
+        current = dict(item)
+        if isinstance(payload, BaseException):
+            logging.info("TMDB candidate keywords skipped movie_id=%s: %s", item.get("id"), payload)
+            current["keyword_ids"] = []
+            current["keyword_names"] = []
+        else:
+            current["keyword_ids"] = _keyword_ids(payload)
+            current["keyword_names"] = _keyword_names(payload)
+        enriched.append(current)
+    return enriched
 
 
 async def recommend_from_movie(query: str) -> dict[str, Any] | None:
@@ -260,22 +442,81 @@ async def recommend_from_movie(query: str) -> dict[str, Any] | None:
     if not seed:
         return None
     movie_id = int(seed["id"])
-    recommendation_payload, similar_payload = await asyncio.gather(
-        _tmdb_get(f"movie/{movie_id}/recommendations", {"language": "ru-RU", "page": 1}),
-        _tmdb_get(f"movie/{movie_id}/similar", {"language": "ru-RU", "page": 1}),
+
+    bundle = await _tmdb_get(
+        f"movie/{movie_id}",
+        {"language": "ru-RU", "append_to_response": "keywords,recommendations,similar"},
     )
-    candidates: list[dict[str, Any]] = []
-    seen: set[int] = {movie_id}
-    for source_name, payload in (("recommendations", recommendation_payload), ("similar", similar_payload)):
-        for row in _results(payload):
-            item = _movie_summary(row)
-            if not item or item["id"] in seen:
-                continue
-            seen.add(item["id"])
-            item["tmdb_relation"] = source_name
-            candidates.append(item)
-    candidates.sort(key=_candidate_score, reverse=True)
-    return {"seed": seed, "candidates": candidates[:MAX_CANDIDATES]} if candidates else None
+    recommendation_payload = bundle.get("recommendations") if isinstance(bundle, dict) else None
+    similar_payload = bundle.get("similar") if isinstance(bundle, dict) else None
+
+    missing_requests: list[tuple[str, str]] = []
+    if not isinstance(recommendation_payload, dict):
+        missing_requests.append(("recommendations", f"movie/{movie_id}/recommendations"))
+    if not isinstance(similar_payload, dict):
+        missing_requests.append(("similar", f"movie/{movie_id}/similar"))
+    if missing_requests:
+        fallback_payloads = await asyncio.gather(
+            *[_tmdb_get(path, {"language": "ru-RU", "page": 1}) for _, path in missing_requests]
+        )
+        for (name, _), payload in zip(missing_requests, fallback_payloads):
+            if name == "recommendations":
+                recommendation_payload = payload
+            else:
+                similar_payload = payload
+
+    seed_genres = _detail_genre_ids(bundle) or list(seed.get("genre_ids") or [])
+    seed_keywords = _keyword_ids(bundle.get("keywords") if isinstance(bundle, dict) else None)
+    seed_keyword_names = _keyword_names(bundle.get("keywords") if isinstance(bundle, dict) else None)
+    seed = dict(seed)
+    seed["genre_ids"] = seed_genres
+    seed["keyword_ids"] = seed_keywords
+    seed["keyword_names"] = seed_keyword_names
+
+    candidates = _merge_relation_candidates(movie_id, recommendation_payload, similar_payload)
+    if not candidates:
+        return None
+
+    # First pass is already relevance-first, so expensive keyword enrichment is
+    # bounded to the strongest provider/genre shortlist instead of every result.
+    preliminary = [
+        _apply_similarity_features(item, seed_genres=seed_genres, seed_keywords=[])
+        for item in candidates
+    ]
+    preliminary.sort(key=lambda item: float(item.get("relevance_score") or 0.0), reverse=True)
+    enriched = await _enrich_shortlist_keywords(preliminary)
+    final_candidates = [
+        _apply_similarity_features(item, seed_genres=seed_genres, seed_keywords=seed_keywords)
+        for item in enriched
+    ]
+    final_candidates.sort(key=lambda item: float(item.get("relevance_score") or 0.0), reverse=True)
+
+    strong = [
+        item
+        for item in final_candidates
+        if item.get("genre_overlap_ids") or item.get("keyword_overlap_ids")
+    ]
+    if len(strong) >= MIN_RELEVANT_CANDIDATES:
+        final_candidates = strong
+    else:
+        supported = [
+            item
+            for item in final_candidates
+            if item.get("genre_overlap_ids")
+            or item.get("keyword_overlap_ids")
+            or int(item.get("source_count") or 0) >= 2
+        ]
+        if len(supported) >= MIN_RELEVANT_CANDIDATES:
+            final_candidates = supported
+
+    return {
+        "seed": seed,
+        "candidates": final_candidates[:MAX_CANDIDATES],
+    } if final_candidates else None
+
+
+def _genre_labels(values: list[int]) -> list[str]:
+    return [TMDB_GENRE_NAMES.get(int(value), str(value)) for value in values]
 
 
 def build_movie_recommendation_context(
@@ -287,19 +528,28 @@ def build_movie_recommendation_context(
     seed = data.get("seed") or {}
     rows: list[str] = []
     for index, item in enumerate(data.get("candidates") or [], start=1):
+        shared_genres = ", ".join(_genre_labels(item.get("genre_overlap_ids") or [])) or "нет"
+        shared_keywords = ", ".join(item.get("keyword_overlap_names") or []) or "нет"
         rows.append(
-            f"{index}. {item['title']} ({item.get('year') or 'year unknown'}) | relation={item.get('tmdb_relation')} | "
+            f"{index}. {item['title']} ({item.get('year') or 'year unknown'}) | relations={item.get('tmdb_relation')} | "
+            f"shared_genres={shared_genres} | shared_keywords={shared_keywords} | relevance={item.get('relevance_score', 0):.1f} | "
             f"rating={item.get('vote_average'):.1f} votes={item.get('vote_count')} popularity={item.get('popularity'):.1f} | "
             f"overview={item.get('overview') or 'нет описания'} | source={item['source_url']}"
         )
+    seed_genres = ", ".join(_genre_labels(seed.get("genre_ids") or [])) or "нет"
+    seed_keywords = ", ".join(seed.get("keyword_names") or []) or "нет"
     return (
         "Пользователь просит рекомендации фильмов. Ниже реальные кандидаты TMDB, связанные с реально разрешённым "
-        "seed-фильмом через TMDB recommendations/similar. Выбери 3–5 только из списка; не придумывай другие фильмы. "
-        "vote_average/popularity — внешние сигналы каталога, а не объективное качество. Если overview краткий или пустой, "
-        "не додумывай сюжет.\n"
+        "seed-фильмом. Ранжирование уже учитывает TMDB recommendations/similar, совпадение жанров и plot-keywords; "
+        "rating/popularity используются только как слабые tie-breakers. Выбирай 3–5 только из списка и прежде всего "
+        "объясняй реальное тематическое сходство через shared_genres/shared_keywords и overview. Не натягивай слабое "
+        "сходство ради заполнения пятёрки: если сильных вариантов меньше, лучше назвать меньше. Не придумывай другие "
+        "фильмы и не додумывай сюжет при пустом/кратком overview. Внутренний relevance — эвристика отбора, а не "
+        "объективная оценка качества фильма.\n"
         + identity_recommendation_runtime.identity_separation_rules("фильмы")
         + "\n\n"
         f"ВОПРОС: {user_text}\nSEED: {seed.get('title') or ''} ({seed.get('year') or 'year unknown'})\n"
+        f"SEED GENRES: {seed_genres}\nSEED KEYWORDS: {seed_keywords}\n"
         "SELF-CANON LENS:\n"
         + identity_recommendation_runtime.format_identity_lens(identity_lens)
         + "\n\nTMDB CANDIDATES:\n"
@@ -394,5 +644,5 @@ def prepare_application_runtime(application: Application) -> None:
     )
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning(
-        "Movie recommendations ready: TMDB optional-token catalog + category-local continuity + identity lens"
+        "Movie recommendations ready: TMDB relevance-first genres/keywords + category-local continuity + identity lens"
     )
