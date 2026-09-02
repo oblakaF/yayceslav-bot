@@ -22,7 +22,7 @@ def test_migrations_are_non_destructive_and_idempotent(tmp_path, monkeypatch):
             ).fetchall()
         }
 
-    assert migrations.run_pending(bot) == (1, 2)
+    assert migrations.run_pending(bot) == (1, 2, 3)
     assert migrations.run_pending(bot) == ()
 
     with bot.get_db_connection() as connection:
@@ -39,10 +39,12 @@ def test_migrations_are_non_destructive_and_idempotent(tmp_path, monkeypatch):
         "schema_migrations",
         "chat_self_canon",
         "chat_self_canon_history",
+        "chat_self_canon_meta",
     } <= after
     assert applied == {
         1: "baseline_v2_existing_schema",
         2: "chat_local_self_canon",
+        3: "chat_self_canon_inertia",
     }
 
 
@@ -77,7 +79,8 @@ def test_failed_future_migration_rolls_back_version_and_schema(tmp_path, monkeyp
         (
             migrations.Migration(1, "baseline_v2_existing_schema", migrations._baseline_v2),
             migrations.Migration(2, "chat_local_self_canon", migrations._chat_self_canon_v2),
-            migrations.Migration(3, "failing_test_migration", failing),
+            migrations.Migration(3, "chat_self_canon_inertia", migrations._chat_self_canon_v3_inertia),
+            migrations.Migration(4, "failing_test_migration", failing),
         ),
     )
 
@@ -101,4 +104,5 @@ def test_failed_future_migration_rolls_back_version_and_schema(tmp_path, monkeyp
 
     assert "should_rollback" not in tables
     assert "chat_self_canon" not in tables
+    assert "chat_self_canon_meta" not in tables
     assert applied == []
