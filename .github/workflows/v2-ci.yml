@@ -42,7 +42,7 @@ jobs:
           primitive_compact_guard.py scoped_help_runtime.py command_menu.py
           member_profile_runtime.py member_repository.py dialogue_guard_runtime.py accountability_runtime.py
           member_memory_safety_patch.py claim_memory_v3.py dialogue_followup_mode_patch.py chat_member_updates_patch.py
-          unified_daily_title_runtime.py relationship_experience_runtime.py
+          unified_daily_title_runtime.py relationship_experience_runtime.py relationship_memory_v2_runtime.py pairwise_relationship_runtime.py
           whoami_profile_v3_runtime.py whoami_profile_v4_runtime.py whoami_dynamic_verdict.py
           monthly_social_runtime.py monthly_report_timing_patch.py monthly_memory_scope_patch.py
           monthly_theme_quality_patch.py whoami_verdict_style_patch.py daily_content_runtime.py
