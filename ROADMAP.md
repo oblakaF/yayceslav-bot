@@ -15,6 +15,7 @@ This roadmap tracks the next architecture phase after the September 2026 persona
 9. Specialist facts and Yayceslav's own tastes remain separate layers.
 10. Raw media and large copyrighted payloads are not durable memory.
 11. Relationship memory stores bounded social interaction evidence, not inferred sensitive traits or raw chat archives.
+12. Recommendations have two layers: provider evidence and Yayceslav's personal identity lens. One recommendation never silently rewrites canon.
 
 ---
 
@@ -31,14 +32,9 @@ This roadmap tracks the next architecture phase after the September 2026 persona
 ## P1 memory / continuity
 
 - [x] Unified text / voice / video-note semantic context — PR #68.
-- [x] Persistent tiered memory:
-  - 2h / 60-message working RAM;
-  - 30-day bounded semantic SQLite history;
-  - local FTS retrieval;
-  - 90-day compact digests;
-  - 365-day notable episodic memory — PR #69.
+- [x] Persistent tiered memory — PR #69.
 - [x] Tiered-memory startup/default cleanup — PR #71.
-- [x] Entity/search continuity with a short-lived chat-local resolved topic — PR #72.
+- [x] Entity/search continuity — PR #72.
 
 ## Current self-canon fields
 
@@ -50,108 +46,94 @@ The field count is sufficient. Future work should improve knowledge and behavior
 
 # MUSIC EXPERT LAYER — DONE
 
-## PR D — Music catalog foundation — DONE
+- [x] PR D — MusicBrainz catalog foundation — PR #74.
+- [x] PR E — LRCLIB + optional Musixmatch lyrics/analysis — PR #75.
+- [x] PR F — ListenBrainz artist-seed recommendations — PR #76.
 
-### Provider: MusicBrainz
-
-Implemented:
-- artist identity and canonical MBID;
-- recordings/tracks;
-- releases/release groups/albums;
-- dates and artist credits where available;
-- local deterministic music intent detection with no classifier model call;
-- polite provider spacing and bounded RAM cache;
-- chat-local entity continuity for short music follow-ups;
-- specialist facts kept separate from `self_canon.music`.
-
-Merged as PR #74.
+The music layer now separates:
+- objective/retrieved music facts;
+- lyrics/meaning context;
+- similar-track/artist candidates;
+- `self_canon.music` as Yayceslav's own taste.
 
 ---
 
-## PR E — Lyrics + analysis — DONE
+# SOCIAL / RELATIONSHIP MEMORY V2 — DONE
 
-### Provider chain
-
-`LRCLIB -> optional Musixmatch -> existing real web-search fallback`
+Merged as PR #77.
 
 Implemented:
-- LRCLIB exact `track + artist` matching when catalog metadata exists;
-- LRCLIB raw free-text search when MusicBrainz does not know a fresh/local release;
-- optional Musixmatch fallback through `MUSIXMATCH_API_KEY`;
-- modern Cyrillic regression cases including `MACAN Заново` and `Три дня дождя Отпускай`;
-- same-title safeguards;
-- no durable full-lyrics storage;
-- lyrics used only as analysis context;
-- specialist failures degrade to the next source.
-
-Merged as PR #75.
+- bounded structured social markers instead of raw chat archives;
+- direct-to-Yayceslav markers for banter, correction, apology, gratitude, disagreement and reconciliation;
+- reuse of safe member callback topics rather than duplicate topic storage;
+- `(chat_id, user_id)` isolation;
+- 365-day bounded marker lifetime;
+- no extra Gemini classifier call;
+- current message/current tone override old relationship history;
+- old conflict cannot authorize hostility on a neutral current turn;
+- reconciliation softens prior conflict;
+- sensitive categories remain excluded from automatic social-memory inference.
 
 ---
 
-## PR F — Music recommendations — DONE
+# ACTIVE — P2 IDENTITY-DERIVED RECOMMENDATIONS
 
-### Provider: ListenBrainz
+## PR G — Provider-neutral identity lens + books
 
-Implemented flow:
+### Common recommendation contract
 
-`user recommendation intent -> MusicBrainz artist MBID -> ListenBrainz LB Radio -> batch recording metadata -> self_canon.music preference lens -> Gemini/Yayceslav`
+Every vertical must expose two separate layers:
+1. objective/retrieved candidates from a specialist provider;
+2. Yayceslav's existing self-canon as a personal lens for choosing/explaining among those candidates.
+
+The common identity lens is intentionally bounded to relevant existing fields such as `aesthetic`, `values`, `hobbies`, `lifestyle`, `quirks` and `music`. Provider data must never become self-canon automatically.
+
+### Books — Open Library
+
+Flow:
+
+`explicit book recommendation intent -> Open Library seed work -> observed subjects -> Open Library related works -> provider-neutral identity lens -> Gemini/Yayceslav`
 
 Capabilities:
-- “что послушать, если нравится X?”;
-- “на кого похож X?”;
-- “дай несколько треков в духе X”;
-- similar artists/recordings based on ListenBrainz data;
-- `total_listen_count` used only as a popularity/listening signal, not quality;
-- batch metadata lookup for recording names, artists and tags;
-- exclude the seed artist from ordinary similarity recommendations;
-- combine factual candidates with `self_canon.music` so Yayceslav can say what he personally would choose;
-- Cyrillic seeds including `Три дня дождя` and `MACAN`;
-- no ListenBrainz user account/token required for ordinary artist-seed recommendations.
+- “что почитать, если нравится Мастер и Маргарита?”;
+- “посоветуй 5 книг в духе Пикника на обочине”;
+- `books like Dune`;
+- resolve one seed work and its actual Open Library subjects;
+- retrieve related works with bounded provider traffic;
+- rank by subject overlap, using edition count only as a catalog prevalence signal, not quality;
+- expose source links for candidates;
+- keep book-specific short-lived follow-up continuity so “а ещё?” cannot accidentally reuse a music/entity seed;
+- no Open Library API key required;
+- provider miss falls through to ordinary answer/search behavior.
 
-Merged as PR #76.
+### Next verticals after books
 
----
+- films;
+- games;
+- clothing/style;
+- places/travel.
 
-# ACTIVE — P2 SOCIAL / RELATIONSHIP MEMORY V2
-
-Goal: improve long-term relationship continuity without turning the bot into surveillance memory.
-
-Implementation direction:
-- reuse existing `chat_member_profiles`, safe member callback terms, pairwise interaction statistics and relationship/conflict data;
-- persist only bounded structured social markers, not raw messages;
-- social markers include mutual banter, corrections, apologies, gratitude, explicit disagreement and reconciliation;
-- current message/current tone always override historical relationship state;
-- reconciliation softens old conflict instead of creating permanent grudges;
-- recurring callback topics can be used sparsely but never treated as preferences, professions, beliefs or personality traits;
-- automatic durable relationship memory excludes health, finance, politics, religion, sexuality and other sensitive characteristics;
-- strict `(chat_id, user_id)` isolation with regression tests against cross-user/cross-chat contamination;
-- no extra Gemini classifier call.
-
-Acceptance examples:
-- after several playful exchanges, a playful current turn may get a more familiar callback;
-- after the user corrected Yayceslav earlier, a relevant future correction can be acknowledged naturally instead of pretending infallibility;
-- after apology/reconciliation, old hostility must not keep poisoning neutral replies;
-- a recurring safe topic may be remembered as something the member has actually discussed, not as a stable personal trait;
-- an unrelated member or another group must never inherit this relationship history.
+Each should be its own small provider adapter over the same identity-lens contract, not a new parallel personality/recommendation architecture.
 
 ---
 
 # NEXT — P2
 
-## Identity-derived recommendation engine
+## Films vertical
 
-Extend the same pattern beyond music:
-- films;
-- books;
-- games;
-- clothing/style;
-- places/travel.
+Choose a provider with clear current API terms and useful movie identity/genre/keyword metadata. Keep provider evidence separate from personal reaction.
 
-Recommendations should expose two layers:
-1. objective/retrieved evidence;
-2. Yayceslav's stable personal reaction.
+## Games vertical
 
-A recommendation must not silently become a self-canon trait.
+Use a real catalog/metadata provider where API terms and key requirements make sense. Avoid model-memory-only game lists when specialist data is available.
+
+## Clothing / style vertical
+
+Recommendations should combine current products/availability with `aesthetic`, `clothing` and lifestyle canon, but purchases/brands never become durable taste automatically.
+
+## Places / travel vertical
+
+Current/local facts must come from current place/travel sources; `aesthetic`, `lifestyle`, `values` and hobbies may influence Yayceslav's personal pick only.
 
 ## Rare self-development events
 
@@ -176,12 +158,13 @@ The architecture is successful when these conversations work naturally:
 7. “Что за песня Enjoy the Silence?” is grounded in specialist metadata.
 8. “Из какого она альбома?” keeps the resolved track/entity.
 9. “О чём MACAN Заново?” may resolve lyrics even if MusicBrainz has no useful match.
-10. “О чём она?” stays on the same resolved track and uses retrieved lyrics rather than model memory.
-11. “Что послушать, если нравится Три дня дождя?” uses real ListenBrainz candidates.
-12. “Тебе самому что из этого ближе?” uses `self_canon.music` as a personal lens rather than a provider fact.
-13. Text, voice, video-note and explicit search follow-ups maintain the same recent entity/topic when appropriate.
-14. Different chats do not leak self-canon, entity state or relationship state into each other.
-15. Old conflict does not make a neutral current turn hostile after apology/reconciliation.
-16. Safe recurring social callbacks feel continuous without becoming a fake biography.
+10. “Что послушать, если нравится Три дня дождя?” uses real ListenBrainz candidates.
+11. “Тебе самому что из этого ближе?” uses self-canon as a personal lens rather than a provider fact.
+12. Different chats do not leak self-canon, entity state or relationship state into each other.
+13. Old conflict does not make a neutral current turn hostile after apology/reconciliation.
+14. Safe recurring social callbacks feel continuous without becoming a fake biography.
+15. “Что почитать, если нравится Dune?” uses real Open Library works and subjects.
+16. After a music recommendation, “а ещё?” does not accidentally enter the books route.
+17. A recommendation can influence the current answer without silently becoming a new self-canon trait.
 
 The target is not simply more memory. The target is a character whose past choices constrain future choices while external factual knowledge remains verifiable and replaceable.
