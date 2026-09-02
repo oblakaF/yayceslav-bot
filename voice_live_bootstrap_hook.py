@@ -10,6 +10,7 @@ from __future__ import annotations
 import functools
 from typing import Any
 
+import gemini_stability_runtime
 import self_canon_runtime
 import self_canon_v2_runtime
 import voice2_runtime
@@ -64,12 +65,20 @@ def _install_personality_layers_after_self_canon(bot_module: Any | None = None) 
     # Bridge first replaces VoiceDecision with the wider schema; then replace the
     # old normalizer which hard-capped/flattened direct answers at 1000 chars.
     voice2_runtime._normalize_decision = _normalize_live_decision
+    # VoiceLiveDecision replaces the original schema class, so install the
+    # wrapper-tolerant JSON validator again on the live schema after replacement.
+    gemini_stability_runtime.install_voice_json_recovery()
 
 
 def install_hook() -> bool:
     global _HOOKED
     if _HOOKED:
         return True
+
+    # Install model-capacity routing and daily-content JSON recovery early in
+    # application preparation. Voice schema recovery is refreshed again after
+    # VoiceLiveDecision is installed below.
+    gemini_stability_runtime.install()
 
     original = self_canon_runtime.install
     if getattr(original, "_yayceslav_voice_live_hook", False):
