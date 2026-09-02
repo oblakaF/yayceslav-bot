@@ -92,6 +92,12 @@ def _apply_tuning() -> None:
     import fight_mode_v2_tuning
     fight_mode_v2_tuning.install()
 
+    # Group-first policy is intentionally installed LAST.  It replaces the
+    # accumulated post-answer wrapper chain with one visible outgoing group
+    # policy while still reusing the same semantics, fight state and delivery.
+    import group_sticker_behavior_v2
+    group_sticker_behavior_v2.install()
+
     # Dedicated RAGE visuals remain active, while normal semantic probabilities
     # stay exactly at the values produced by the bounded tuning pass above.
     for event, chance in tuned_event_chances.items():
@@ -100,8 +106,9 @@ def _apply_tuning() -> None:
     _APPLIED = True
     logging.warning(
         "Sticker tuning ready: background/events<=8%%, aggressive-events<=6%%, "
-        "question<=12%%, post-tag<=13%%, dedicated fight-v2 RAGE stickers, "
-        "cooldown=8m/chat 15m/user, max=3/hour; group sticker replies must target bot"
+        "private-question<=12%%, group=text-first + semantic post-tags, "
+        "group RAGE=v2 diverse pool, cooldown=8m/chat 15m/user, max=3/hour; "
+        "group sticker replies must target bot"
     )
 
 
