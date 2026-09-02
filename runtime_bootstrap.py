@@ -49,6 +49,7 @@ import natural_router_runtime
 import roast_target_runtime
 import search_enrichment_runtime
 import chat_digest_runtime
+import persistent_tiered_memory_runtime
 import date_grounding_runtime
 import social_priority_runtime
 import social_grounding_runtime
@@ -101,6 +102,7 @@ RUNTIME_LOAD_ORDER = (
     "birthday_runtime",
     "search_enrichment_runtime",
     "chat_digest_runtime",
+    "persistent_tiered_memory_runtime",
     "natural_router_runtime",
     "roast_target_runtime",
     "date_grounding_runtime",
@@ -195,8 +197,15 @@ def prepare_application_runtime(application: Application) -> None:
     _prepare_sticker_menu_runtime(application)
 
     bot_module = _find_bot_module()
-    if bot_module is not None and not claim_memory_v3.install_short_term_guard(bot_module):
-        logging.warning("Claim memory v3 short-term guard: bot module not ready")
+    if bot_module is not None:
+        # Configure effective memory limits before episodic/digest runtimes log
+        # or bind their runtime behavior. The actual persistence/retrieval wrappers
+        # are still installed later by voice_live_bootstrap_hook in the established
+        # safe order around multimodal semantic conversion.
+        persistent_tiered_memory_runtime._patch_ram_limits(bot_module)
+        persistent_tiered_memory_runtime._patch_existing_long_memory_limits()
+        if not claim_memory_v3.install_short_term_guard(bot_module):
+            logging.warning("Claim memory v3 short-term guard: bot module not ready")
 
     unified_daily_title_runtime._prepare()
     title_reroll_runtime.prepare_application_runtime(application)
