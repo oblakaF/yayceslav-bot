@@ -1,8 +1,8 @@
-"""Late startup hook for the live voice bridge.
+"""Late startup hook for self-canon v2 and the live voice bridge.
 
 Imported by the small rate-limit runtime during application preparation. It
-wraps self_canon_runtime.install so the voice bridge is installed immediately
-after self-canon, without changing the large central bootstrap file.
+wraps self_canon_runtime.install so the personality-inertia layer is installed
+immediately after V1 self-canon, then the voice bridge is installed on top.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import functools
 from typing import Any
 
 import self_canon_runtime
+import self_canon_v2_runtime
 import voice2_runtime
 import voice_live_bridge_runtime
 
@@ -55,7 +56,9 @@ def _normalize_live_decision(
     )
 
 
-def _install_voice_bridge_after_self_canon(bot_module: Any | None = None) -> None:
+def _install_personality_layers_after_self_canon(bot_module: Any | None = None) -> None:
+    if not self_canon_v2_runtime.install(bot_module):
+        return
     if not voice_live_bridge_runtime.install(bot_module):
         return
     # Bridge first replaces VoiceDecision with the wider schema; then replace the
@@ -74,15 +77,15 @@ def install_hook() -> bool:
         return True
 
     @functools.wraps(original)
-    def self_canon_then_voice(*args: Any, **kwargs: Any) -> bool:
+    def self_canon_then_v2_then_voice(*args: Any, **kwargs: Any) -> bool:
         result = bool(original(*args, **kwargs))
         if result:
             bot_module = args[0] if args else kwargs.get("bot_module")
-            _install_voice_bridge_after_self_canon(bot_module)
+            _install_personality_layers_after_self_canon(bot_module)
         return result
 
-    self_canon_then_voice._yayceslav_voice_live_hook = True
-    self_canon_runtime.install = self_canon_then_voice
+    self_canon_then_v2_then_voice._yayceslav_voice_live_hook = True
+    self_canon_runtime.install = self_canon_then_v2_then_voice
     _HOOKED = True
     return True
 
