@@ -32,7 +32,7 @@ def test_voice_context_is_chat_local_bounded_and_expires():
     other_chat = voice_live_bridge_runtime._recent_voice_context(200, now=102.0)
     expired = voice_live_bridge_runtime._recent_voice_context(
         100,
-        now=100.0 + voice_live_bridge_runtime.VOICE_CONTEXT_TTL_SECONDS + 1,
+        now=101.0 + voice_live_bridge_runtime.VOICE_CONTEXT_TTL_SECONDS + 1,
     )
 
     assert "Marvel" in same_chat
