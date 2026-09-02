@@ -9,6 +9,7 @@ import dialogue_guard_runtime as dialogue_guard
 import episodic_memory_runtime as episodic_memory
 import initiative_runtime as initiative
 import member_profile_runtime as member_profile
+import music_runtime as music
 import natural_router_runtime as natural_router
 import owner_social_diagnostics_runtime as owner_social_diagnostics
 import pairwise_relationship_runtime as pairwise_relationship
@@ -172,6 +173,11 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         lambda app: calls.append(("natural_router", app)),
     )
     monkeypatch.setattr(
+        music,
+        "prepare_application_runtime",
+        lambda app: calls.append(("music", app)),
+    )
+    monkeypatch.setattr(
         recent_video_note,
         "prepare_application_runtime",
         lambda app: calls.append(("recent_video_note", app)),
@@ -211,6 +217,7 @@ def test_application_preparation_is_centralized_in_bootstrap(monkeypatch):
         ("search_context", None),
         ("chat_digest", application),
         ("natural_router", application),
+        ("music", application),
         ("recent_video_note", application),
         ("unified_multimodal", application),
     ]
