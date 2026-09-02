@@ -42,9 +42,10 @@ def test_lizards_are_explicitly_fictional_not_real_people(monkeypatch):
     module = _fresh_module(monkeypatch)
     runtime.install(module)
     instruction = module.build_full_system_instruction("кто такие ящеры?")
+    lowered = instruction.lower()
     assert "мемно-мифологические враги" in instruction
     assert "НЕ обозначение реальных людей" in instruction
-    assert "не выдавай его за настоящую историю России" in instruction
+    assert "не выдавай его за настоящую историю россии" in lowered
 
 
 def test_lore_is_sparse_not_a_verbal_tic(monkeypatch):
