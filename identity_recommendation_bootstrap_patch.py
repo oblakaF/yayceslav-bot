@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 
 import book_recommendation_runtime
+import game_recommendation_runtime
 import movie_recommendation_runtime
 import movie_seed_resolution_v2  # noqa: F401 - patches movie seed resolution
 import natural_router_runtime
@@ -28,6 +29,7 @@ def install() -> bool:
         original(application)
         book_recommendation_runtime.prepare_application_runtime(application)
         movie_recommendation_runtime.prepare_application_runtime(application)
+        game_recommendation_runtime.prepare_application_runtime(application)
 
     prepare_then_identity_recommendations._yayceslav_identity_recommendation_hook = True
     natural_router_runtime.prepare_application_runtime = prepare_then_identity_recommendations
