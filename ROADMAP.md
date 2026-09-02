@@ -67,78 +67,57 @@ Merged as PR #74.
 
 ---
 
-## PR E — Lyrics + analysis — ACTIVE
+## PR E — Lyrics + analysis — DONE
 
 ### Provider chain
 
 `LRCLIB -> optional Musixmatch -> existing real web-search fallback`
 
-LRCLIB is the primary provider and must work even when MusicBrainz does not resolve the track. MusicBrainz metadata is optional enrichment, not a prerequisite for lyrics lookup.
+Implemented:
+- LRCLIB exact `track + artist` matching when catalog metadata exists;
+- LRCLIB raw free-text search when MusicBrainz does not know a fresh/local release;
+- optional Musixmatch fallback through `MUSIXMATCH_API_KEY`;
+- modern Cyrillic regression cases including `MACAN Заново` and `Три дня дождя Отпускай`;
+- same-title safeguards;
+- no durable full-lyrics storage;
+- lyrics used only as analysis context;
+- specialist failures degrade to the next source.
 
-Musixmatch is a secondary provider when `MUSIXMATCH_API_KEY` is configured. The bot must remain fully operational without that key.
-
-### Capabilities
-
-- identify lyrics from `track + artist` when catalog metadata is available;
-- free-text lyrics search from a raw user query when MusicBrainz is missing a fresh/local release;
-- retrieve plain/synchronized lyrics from LRCLIB when available;
-- use Musixmatch only after LRCLIB misses;
-- answer “о чём песня?”, “про что трек?”, “что означает эта строка?” from retrieved lyrics;
-- use the existing real-search path only after specialist providers fail;
-- never ask Gemini to invent lyrics from model memory.
-
-### Russian-language acceptance set
-
-The regression set must include Cyrillic and modern Russian-language music, including representative query shapes such as:
-- `MACAN Заново`;
-- `Три дня дождя Отпускай`;
-- artist + track written entirely in Cyrillic;
-- mixed Latin/Cyrillic artist names;
-- `feat.` / collaborations;
-- same-title songs where artist identity is required;
-- a fresh Russian release absent from MusicBrainz but present in a lyrics provider.
-
-### Matching safeguards
-
-- exact `track + artist` match wins when available;
-- album/duration are additional evidence, not mandatory for raw fallback search;
-- reject a weak one-word same-title match without an independently resolved artist;
-- do not merge lyrics from another artist’s song with the same title;
-- provider failures/rate limits must degrade to the next provider, not break the music handler.
-
-### Copyright / storage
-
-- never persist full lyrics to SQLite;
-- short bounded RAM cache only;
-- full retrieved lyrics are internal analysis context, not normal output;
-- prefer summary/analysis over reproduction;
-- if a quote is genuinely needed for explanation, keep it to one short line/phrase;
-- a request for the full lyrics should not dump the copyrighted text.
-
-### Self-canon separation
-
-- lyrics providers answer what the song says;
-- `self_canon.music` answers whether Yayceslav personally likes it and why;
-- retrieving/analyzing a song never silently adds it to his personal taste.
+Merged as PR #75.
 
 ---
 
-## PR F — Music recommendations
+## PR F — Music recommendations — ACTIVE
 
 ### Provider: ListenBrainz
 
+Use the public ListenBrainz LB Radio artist-seed endpoint instead of requiring a personal ListenBrainz profile.
+
+Flow:
+
+`user recommendation intent -> MusicBrainz artist MBID -> ListenBrainz LB Radio -> batch recording metadata -> self_canon.music preference lens -> Gemini/Yayceslav`
+
 Capabilities:
-- similar artists/recordings;
-- available listening/popularity signals;
-- recommendation candidates based on real catalog entities;
-- combine factual candidates with `self_canon.music` for Yayceslav-specific opinions.
+- “что послушать, если нравится X?”;
+- “на кого похож X?”;
+- “дай несколько треков в духе X”;
+- similar artists/recordings based on ListenBrainz data;
+- `total_listen_count` used only as a popularity/listening signal, not quality;
+- batch metadata lookup for recording names, artists and tags;
+- exclude the seed artist from ordinary similarity recommendations;
+- combine factual candidates with `self_canon.music` so Yayceslav can say what he personally would choose.
+
+Constraints:
+- no extra Gemini classifier call;
+- no ListenBrainz user account/token required for ordinary artist-seed recommendations;
+- recommendations do not rewrite `self_canon.music`;
+- bounded RAM cache and provider pacing;
+- if the seed artist cannot be resolved or ListenBrainz has no candidates, fall through to the ordinary answer/search path;
+- support Cyrillic artist seeds such as `Три дня дождя` and `MACAN`.
 
 Optional later:
+- authenticated personal ListenBrainz collaborative-filter recommendations if a user explicitly connects a ListenBrainz profile;
 - Last.fm tags/community similarity if API terms/key make sense.
-
-Important separation:
-- specialist APIs answer “what is this / who made it / what is similar?”;
-- `self_canon.music` answers “does Yayceslav personally like it and why?”
 
 ---
 
@@ -199,8 +178,9 @@ The architecture is successful when these conversations work naturally:
 8. “Из какого она альбома?” keeps the resolved track/entity.
 9. “О чём MACAN Заново?” may resolve lyrics even if MusicBrainz has no useful match.
 10. “О чём она?” stays on the same resolved track and uses retrieved lyrics rather than model memory.
-11. “Тебе самому нравится?” is grounded in self-canon rather than specialist metadata.
-12. Text, voice, video-note and explicit search follow-ups maintain the same recent entity/topic when appropriate.
-13. Different chats do not leak self-canon, entity state or relationship state into each other.
+11. “Что послушать, если нравится Три дня дождя?” uses real ListenBrainz candidates.
+12. “Тебе самому что из этого ближе?” uses `self_canon.music` as a personal lens rather than a provider fact.
+13. Text, voice, video-note and explicit search follow-ups maintain the same recent entity/topic when appropriate.
+14. Different chats do not leak self-canon, entity state or relationship state into each other.
 
 The target is not simply more memory. The target is a character whose past choices constrain future choices while external factual knowledge remains verifiable and replaceable.
