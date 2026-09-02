@@ -1,9 +1,8 @@
 """RAWG-backed game recommendations with Yayceslav's provider-neutral identity lens.
 
-RAWG provides the real game catalog. Similarity is computed locally from the
-resolved seed's genres, tags and platforms; catalog ratings/Metacritic are weak
-signals only. The free RAWG plan requires attribution, so responses always name
-and link RAWG when this specialist route succeeds.
+RAWG owns objective catalog data. Similarity is computed locally from the
+resolved seed's genres, tags and platforms; RAWG rating/Metacritic are weak
+catalog signals only. Successful specialist answers always attribute RAWG.
 """
 
 from __future__ import annotations
@@ -77,8 +76,7 @@ def rawg_api_key() -> str:
 
 def _clean_query(value: Any) -> str:
     text = " ".join(str(value or "").split()).strip(" \t\r\n,.:;!?—-\"'«»")
-    text = re.sub(r"^(?:игра|game)\s+", "", text, flags=re.I)
-    return text[:200]
+    return re.sub(r"^(?:игра|game)\s+", "", text, flags=re.I)[:200]
 
 
 def _prune_topics(now: float) -> None:
@@ -120,9 +118,9 @@ def classify_game_recommendation_intent(text: str, *, chat_id: int | None = None
 
 def _cache_get(key: str) -> Any | None:
     now = time.monotonic()
-    stale = [item for item, entry in _CACHE.items() if now - entry.created_at > CACHE_TTL_SECONDS]
-    for item in stale:
-        _CACHE.pop(item, None)
+    for item, entry in list(_CACHE.items()):
+        if now - entry.created_at > CACHE_TTL_SECONDS:
+            _CACHE.pop(item, None)
     entry = _CACHE.get(key)
     return None if entry is None else entry.value
 
@@ -139,16 +137,14 @@ async def _rawg_get(path: str, params: dict[str, Any] | None = None) -> Any:
     key = rawg_api_key()
     if not key:
         return None
-    params = dict(params or {})
-    params["key"] = key
-    safe_params = {k: v for k, v in params.items() if k != "key"}
-    cache_key = path + "?" + "&".join(f"{k}={safe_params[k]}" for k in sorted(safe_params))
-    cached = _cache_get(cache_key)
+    request_params = dict(params or {})
+    safe_key = path + "?" + "&".join(f"{k}={request_params[k]}" for k in sorted(request_params))
+    cached = _cache_get(safe_key)
     if cached is not None:
         return cached
-
+    request_params["key"] = key
     async with _REQUEST_LOCK:
-        cached = _cache_get(cache_key)
+        cached = _cache_get(safe_key)
         if cached is not None:
             return cached
         delay = MIN_REQUEST_INTERVAL_SECONDS - (time.monotonic() - _LAST_REQUEST_AT)
@@ -156,29 +152,30 @@ async def _rawg_get(path: str, params: dict[str, Any] | None = None) -> Any:
             await asyncio.sleep(delay)
         headers = {"Accept": "application/json", "User-Agent": "YayceslavBot/2.0 (https://github.com/oblakaF/yayceslav-bot)"}
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS, headers=headers) as client:
-            response = await client.get(f"{RAWG_BASE}/{path.lstrip('/')}" , params=params)
+            response = await client.get(f"{RAWG_BASE}/{path.lstrip('/')}", params=request_params)
             _LAST_REQUEST_AT = time.monotonic()
             if response.status_code in {204, 404}:
                 return None
             response.raise_for_status()
             payload = response.json()
-        _cache_put(cache_key, payload)
+        _cache_put(safe_key, payload)
         return payload
 
 
 def _results(payload: Any) -> list[dict[str, Any]]:
-    if not isinstance(payload, dict):
-        return []
-    return [item for item in payload.get("results") or [] if isinstance(item, dict)]
+    return [item for item in (payload.get("results") if isinstance(payload, dict) else []) or [] if isinstance(item, dict)]
 
 
 def _names(rows: Any) -> list[str]:
     result: list[str] = []
+    seen: set[str] = set()
     for item in rows or []:
         if not isinstance(item, dict):
             continue
         name = " ".join(str(item.get("name") or "").split()).strip()
-        if name and name.casefold() not in {x.casefold() for x in result}:
+        folded = name.casefold()
+        if name and folded not in seen:
+            seen.add(folded)
             result.append(name)
     return result
 
@@ -186,11 +183,10 @@ def _names(rows: Any) -> list[str]:
 def _slugs(rows: Any) -> list[str]:
     result: list[str] = []
     for item in rows or []:
-        if not isinstance(item, dict):
-            continue
-        slug = str(item.get("slug") or "").strip()
-        if slug and slug not in result:
-            result.append(slug)
+        if isinstance(item, dict):
+            slug = str(item.get("slug") or "").strip()
+            if slug and slug not in result:
+                result.append(slug)
     return result
 
 
@@ -215,7 +211,6 @@ def _game_summary(item: dict[str, Any]) -> dict[str, Any] | None:
     if game_id <= 0 or not name:
         return None
     slug = str(item.get("slug") or "").strip()
-    description = " ".join(str(item.get("description_raw") or "").split())[:900]
     return {
         "id": game_id,
         "name": name,
@@ -229,19 +224,16 @@ def _game_summary(item: dict[str, Any]) -> dict[str, Any] | None:
         "rating": float(item.get("rating") or 0.0),
         "ratings_count": int(item.get("ratings_count") or 0),
         "metacritic": int(item.get("metacritic") or 0),
-        "description": description,
+        "description": " ".join(str(item.get("description_raw") or "").split())[:900],
         "source_url": f"{RAWG_SITE}/games/{slug}" if slug else RAWG_SITE,
     }
 
 
 async def resolve_seed_game(query: str) -> dict[str, Any] | None:
     payload = await _rawg_get("games", {"search": query, "search_precise": "true", "page_size": 10})
-    rows = _results(payload)
-    if not rows:
-        return None
     normalized = _clean_query(query).casefold()
     ranked: list[tuple[float, dict[str, Any]]] = []
-    for index, row in enumerate(rows[:10]):
+    for index, row in enumerate(_results(payload)[:10]):
         game = _game_summary(row)
         if not game:
             continue
@@ -275,7 +267,6 @@ def _candidate_score(item: dict[str, Any], seed: dict[str, Any]) -> dict[str, An
     candidate["shared_genres"] = genres
     candidate["shared_tags"] = tags[:8]
     candidate["shared_platforms"] = platforms[:8]
-
     genre_ratio = len(genres) / max(1, min(len(set(candidate.get("genres") or [])), len(set(seed.get("genres") or [])))) if seed.get("genres") else 0.0
     tag_ratio = len(tags) / max(1, min(len(set(candidate.get("tags") or [])), len(set(seed.get("tags") or [])))) if seed.get("tags") else 0.0
     score = len(genres) * 52.0 + genre_ratio * 38.0 + len(tags) * 16.0 + tag_ratio * 28.0 + min(len(platforms), 3) * 3.0
@@ -287,30 +278,26 @@ def _candidate_score(item: dict[str, Any], seed: dict[str, Any]) -> dict[str, An
     return candidate
 
 
-def _candidate_params(seed: dict[str, Any]) -> dict[str, Any]:
-    params: dict[str, Any] = {"page_size": 40, "ordering": "-ratings_count"}
-    genres = seed.get("genres") or []
-    tags = seed.get("tags") or []
-    platforms = seed.get("platforms") or []
-    if genres:
-        params["genres"] = ",".join(genres[:3])
-    if tags:
-        params["tags"] = ",".join(tags[:5])
-    if platforms:
-        params["platforms"] = ",".join(platforms[:4])
-    return params
+def _genre_pool_params(seed: dict[str, Any]) -> dict[str, Any]:
+    return {"genres": ",".join((seed.get("genres") or [])[:3]), "page_size": 40, "ordering": "-rating"}
+
+
+def _tag_pool_params(seed: dict[str, Any]) -> dict[str, Any]:
+    return {"tags": ",".join((seed.get("tags") or [])[:5]), "page_size": 40, "ordering": "-rating"}
 
 
 async def recommend_from_game(query: str) -> dict[str, Any] | None:
     seed = await resolve_seed_game(query)
     if not seed:
         return None
-
-    params = _candidate_params(seed)
-    payloads = await asyncio.gather(
-        _rawg_get("games", params),
-        _rawg_get("games", {"genres": ",".join(seed.get("genres") or [])[:120], "page_size": 40, "ordering": "-ratings_count"}) if seed.get("genres") else asyncio.sleep(0, result=None),
-    )
+    calls = []
+    if seed.get("genres"):
+        calls.append(_rawg_get("games", _genre_pool_params(seed)))
+    if seed.get("tags"):
+        calls.append(_rawg_get("games", _tag_pool_params(seed)))
+    if not calls:
+        return None
+    payloads = await asyncio.gather(*calls)
     by_id: dict[int, dict[str, Any]] = {}
     for payload in payloads:
         for row in _results(payload):
@@ -324,7 +311,6 @@ async def recommend_from_game(query: str) -> dict[str, Any] | None:
                 for key in ("genres", "genre_names", "tags", "tag_names", "platforms"):
                     if len(item.get(key) or []) > len(existing.get(key) or []):
                         existing[key] = item[key]
-
     scored = [_candidate_score(item, seed) for item in by_id.values()]
     if seed.get("genres"):
         scored = [item for item in scored if item.get("passes_genre_gate")]
@@ -337,12 +323,9 @@ def build_game_recommendation_context(data: dict[str, Any], *, user_text: str, i
     rows: list[str] = []
     for index, item in enumerate(data.get("candidates") or [], start=1):
         rows.append(
-            f"{index}. {item['name']} | released={item.get('released') or 'unknown'} | "
-            f"shared_genres={', '.join(item.get('shared_genres') or []) or 'нет'} | "
-            f"shared_tags={', '.join(item.get('shared_tags') or []) or 'нет'} | "
-            f"shared_platforms={', '.join(item.get('shared_platforms') or []) or 'нет'} | "
-            f"rating={item.get('rating'):.2f} ratings_count={item.get('ratings_count')} metacritic={item.get('metacritic')} | "
-            f"relevance={item.get('relevance_score'):.1f} | source={item.get('source_url')}"
+            f"{index}. {item['name']} | released={item.get('released') or 'unknown'} | shared_genres={', '.join(item.get('shared_genres') or []) or 'нет'} | "
+            f"shared_tags={', '.join(item.get('shared_tags') or []) or 'нет'} | shared_platforms={', '.join(item.get('shared_platforms') or []) or 'нет'} | "
+            f"rating={item.get('rating'):.2f} ratings_count={item.get('ratings_count')} metacritic={item.get('metacritic')} | relevance={item.get('relevance_score'):.1f} | source={item.get('source_url')}"
         )
     return (
         "Пользователь просит рекомендации игр. Ниже реальные кандидаты RAWG. Похожесть уже посчитана по жанрам, тегам и платформам seed-игры; "
@@ -376,11 +359,9 @@ async def _route_game_recommendations(update: Any, context: Any) -> None:
     query = classify_game_recommendation_intent(prepared, chat_id=int(chat.id))
     if not query:
         return
-
     enforce = getattr(module, "enforce_rate_limit", None)
     if callable(enforce) and not await enforce(update, "general"):
         raise ApplicationHandlerStop
-
     try:
         data = await recommend_from_game(query)
     except (httpx.HTTPError, ValueError, asyncio.TimeoutError) as error:
@@ -391,34 +372,21 @@ async def _route_game_recommendations(update: Any, context: Any) -> None:
         return
     if not data:
         return
-
     seed = data.get("seed") or {}
     seed_name = str(seed.get("name") or query)
-    seed_id = int(seed.get("id") or 0)
-    remember_game_topic(int(chat.id), seed_name, seed_id)
+    remember_game_topic(int(chat.id), seed_name, int(seed.get("id") or 0))
     entity_continuity_runtime.remember_topic(int(chat.id), seed_name)
     lens = identity_recommendation_runtime.load_identity_lens(module, int(chat.id))
     prompt = build_game_recommendation_context(data, user_text=prepared, identity_lens=lens)
-    answer = await module.ask_gemini(
-        contents=prompt,
-        max_output_tokens=700,
-        chat_id=int(chat.id),
-        chat_type=str(getattr(chat, "type", "private")),
-        user_name=(getattr(user, "full_name", "") or getattr(user, "username", "") or ""),
-        user_id=int(user.id),
-        bot_was_mentioned=True,
-        thinking_level="minimal",
-    )
+    answer = await module.ask_gemini(contents=prompt, max_output_tokens=700, chat_id=int(chat.id), chat_type=str(getattr(chat, "type", "private")), user_name=(getattr(user, "full_name", "") or getattr(user, "username", "") or ""), user_id=int(user.id), bot_was_mentioned=True, thinking_level="minimal")
     answer_text = str(answer or "").strip()
     if "rawg.io" not in answer_text.lower():
         answer_text += "\n\nИсточник каталога: RAWG — https://rawg.io"
-
     send_answer = getattr(module, "send_answer", None)
     if callable(send_answer):
         await send_answer(update, context, answer_text, force_voice=False)
     else:
         await message.reply_text(answer_text)
-
     register = getattr(module, "register_user_and_chat", None)
     increment = getattr(module, "increment_stat", None)
     if callable(register):
