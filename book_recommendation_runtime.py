@@ -30,6 +30,8 @@ CACHE_TTL_SECONDS = 10 * 60
 CACHE_MAX_ENTRIES = 192
 MIN_REQUEST_INTERVAL_SECONDS = 0.35
 MAX_CANDIDATES = 10
+BOOK_TOPIC_TTL_SECONDS = 2 * 60 * 60
+BOOK_TOPIC_MAX_CHATS = 256
 _PREPARED_APPLICATION_IDS: set[int] = set()
 
 
@@ -39,7 +41,14 @@ class CacheEntry:
     created_at: float
 
 
+@dataclass(frozen=True)
+class BookTopicState:
+    title: str
+    updated_at: float
+
+
 _CACHE: dict[str, CacheEntry] = {}
+_BOOK_TOPIC_BY_CHAT: dict[int, BookTopicState] = {}
 _REQUEST_LOCK = asyncio.Lock()
 _LAST_REQUEST_AT = 0.0
 
@@ -94,6 +103,28 @@ def _clean_query(value: Any) -> str:
     return text[:200]
 
 
+def remember_book_topic(chat_id: int, title: str, *, now: float | None = None) -> None:
+    clean = _clean_query(title)
+    if not clean:
+        return
+    current = time.monotonic() if now is None else float(now)
+    if len(_BOOK_TOPIC_BY_CHAT) >= BOOK_TOPIC_MAX_CHATS and int(chat_id) not in _BOOK_TOPIC_BY_CHAT:
+        oldest = min(_BOOK_TOPIC_BY_CHAT.items(), key=lambda item: item[1].updated_at)[0]
+        _BOOK_TOPIC_BY_CHAT.pop(oldest, None)
+    _BOOK_TOPIC_BY_CHAT[int(chat_id)] = BookTopicState(clean, current)
+
+
+def current_book_topic(chat_id: int, *, now: float | None = None) -> str:
+    state = _BOOK_TOPIC_BY_CHAT.get(int(chat_id))
+    if state is None:
+        return ""
+    current = time.monotonic() if now is None else float(now)
+    if current - state.updated_at > BOOK_TOPIC_TTL_SECONDS:
+        _BOOK_TOPIC_BY_CHAT.pop(int(chat_id), None)
+        return ""
+    return state.title
+
+
 def classify_book_recommendation_intent(text: str, *, chat_id: int | None = None) -> str:
     value = " ".join(str(text or "").split()).strip()
     if not value:
@@ -103,7 +134,7 @@ def classify_book_recommendation_intent(text: str, *, chat_id: int | None = None
         if match:
             return _clean_query(match.group("query"))
     if chat_id is not None and _FOLLOWUP_RE.search(value):
-        return _clean_query(entity_continuity_runtime.current_topic(int(chat_id)))
+        return current_book_topic(int(chat_id))
     return ""
 
 
@@ -270,6 +301,7 @@ async def recommend_from_book(query: str) -> dict[str, Any] | None:
     )
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
+    seed_subject_set = {value.casefold() for value in seed_subjects}
     for row in _docs(payload):
         item = _work_summary(row)
         if not item or item["key"] == seed["key"] or item["key"] in seen:
@@ -280,7 +312,7 @@ async def recommend_from_book(query: str) -> dict[str, Any] | None:
             continue
         item["subject_overlap"] = overlap
         item["matching_subjects"] = [
-            subject for subject in item["subjects"] if subject.casefold() in {value.casefold() for value in seed_subjects}
+            subject for subject in item["subjects"] if subject.casefold() in seed_subject_set
         ][:4]
         candidates.append(item)
 
@@ -369,6 +401,7 @@ async def _route_book_recommendations(update: Any, context: Any) -> None:
     seed = data.get("seed") or {}
     seed_title = str(seed.get("title") or query)
     entity_continuity_runtime.remember_topic(int(chat.id), seed_title)
+    remember_book_topic(int(chat.id), seed_title)
     lens = identity_recommendation_runtime.load_identity_lens(module, int(chat.id))
     prompt = build_book_recommendation_context(data, user_text=prepared, identity_lens=lens)
     answer = await module.ask_gemini(
@@ -408,7 +441,7 @@ def prepare_application_runtime(application: Application) -> None:
         return
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, _route_book_recommendations),
-        group=-3,
+        group=-5,
     )
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning(
