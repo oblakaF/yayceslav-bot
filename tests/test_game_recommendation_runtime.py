@@ -14,6 +14,20 @@ def test_game_intent_supports_russian_and_english():
     assert rec.classify_game_recommendation_intent("games like Elden Ring") == "Elden Ring"
 
 
+def test_game_intent_supports_colloquial_russian_phrasing():
+    assert rec.classify_game_recommendation_intent("Посоветуй игры по типу киберпанк") == "Cyberpunk 2077"
+    assert rec.classify_game_recommendation_intent("посоветуй игры типа киберпанк 2077") == "Cyberpunk 2077"
+    assert rec.classify_game_recommendation_intent("игры вроде Cyberpunk 2077") == "Cyberpunk 2077"
+    assert rec.classify_game_recommendation_intent("игры наподобие Disco Elysium") == "Disco Elysium"
+
+
+def test_cyberpunk_alias_is_only_exact_short_seed_alias():
+    assert rec._normalize_game_query("киберпанк") == "Cyberpunk 2077"
+    assert rec._normalize_game_query("cyberpunk") == "Cyberpunk 2077"
+    assert rec._normalize_game_query("киберпанк 2077") == "Cyberpunk 2077"
+    assert rec._normalize_game_query("Cyberpunk RED") == "Cyberpunk RED"
+
+
 def test_unrelated_categories_do_not_route_to_games():
     assert rec.classify_game_recommendation_intent("что посмотреть если нравится Интерстеллар?") == ""
     assert rec.classify_game_recommendation_intent("что почитать если нравится Дюна?") == ""
@@ -120,6 +134,27 @@ def test_recommend_from_game_merges_genre_and_tag_pools(monkeypatch):
     assert 12 not in ids
     assert 13 in ids
     assert result["candidates"][0]["shared_tags"] == ["cyberpunk", "story-rich"]
+
+
+def test_seed_resolution_normalizes_short_cyberpunk_alias(monkeypatch):
+    calls = []
+
+    async def fake_rawg(path, params=None):
+        calls.append((path, params))
+        if path == "games":
+            return {
+                "results": [
+                    {"id": 10, "name": "Cyberpunk 2077", "slug": "cyberpunk-2077", "genres": [], "tags": [], "platforms": [], "ratings_count": 1000, "rating": 4.0}
+                ]
+            }
+        if path == "games/10":
+            return {"id": 10, "name": "Cyberpunk 2077", "slug": "cyberpunk-2077", "genres": [], "tags": [], "platforms": [], "ratings_count": 1000, "rating": 4.0}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(rec, "_rawg_get", fake_rawg)
+    seed = asyncio.run(rec.resolve_seed_game("киберпанк"))
+    assert seed["name"] == "Cyberpunk 2077"
+    assert calls[0][1]["search"] == "Cyberpunk 2077"
 
 
 def test_prompt_keeps_provider_facts_separate_from_identity():
