@@ -83,8 +83,6 @@ def _record_episodic_note_sync(
             (int(chat_id), int(user_id), excerpt, int(delta), str(reason or "")),
         )
 
-        # Same tiered-cleanup shape as member_callback_terms: a hard TTL sweep,
-        # then a hard row-count cap, both enforced inline on every write.
         connection.execute(
             """
             DELETE FROM member_episodic_notes
@@ -112,8 +110,12 @@ def _record_episodic_note_sync(
 
 
 def _load_episodic_notes_sync(
-    bot_module, chat_id: int, user_id: int, limit: int = EPISODIC_PROFILE_NOTES
+    bot_module,
+    chat_id: int,
+    user_id: int,
+    limit: int | None = None,
 ) -> list[str]:
+    effective_limit = EPISODIC_PROFILE_NOTES if limit is None else int(limit)
     with bot_module.get_db_connection() as connection:
         rows = connection.execute(
             """
@@ -122,7 +124,7 @@ def _load_episodic_notes_sync(
             ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
-            (int(chat_id), int(user_id), int(limit)),
+            (int(chat_id), int(user_id), effective_limit),
         ).fetchall()
     return [str(row[0]) for row in rows]
 
@@ -217,7 +219,8 @@ def _prepare_application(application: Application) -> None:
     )
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning(
-        "Episodic memory runtime ready: max %s notes/member, %s-day TTL",
+        "Episodic memory runtime ready: max %s notes/member, %s-day TTL; profile uses %s",
         MAX_EPISODIC_NOTES_PER_MEMBER,
         EPISODIC_NOTE_TTL_DAYS,
+        EPISODIC_PROFILE_NOTES,
     )

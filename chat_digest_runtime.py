@@ -1,7 +1,7 @@
 """Storage-bounded group digests for "what did I miss?".
 
 Designed for Railway free tier:
-- raw group history remains the existing in-memory 15-minute deque;
+- raw group history stays in the shared bounded RAM conversation store;
 - a digest is attempted only after enough traffic and at most once/hour/chat;
 - only short summaries are stored in SQLite;
 - hard TTL and row-count caps make disk growth bounded.
@@ -94,7 +94,12 @@ def _store_digest_sync(bot_module, chat_id: int, summary: str) -> None:
         connection.commit()
 
 
-def _load_digests_sync(bot_module, chat_id: int, limit: int = DIGESTS_FOR_RECAP) -> list[str]:
+def _load_digests_sync(
+    bot_module,
+    chat_id: int,
+    limit: int | None = None,
+) -> list[str]:
+    effective_limit = DIGESTS_FOR_RECAP if limit is None else int(limit)
     with bot_module.get_db_connection() as connection:
         rows = connection.execute(
             """
@@ -103,9 +108,8 @@ def _load_digests_sync(bot_module, chat_id: int, limit: int = DIGESTS_FOR_RECAP)
             ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
-            (int(chat_id), f"-{DIGEST_TTL_DAYS} days", int(limit)),
+            (int(chat_id), f"-{DIGEST_TTL_DAYS} days", effective_limit),
         ).fetchall()
-    # Oldest -> newest is easier for a summarizer to read chronologically.
     return [str(row[0]) for row in reversed(rows)]
 
 
@@ -138,8 +142,6 @@ async def _maybe_digest(update, context) -> None:
     if now - last_attempt < DIGEST_MIN_INTERVAL_SECONDS:
         return
 
-    # Reserve the hourly slot before network work. A failed Gemini call must
-    # not cause every subsequent message to retry and burn free-tier quota.
     _LAST_ATTEMPT_AT[chat_id] = now
     _MESSAGE_COUNTS[chat_id] = 0
 
@@ -244,8 +246,10 @@ def prepare_application_runtime(application: Application) -> None:
     )
     _PREPARED_APPLICATION_IDS.add(app_id)
     logging.warning(
-        "Bounded chat digests ready: %s msgs, >=%ss, max %s rows/chat",
+        "Bounded chat digests ready: %s msgs, >=%ss, max %s rows/chat, %s-day TTL, recap=%s",
         DIGEST_MESSAGE_THRESHOLD,
         DIGEST_MIN_INTERVAL_SECONDS,
         MAX_DIGESTS_PER_CHAT,
+        DIGEST_TTL_DAYS,
+        DIGESTS_FOR_RECAP,
     )
