@@ -82,28 +82,43 @@ Implemented:
 - no API key required;
 - ordinary fallback on provider miss.
 
-## PR H — Films — ACTIVE
+## PR H — Films — DONE
+
+Merged as PR #79, with relevance/seed fixes in PRs #80–#82.
 
 ### Provider: TMDB
 
+Implemented:
+- explicit Russian/English movie recommendation intents;
+- robust seed resolution including Russian title forms, year/director hints;
+- TMDB recommendations/similar + Discover candidate pools;
+- genre gate + keyword-aware relevance ranking;
+- movie-local short-lived follow-up continuity;
+- optional `TMDB_API_TOKEN` with clean fallback;
+- provider facts remain separate from self-canon.
+
+## PR I — Games — ACTIVE
+
+### Provider: RAWG
+
 Flow:
 
-`explicit movie recommendation intent -> TMDB seed movie -> TMDB recommendations + similar -> provider-neutral identity lens -> Gemini/Yayceslav`
+`explicit game recommendation intent -> RAWG seed game -> RAWG genre/tag candidate pools -> local similarity ranking -> provider-neutral identity lens -> Gemini/Yayceslav`
 
-Capabilities:
-- “что посмотреть, если нравится Интерстеллар?”;
-- “посоветуй 5 фильмов в духе Дюны”;
-- `movies like Blade Runner 2049`;
-- resolve a real TMDB seed movie;
-- merge/deduplicate TMDB recommendation and similar candidates;
-- preserve external vote/popularity data only as catalog signals, never objective quality;
-- movie-local short-lived follow-up continuity;
-- `TMDB_API_TOKEN` is optional: without it the specialist route cleanly falls through to the ordinary answer/search path;
-- provider data remains separate from the self-canon identity lens.
+Target capabilities:
+- “во что поиграть, если нравится Cyberpunk 2077?”;
+- “посоветуй 5 игр в духе Disco Elysium”;
+- `games like Elden Ring`;
+- real RAWG seed resolution and catalog candidates;
+- relevance primarily from shared genres/tags/platforms;
+- rating/Metacritic only as weak catalog signals;
+- game-local `а ещё?` continuity;
+- `RAWG_API_KEY` optional with clean fallback;
+- explicit RAWG attribution/link on specialist answers;
+- no silent self-canon mutation.
 
-### Remaining verticals
+### Remaining vertical
 
-- games;
 - places/travel.
 
 Clothing/style recommendations were removed from the roadmap by product decision.
@@ -111,10 +126,6 @@ Clothing/style recommendations were removed from the roadmap by product decision
 ---
 
 # NEXT — P2
-
-## Games vertical
-
-Use a real catalog/metadata provider where API terms and key requirements make sense. Avoid model-memory-only game lists when specialist data is available.
 
 ## Places / travel vertical
 
@@ -145,7 +156,8 @@ The architecture is successful when these conversations work naturally:
 9. Old conflict does not make a neutral current turn hostile after reconciliation.
 10. “Что почитать, если нравится Dune?” uses real Open Library works and subjects.
 11. “Что посмотреть, если нравится Интерстеллар?” uses real TMDB candidates when configured.
-12. Category-local “а ещё?” does not cross-contaminate music/books/films.
-13. A recommendation can influence the current answer without silently becoming a new self-canon trait.
+12. “Во что поиграть, если нравится Cyberpunk 2077?” uses real RAWG candidates when configured.
+13. Category-local “а ещё?” does not cross-contaminate music/books/films/games.
+14. A recommendation can influence the current answer without silently becoming a new self-canon trait.
 
 The target is not simply more memory. The target is a character whose past choices constrain future choices while external factual knowledge remains verifiable and replaceable.
