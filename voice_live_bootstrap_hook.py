@@ -6,8 +6,9 @@ immediately after V1 self-canon, then Personality Architecture v2 establishes
 layer ownership, the immutable mythic-Rus core and canon-aware everyday decision
 layer are added above chat-local canon, the obsolete character selector is
 neutralized, the live voice bridge is installed, persistent tiered memory wraps
-the common stores, and finally the text/voice/video-note bridge sits outermost so
-semantic media text is what gets persisted.
+the common stores, rare self-development can inspect that durable semantic
+history, and finally the text/voice/video-note bridge sits outermost so semantic
+media text is what gets persisted.
 
 The same late hook installs the lyrics bridge before ``music_runtime`` registers
 its application handler. This keeps the stable MusicBrainz handler as the single
@@ -28,6 +29,7 @@ import persistent_tiered_memory_runtime
 import personality_architecture_v2_runtime
 import self_canon_runtime
 import self_canon_v2_runtime
+import self_development_runtime
 import unified_multimodal_context_runtime
 import voice2_runtime
 import voice_live_bridge_runtime
@@ -87,9 +89,11 @@ def _install_personality_layers_after_self_canon(bot_module: Any | None = None) 
     if not voice_live_bridge_runtime.install(bot_module):
         return
     # Persistent memory must wrap remember_message BEFORE the multimodal bridge.
-    # The multimodal wrapper then becomes outermost and converts generic voice /
-    # video-note placeholders into semantic text before persistence sees them.
+    # Rare self-development is installed after it so its evidence query always
+    # has the durable semantic-history table available.
     if not persistent_tiered_memory_runtime.install(bot_module):
+        return
+    if not self_development_runtime.install(bot_module):
         return
     if not unified_multimodal_context_runtime.install(bot_module):
         return
