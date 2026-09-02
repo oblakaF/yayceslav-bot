@@ -14,6 +14,7 @@ This roadmap tracks the next architecture phase after the September 2026 persona
 8. External facts should come from specialist sources when practical.
 9. Specialist facts and Yayceslav's own tastes remain separate layers.
 10. Raw media and large copyrighted payloads are not durable memory.
+11. Relationship memory stores bounded social interaction evidence, not inferred sensitive traits or raw chat archives.
 
 ---
 
@@ -47,7 +48,7 @@ The field count is sufficient. Future work should improve knowledge and behavior
 
 ---
 
-# ACTIVE — P1/P2 MUSIC EXPERT LAYER
+# MUSIC EXPERT LAYER — DONE
 
 ## PR D — Music catalog foundation — DONE
 
@@ -87,13 +88,11 @@ Merged as PR #75.
 
 ---
 
-## PR F — Music recommendations — ACTIVE
+## PR F — Music recommendations — DONE
 
 ### Provider: ListenBrainz
 
-Use the public ListenBrainz LB Radio artist-seed endpoint instead of requiring a personal ListenBrainz profile.
-
-Flow:
+Implemented flow:
 
 `user recommendation intent -> MusicBrainz artist MBID -> ListenBrainz LB Radio -> batch recording metadata -> self_canon.music preference lens -> Gemini/Yayceslav`
 
@@ -105,39 +104,39 @@ Capabilities:
 - `total_listen_count` used only as a popularity/listening signal, not quality;
 - batch metadata lookup for recording names, artists and tags;
 - exclude the seed artist from ordinary similarity recommendations;
-- combine factual candidates with `self_canon.music` so Yayceslav can say what he personally would choose.
+- combine factual candidates with `self_canon.music` so Yayceslav can say what he personally would choose;
+- Cyrillic seeds including `Три дня дождя` and `MACAN`;
+- no ListenBrainz user account/token required for ordinary artist-seed recommendations.
 
-Constraints:
-- no extra Gemini classifier call;
-- no ListenBrainz user account/token required for ordinary artist-seed recommendations;
-- recommendations do not rewrite `self_canon.music`;
-- bounded RAM cache and provider pacing;
-- if the seed artist cannot be resolved or ListenBrainz has no candidates, fall through to the ordinary answer/search path;
-- support Cyrillic artist seeds such as `Три дня дождя` and `MACAN`.
+Merged as PR #76.
 
-Optional later:
-- authenticated personal ListenBrainz collaborative-filter recommendations if a user explicitly connects a ListenBrainz profile;
-- Last.fm tags/community similarity if API terms/key make sense.
+---
+
+# ACTIVE — P2 SOCIAL / RELATIONSHIP MEMORY V2
+
+Goal: improve long-term relationship continuity without turning the bot into surveillance memory.
+
+Implementation direction:
+- reuse existing `chat_member_profiles`, safe member callback terms, pairwise interaction statistics and relationship/conflict data;
+- persist only bounded structured social markers, not raw messages;
+- social markers include mutual banter, corrections, apologies, gratitude, explicit disagreement and reconciliation;
+- current message/current tone always override historical relationship state;
+- reconciliation softens old conflict instead of creating permanent grudges;
+- recurring callback topics can be used sparsely but never treated as preferences, professions, beliefs or personality traits;
+- automatic durable relationship memory excludes health, finance, politics, religion, sexuality and other sensitive characteristics;
+- strict `(chat_id, user_id)` isolation with regression tests against cross-user/cross-chat contamination;
+- no extra Gemini classifier call.
+
+Acceptance examples:
+- after several playful exchanges, a playful current turn may get a more familiar callback;
+- after the user corrected Yayceslav earlier, a relevant future correction can be acknowledged naturally instead of pretending infallibility;
+- after apology/reconciliation, old hostility must not keep poisoning neutral replies;
+- a recurring safe topic may be remembered as something the member has actually discussed, not as a stable personal trait;
+- an unrelated member or another group must never inherit this relationship history.
 
 ---
 
 # NEXT — P2
-
-## Social / relationship memory v2
-
-Improve long-term relationship continuity without turning the bot into surveillance memory.
-
-Goals:
-- better use of existing reputation, affinity, relationship and episodic data;
-- remember recurring shared jokes and meaningful conflicts, not every message;
-- distinguish a person's long-term relationship state from the current mood/fight;
-- callbacks must be sparse and relevant;
-- sensitive content remains excluded from automatic durable member memory.
-
-Potential implementation:
-- bounded relationship summaries derived from already-stored events;
-- no raw full-chat archive per member;
-- explicit regression tests for cross-user contamination.
 
 ## Identity-derived recommendation engine
 
@@ -182,5 +181,7 @@ The architecture is successful when these conversations work naturally:
 12. “Тебе самому что из этого ближе?” uses `self_canon.music` as a personal lens rather than a provider fact.
 13. Text, voice, video-note and explicit search follow-ups maintain the same recent entity/topic when appropriate.
 14. Different chats do not leak self-canon, entity state or relationship state into each other.
+15. Old conflict does not make a neutral current turn hostile after apology/reconciliation.
+16. Safe recurring social callbacks feel continuous without becoming a fake biography.
 
 The target is not simply more memory. The target is a character whose past choices constrain future choices while external factual knowledge remains verifiable and replaceable.
