@@ -103,5 +103,5 @@ def test_context_keeps_provider_facts_separate_from_identity():
         identity_lens={"aesthetic": "мрачный техно-минимализм", "values": "любопытство"},
     )
     assert "мрачный техно-минимализм" in prompt
-    assert "не меняет self-canon" in prompt
+    assert "в self-canon автоматически" in prompt
     assert "Arrival" in prompt
