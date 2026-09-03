@@ -40,7 +40,7 @@ def test_fatigue_post_does_not_repeat_tyazhelo_when_alternative_exists():
     assert key in {"mda", "vse_tlen"}
 
 
-def test_short_direct_group_turn_can_use_non_fatigue_stickers():
+def test_short_direct_group_ping_can_use_direct_ping_stickers():
     key = group_v2.normal_post_key(
         "ну?",
         "Ну, говори.",
@@ -48,6 +48,26 @@ def test_short_direct_group_turn_can_use_non_fatigue_stickers():
         direct=True,
     )
     assert key in {"che_nado", "nu_i_che"}
+
+
+def test_short_direct_topic_reply_is_not_misclassified_as_ping():
+    key = group_v2.normal_post_key(
+        "дюна вильнева",
+        "Да, речь о «Дюне» Дени Вильнёва 2021 года.",
+        chat_id=-100,
+        direct=True,
+    )
+    assert key is None
+
+
+def test_short_direct_task_followup_is_not_misclassified_as_ping():
+    key = group_v2.normal_post_key(
+        "сделай ещё",
+        "Сделал ещё один вариант.",
+        chat_id=-100,
+        direct=True,
+    )
+    assert key is None
 
 
 def test_normal_policy_does_not_auto_send_hard_dismissal():
