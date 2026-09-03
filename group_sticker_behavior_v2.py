@@ -26,6 +26,7 @@ from collections import defaultdict, deque
 import functools
 import logging
 import random
+import re
 import time
 from typing import Any, Iterable
 
@@ -42,6 +43,20 @@ _INSTALLED = False
 
 RECENT_STICKER_HISTORY = 5
 NORMAL_DIRECT_POST_CHANCE = 0.20
+
+# ``sticker_engine.detect_event(..., direct=True)`` intentionally labels every
+# <=4-word direct message as ``direct_ping``.  That is fine for a dedicated ping
+# listener, but too broad for post-answer group punchlines: normal replies such
+# as ``дюна вильнева`` or ``сделай ещё`` must not randomly get ЧЁ НАДО / НУ И ЧЁ.
+# Only explicit contextless pings are allowed to synthesize ``direct_ping`` here.
+_DIRECT_PING_RE = re.compile(
+    r"^\s*(?:"
+    r"(?:эй[,.!?\s-]*)?(?:яйцеслав\w*|бот|бобр\w*|курва)"
+    r"(?:\s+(?:ты\s+)?(?:тут|жив|живой))?"
+    r"|ау|алло|ну"
+    r")\s*[?!.]*\s*$",
+    re.IGNORECASE,
+)
 
 # These events are safe as a small visual punchline after a normal text answer.
 # Explicit dismissal/shut-up/fight events stay out of normal chat; they belong
@@ -197,6 +212,15 @@ def _event_key(
     )
 
 
+def _normal_group_event(source: str, *, direct: bool) -> str | None:
+    """Use semantic evidence first; synthesize direct_ping only for real pings."""
+
+    event = sticker_engine.detect_event(source, direct=False)
+    if event is None and direct and _DIRECT_PING_RE.fullmatch(source):
+        return "direct_ping"
+    return event
+
+
 def normal_post_key(
     source_user_text: str,
     answer_text: str,
@@ -213,7 +237,7 @@ def normal_post_key(
     if sticker_engine.is_serious_text(source) or sticker_engine.is_serious_text(answer):
         return None
 
-    event = sticker_engine.detect_event(source, direct=bool(direct))
+    event = _normal_group_event(source, direct=bool(direct))
 
     # Preserve answer-aware tags (BАЗА, PEREIGRAL, Aug19 doom/problem tags).
     special = sticker_post_runtime.choose_post_text_tag(source, answer)
