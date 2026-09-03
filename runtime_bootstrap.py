@@ -229,9 +229,12 @@ def prepare_application_runtime(application: Application) -> None:
 
     import rate_limit_tlen_runtime
     rate_limit_tlen_runtime.install()
-    # Install diagnostics only after late bootstrap patches are in place so it
-    # observes the final provider classifiers and the final send/model wrappers.
-    live_diagnostics_runtime.prepare_application_runtime(application)
+    # Tests sometimes use a sentinel object instead of a real Telegram
+    # Application. Install passive wrappers either way; register /diag only when
+    # handler registration exists.
+    live_diagnostics_runtime.install()
+    if callable(getattr(application, "add_handler", None)):
+        live_diagnostics_runtime.prepare_application_runtime(application)
     daily_content_runtime._prepare_application(application)
     initiative_runtime._prepare_application(application)
     birthday_runtime._prepare_application(application)
