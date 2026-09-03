@@ -10,6 +10,7 @@ import time
 import voice_live_bootstrap_hook  # noqa: F401
 import music_recommendation_bootstrap_patch  # noqa: F401
 import identity_recommendation_bootstrap_patch  # noqa: F401
+import recommendation_followup_guard_runtime  # noqa: F401
 
 
 _INSTALLED = False
