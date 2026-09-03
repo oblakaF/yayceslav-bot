@@ -1,14 +1,18 @@
 """Keep generic recommendation follow-ups owned by the latest category.
 
-Each specialist vertical already has its own short-lived seed state.  Before this
+Each specialist vertical already has its own short-lived seed state. Before this
 guard, those states could coexist and Telegram handler group order decided which
-vertical captured a generic ``а ещё?``.  That meant an older game request could
+vertical captured a generic ``а ещё?``. That meant an older game request could
 steal a follow-up from a newer movie request.
 
-This module adds one tiny chat-local owner pointer.  Explicit recommendation
-intents move the pointer to their category.  Generic follow-ups are accepted only
-by that category.  Category-named follow-ups (for example ``ещё игры``) remain
-free to switch back intentionally because the user supplied the category.
+This module adds one tiny chat-local owner pointer. Explicit recommendation
+intents move the pointer to their category. Once an owner exists, generic
+follow-ups are accepted only by that category. Before the first owner is created
+(for example immediately after deploy while old RAM topic state still exists),
+the legacy category-local behavior is preserved for compatibility.
+
+Category-named follow-ups (for example ``ещё игры``) remain free to switch back
+intentionally because the user supplied the category.
 
 No provider calls, model calls, database tables or polling wrappers are added.
 """
@@ -98,13 +102,19 @@ def _wrap_classifier(module: Any, function_name: str, category: str) -> None:
     def guarded(text: str, *, chat_id: int | None = None) -> str:
         value = str(text or "")
         if is_generic_followup(value):
-            if chat_id is None or active_category(int(chat_id)) != category:
+            if chat_id is None:
                 return ""
+            owner = active_category(int(chat_id))
+            if owner and owner != category:
+                return ""
+            # No owner means a pre-guard/just-deployed local topic may still be
+            # valid. Preserve that one legacy path until the next explicit
+            # recommendation establishes a deterministic owner.
             return str(original(value, chat_id=chat_id) or "")
 
         result = str(original(value, chat_id=chat_id) or "")
         if result and chat_id is not None:
-            # Explicit or category-named intent becomes the latest owner.  This
+            # Explicit or category-named intent becomes the latest owner. This
             # occurs before provider work so a failed specialist lookup cannot
             # leave an older category owning a later generic follow-up.
             remember_active_category(int(chat_id), category)
