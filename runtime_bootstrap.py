@@ -55,6 +55,7 @@ import date_grounding_runtime
 import social_priority_runtime
 import social_grounding_runtime
 import owner_social_diagnostics_runtime
+import live_diagnostics_runtime
 import conflict_fsm_runtime
 import title_conflict_runtime
 import search_context_runtime
@@ -111,6 +112,7 @@ RUNTIME_LOAD_ORDER = (
     "date_grounding_runtime",
     "social_priority_runtime",
     "owner_social_diagnostics_runtime",
+    "live_diagnostics_runtime",
     "conflict_fsm_runtime",
     "social_grounding_runtime",
     "title_conflict_runtime",
@@ -227,6 +229,9 @@ def prepare_application_runtime(application: Application) -> None:
 
     import rate_limit_tlen_runtime
     rate_limit_tlen_runtime.install()
+    # Install diagnostics only after late bootstrap patches are in place so it
+    # observes the final provider classifiers and the final send/model wrappers.
+    live_diagnostics_runtime.prepare_application_runtime(application)
     daily_content_runtime._prepare_application(application)
     initiative_runtime._prepare_application(application)
     birthday_runtime._prepare_application(application)
