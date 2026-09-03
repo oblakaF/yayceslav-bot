@@ -138,7 +138,6 @@ def _persist_sync(bot_module: Any, session: DiagnosticSession, *, total_ms: floa
                 ),
             )
             connection.commit()
-        # Cleanup is intentionally occasional to keep the hot path cheap.
         if int(time.monotonic()) % 97 == 0:
             _cleanup_sync(bot_module)
     except Exception as error:
@@ -156,13 +155,26 @@ def _extract_chat(update: Any) -> tuple[int, str]:
     return chat_id, str(getattr(chat, "type", "") or "")
 
 
+def _start_from_ids(chat_id: Any, chat_type: Any, *, route: str = "normal") -> None:
+    try:
+        numeric_chat_id = int(chat_id or 0)
+    except (TypeError, ValueError):
+        numeric_chat_id = 0
+    if numeric_chat_id and _SESSION.get() is None:
+        _SESSION.set(
+            DiagnosticSession(
+                started_at=time.monotonic(),
+                chat_id=numeric_chat_id,
+                chat_type=str(chat_type or ""),
+                route=str(route or "normal"),
+            )
+        )
+
+
 def start_request(update: Any, *, route: str = "normal") -> None:
     bot_module = _find_bot_module()
     previous = _SESSION.get()
     if previous is not None and bot_module is not None:
-        # A specialist can fail open and the same Telegram update then enters the
-        # ordinary route. Preserve that specialist attempt instead of silently
-        # overwriting it.
         previous = replace(previous, fallback=True)
         _persist_sync(bot_module, previous, total_ms=(time.monotonic() - previous.started_at) * 1000.0)
     chat_id, chat_type = _extract_chat(update)
@@ -263,9 +275,13 @@ def _patch_bot_hot_path(bot_module: Any) -> None:
     if callable(ask) and not getattr(ask, "_yayceslav_live_diag", False):
         @functools.wraps(ask)
         async def ask_with_diag(*args: Any, **kwargs: Any):
-            session = _SESSION.get()
             contents = kwargs.get("contents") if "contents" in kwargs else (args[0] if args else "")
             inferred = _infer_route_from_contents(contents)
+            _start_from_ids(
+                kwargs.get("chat_id"),
+                kwargs.get("chat_type"),
+                route=inferred or "normal",
+            )
             if inferred:
                 mark_route(inferred)
             started = time.monotonic()
@@ -275,7 +291,7 @@ def _patch_bot_hot_path(bot_module: Any) -> None:
                 mark_error(error)
                 raise
             finally:
-                if session is not None or _SESSION.get() is not None:
+                if _SESSION.get() is not None:
                     add_model_ms((time.monotonic() - started) * 1000.0)
 
         ask_with_diag._yayceslav_live_diag = True
@@ -298,7 +314,7 @@ def _patch_bot_hot_path(bot_module: Any) -> None:
 
 
 def _wrap_classifier(module: Any, function_name: str, route: str) -> None:
-    original = getattr(module, function_name, None)
+    original: Callable[..., str] | None = getattr(module, function_name, None)
     if not callable(original) or getattr(original, "_yayceslav_live_diag", False):
         return
 
@@ -361,7 +377,7 @@ def _patch_specialists() -> None:
 
     for module, classifier, route, provider in (
         (music, "classify_recommendation_intent", "music", "_listenbrainz_get"),
-        (books, "classify_book_recommendation_intent", "books", "_open_library_get"),
+        (books, "classify_book_recommendation_intent", "books", "_openlibrary_get"),
         (movies, "classify_movie_recommendation_intent", "movies", "_tmdb_get"),
         (games, "classify_game_recommendation_intent", "games", "_rawg_get"),
     ):
