@@ -7,6 +7,17 @@ from typing import Any, Callable
 
 _LOCK = threading.Lock()
 _CACHE: dict[tuple[str, int], tuple[float, Any]] = {}
+MAX_CACHE_ENTRIES = 256
+
+
+def _prune_locked(current: float) -> None:
+    expired = [key for key, (expires_at, _value) in _CACHE.items() if expires_at <= current]
+    for key in expired:
+        _CACHE.pop(key, None)
+
+    while len(_CACHE) > MAX_CACHE_ENTRIES:
+        oldest = min(_CACHE, key=lambda key: _CACHE[key][0])
+        _CACHE.pop(oldest, None)
 
 
 def get_or_load(
@@ -23,6 +34,7 @@ def get_or_load(
     current = now()
 
     with _LOCK:
+        _prune_locked(current)
         cached = _CACHE.get(key)
         if cached is not None and cached[0] > current:
             return cached[1]
@@ -31,6 +43,7 @@ def get_or_load(
 
     with _LOCK:
         _CACHE[key] = (current + max(0.0, float(ttl_seconds)), value)
+        _prune_locked(current)
 
     return value
 
