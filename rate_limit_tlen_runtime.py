@@ -11,6 +11,7 @@ import voice_live_bootstrap_hook  # noqa: F401
 import music_recommendation_bootstrap_patch  # noqa: F401
 import identity_recommendation_bootstrap_patch  # noqa: F401
 import recommendation_followup_guard_runtime  # noqa: F401
+import emergency_resource_guard_runtime
 
 
 _INSTALLED = False
@@ -36,6 +37,7 @@ def install() -> bool:
 
     original = bot_module.enforce_rate_limit
     if getattr(original, "_yayceslav_rate_limit_tlen_final", False):
+        emergency_resource_guard_runtime.install(bot_module)
         _INSTALLED = True
         return True
 
@@ -76,5 +78,6 @@ def install() -> bool:
 
     wrapped._yayceslav_rate_limit_tlen_final = True
     bot_module.enforce_rate_limit = wrapped
+    emergency_resource_guard_runtime.install(bot_module)
     _INSTALLED = True
     return True
